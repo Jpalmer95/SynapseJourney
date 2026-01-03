@@ -3,14 +3,40 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { ThemeProvider } from "@/components/theme-provider";
+import { useAuth } from "@/hooks/use-auth";
 import NotFound from "@/pages/not-found";
+import { LandingPage } from "@/pages/landing";
+import { HomePage } from "@/pages/home";
+import { MapPage } from "@/pages/map";
+import { SavedPage } from "@/pages/saved";
+import { ProfilePage } from "@/pages/profile";
+import { Loader2 } from "lucide-react";
 
-function Router() {
+function AppContent() {
+  const { user, isLoading, isAuthenticated } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+          <p className="text-muted-foreground">Loading Synapse...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LandingPage />;
+  }
+
   return (
     <Switch>
-      {/* Add pages below */}
-      {/* <Route path="/" component={Home}/> */}
-      {/* Fallback to 404 */}
+      <Route path="/" component={HomePage} />
+      <Route path="/map" component={MapPage} />
+      <Route path="/saved" component={SavedPage} />
+      <Route path="/profile" component={ProfilePage} />
       <Route component={NotFound} />
     </Switch>
   );
@@ -19,10 +45,12 @@ function Router() {
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <TooltipProvider>
-        <Toaster />
-        <Router />
-      </TooltipProvider>
+      <ThemeProvider defaultTheme="dark">
+        <TooltipProvider>
+          <Toaster />
+          <AppContent />
+        </TooltipProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   );
 }
