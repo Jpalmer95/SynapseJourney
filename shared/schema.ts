@@ -125,9 +125,11 @@ export const topicMastery = pgTable("topic_mastery", {
   beginnerUnlocked: boolean("beginner_unlocked").default(true).notNull(),
   intermediateUnlocked: boolean("intermediate_unlocked").default(false).notNull(),
   advancedUnlocked: boolean("advanced_unlocked").default(false).notNull(),
+  nextgenUnlocked: boolean("nextgen_unlocked").default(false).notNull(),
   beginnerCompleted: integer("beginner_completed").default(0).notNull(),
   intermediateCompleted: integer("intermediate_completed").default(0).notNull(),
   advancedCompleted: integer("advanced_completed").default(0).notNull(),
+  nextgenCompleted: integer("nextgen_completed").default(0).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -256,5 +258,36 @@ export interface LessonContent {
     topicId: number;
     topicTitle: string;
     connection: string;
+  }[];
+}
+
+// Next Gen content structure for frontier research challenges
+export interface NextGenContent {
+  researchContext: string;
+  industryChallenge: {
+    title: string;
+    description: string;
+    currentApproaches: string[];
+    openQuestions: string[];
+  };
+  thoughtExercises: {
+    prompt: string;
+    hints: string[];
+    explorationPaths: string[];
+  }[];
+  emergingTrends: {
+    trend: string;
+    implications: string;
+    potentialBreakthroughs: string;
+  }[];
+  creativeSynthesis: {
+    challenge: string;
+    relatedConcepts: string[];
+    suggestedConnections: string[];
+  };
+  resources?: {
+    title: string;
+    type: string;
+    description: string;
   }[];
 }

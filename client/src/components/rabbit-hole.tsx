@@ -18,6 +18,12 @@ import {
   ArrowRight,
   X,
   Check,
+  Rocket,
+  FlaskConical,
+  Compass,
+  TrendingUp,
+  Puzzle,
+  ExternalLink,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -31,7 +37,7 @@ import { AiChat } from "@/components/ai-chat";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Topic, Category, LessonContent } from "@shared/schema";
+import type { Topic, Category, LessonContent, NextGenContent } from "@shared/schema";
 
 interface LessonUnit {
   id: number;
@@ -52,9 +58,11 @@ interface TopicMastery {
   beginnerUnlocked: boolean;
   intermediateUnlocked: boolean;
   advancedUnlocked: boolean;
+  nextgenUnlocked: boolean;
   beginnerCompleted: number;
   intermediateCompleted: number;
   advancedCompleted: number;
+  nextgenCompleted: number;
 }
 
 interface LessonOutlineResponse {
@@ -69,16 +77,18 @@ interface RabbitHoleProps {
   onBack: () => void;
 }
 
-const difficultyColors = {
+const difficultyColors: Record<string, string> = {
   beginner: "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
   intermediate: "border-yellow-500/50 text-yellow-600 dark:text-yellow-400 bg-yellow-500/10",
   advanced: "border-orange-500/50 text-orange-600 dark:text-orange-400 bg-orange-500/10",
+  nextgen: "border-purple-500/50 text-purple-600 dark:text-purple-400 bg-purple-500/10",
 };
 
-const difficultyIcons = {
+const difficultyIcons: Record<string, any> = {
   beginner: Lightbulb,
   intermediate: BookOpen,
   advanced: Brain,
+  nextgen: Sparkles,
 };
 
 export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
@@ -98,7 +108,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   // Fetch lesson content when a unit is selected
   const { data: unitContent, isLoading: isLoadingContent } = useQuery<{
     unit: LessonUnit;
-    content: LessonContent;
+    content: LessonContent | NextGenContent;
+    isNextGen?: boolean;
   }>({
     queryKey: ["/api/lessons/unit", selectedUnit?.id, "content"],
     enabled: !!selectedUnit && !selectedUnit.locked,
@@ -164,11 +175,12 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   };
 
   const handleSubmitQuiz = () => {
-    if (!unitContent?.content.quiz) return;
+    const content = unitContent?.content;
+    if (!content || !('quiz' in content) || !content.quiz) return;
     
-    const quiz = unitContent.content.quiz;
+    const quiz = content.quiz as LessonContent['quiz'];
     let correct = 0;
-    quiz.forEach((q, i) => {
+    quiz.forEach((q: LessonContent['quiz'][0], i: number) => {
       if (quizAnswers[i] === q.correctIndex) correct++;
     });
     
@@ -201,6 +213,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       case "beginner": return !mastery.beginnerUnlocked;
       case "intermediate": return !mastery.intermediateUnlocked;
       case "advanced": return !mastery.advancedUnlocked;
+      case "nextgen": return !mastery.nextgenUnlocked;
       default: return true;
     }
   };
@@ -208,6 +221,11 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   // Render content viewer
   if (selectedUnit && !selectedUnit.locked) {
     const content = unitContent?.content;
+    const isNextGen = unitContent?.isNextGen || selectedUnit.difficulty === "nextgen";
+    
+    // Type guard for lesson vs nextgen content
+    const lessonContent = !isNextGen ? (content as LessonContent) : null;
+    const nextGenContent = isNextGen ? (content as NextGenContent) : null;
     
     return (
       <motion.div
@@ -258,9 +276,220 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
             {isLoadingContent ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                <span className="ml-3 text-muted-foreground">Generating lesson content...</span>
+                <span className="ml-3 text-muted-foreground">
+                  {isNextGen ? "Generating frontier research content..." : "Generating lesson content..."}
+                </span>
               </div>
-            ) : content ? (
+            ) : nextGenContent ? (
+              /* Next Gen Content - Frontier Research View */
+              <div className="space-y-8">
+                {/* Header Badge */}
+                <div className="flex items-center justify-center">
+                  <Badge className="bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30 text-sm px-4 py-1">
+                    <Rocket className="h-4 w-4 mr-2" />
+                    Next Gen Analysis
+                  </Badge>
+                </div>
+
+                {/* Research Context */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <FlaskConical className="h-5 w-5 text-purple-500" />
+                    <h2 className="text-xl font-semibold">Research Context</h2>
+                  </div>
+                  <Card className="border-purple-500/20">
+                    <CardContent className="p-6">
+                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                        {nextGenContent.researchContext}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </section>
+
+                {/* Industry Challenge */}
+                {nextGenContent.industryChallenge && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Rocket className="h-5 w-5 text-orange-500" />
+                      <h2 className="text-xl font-semibold">Industry Challenge</h2>
+                    </div>
+                    <Card className="border-orange-500/20 bg-orange-500/5">
+                      <CardContent className="p-6 space-y-4">
+                        <h3 className="font-semibold text-lg">{nextGenContent.industryChallenge.title}</h3>
+                        <p className="text-muted-foreground">{nextGenContent.industryChallenge.description}</p>
+                        
+                        <div className="space-y-3">
+                          <h4 className="font-medium text-sm text-orange-600 dark:text-orange-400">Current Approaches:</h4>
+                          <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                            {nextGenContent.industryChallenge.currentApproaches.map((approach: string, i: number) => (
+                              <li key={i}>{approach}</li>
+                            ))}
+                          </ul>
+                        </div>
+                        
+                        <div className="space-y-3">
+                          <h4 className="font-medium text-sm text-orange-600 dark:text-orange-400">Open Questions:</h4>
+                          <ul className="list-disc list-inside text-muted-foreground space-y-1">
+                            {nextGenContent.industryChallenge.openQuestions.map((question: string, i: number) => (
+                              <li key={i} className="italic">{question}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  </section>
+                )}
+
+                {/* Thought Exercises */}
+                {nextGenContent.thoughtExercises && nextGenContent.thoughtExercises.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Compass className="h-5 w-5 text-blue-500" />
+                      <h2 className="text-xl font-semibold">Thought Exercises</h2>
+                    </div>
+                    <div className="space-y-4">
+                      {nextGenContent.thoughtExercises.map((exercise: any, i: number) => (
+                        <Card key={i} className="border-blue-500/20 bg-blue-500/5">
+                          <CardContent className="p-6 space-y-4">
+                            <p className="font-medium text-lg">{exercise.prompt}</p>
+                            
+                            {exercise.hints && exercise.hints.length > 0 && (
+                              <div className="space-y-2">
+                                <h4 className="text-sm font-medium text-blue-600 dark:text-blue-400">Hints to get started:</h4>
+                                <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                                  {exercise.hints.map((hint: string, j: number) => (
+                                    <li key={j}>{hint}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            
+                            {exercise.explorationPaths && exercise.explorationPaths.length > 0 && (
+                              <div className="space-y-2">
+                                <h4 className="text-sm font-medium text-blue-600 dark:text-blue-400">Exploration paths:</h4>
+                                <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                                  {exercise.explorationPaths.map((path: string, j: number) => (
+                                    <li key={j}>{path}</li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Emerging Trends */}
+                {nextGenContent.emergingTrends && nextGenContent.emergingTrends.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <TrendingUp className="h-5 w-5 text-green-500" />
+                      <h2 className="text-xl font-semibold">Emerging Trends</h2>
+                    </div>
+                    <div className="space-y-4">
+                      {nextGenContent.emergingTrends.map((trend: any, i: number) => (
+                        <Card key={i} className="border-green-500/20 bg-green-500/5">
+                          <CardContent className="p-6 space-y-3">
+                            <h3 className="font-semibold">{trend.trend}</h3>
+                            <p className="text-muted-foreground text-sm"><span className="font-medium">Implications:</span> {trend.implications}</p>
+                            <p className="text-muted-foreground text-sm"><span className="font-medium">Potential Breakthroughs:</span> {trend.potentialBreakthroughs}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Creative Synthesis */}
+                {nextGenContent.creativeSynthesis && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Puzzle className="h-5 w-5 text-purple-500" />
+                      <h2 className="text-xl font-semibold">Creative Synthesis Challenge</h2>
+                    </div>
+                    <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-pink-500/10">
+                      <CardContent className="p-6 space-y-4">
+                        <p className="font-medium text-lg">{nextGenContent.creativeSynthesis.challenge}</p>
+                        
+                        {nextGenContent.creativeSynthesis.relatedConcepts && (
+                          <div className="flex flex-wrap gap-2">
+                            {nextGenContent.creativeSynthesis.relatedConcepts.map((concept: string, i: number) => (
+                              <Badge key={i} variant="secondary">{concept}</Badge>
+                            ))}
+                          </div>
+                        )}
+                        
+                        {nextGenContent.creativeSynthesis.suggestedConnections && (
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium text-purple-600 dark:text-purple-400">Suggested connections to explore:</h4>
+                            <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                              {nextGenContent.creativeSynthesis.suggestedConnections.map((conn: string, i: number) => (
+                                <li key={i}>{conn}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </section>
+                )}
+
+                {/* Resources */}
+                {nextGenContent.resources && nextGenContent.resources.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <ExternalLink className="h-5 w-5 text-muted-foreground" />
+                      <h2 className="text-xl font-semibold">Further Resources</h2>
+                    </div>
+                    <div className="space-y-2">
+                      {nextGenContent.resources.map((resource: any, i: number) => (
+                        <Card key={i}>
+                          <CardContent className="p-4 flex items-start gap-3">
+                            <Badge variant="outline" className="text-xs shrink-0">{resource.type}</Badge>
+                            <div>
+                              <p className="font-medium">{resource.title}</p>
+                              <p className="text-sm text-muted-foreground">{resource.description}</p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Mark Complete Button for Next Gen */}
+                <div className="flex justify-center pt-4">
+                  <Button
+                    onClick={() => selectedUnit && completeLessonMutation.mutate({ unitId: selectedUnit.id })}
+                    disabled={completeLessonMutation.isPending}
+                    className="bg-purple-600 hover:bg-purple-700"
+                    data-testid="button-complete-nextgen"
+                  >
+                    {completeLessonMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Sparkles className="h-4 w-4 mr-2" />
+                    )}
+                    Mark as Explored
+                  </Button>
+                </div>
+
+                {/* AI Chat Button */}
+                <div className="flex justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowChat(true)}
+                    data-testid="button-ask-ai-nextgen"
+                  >
+                    <MessageCircle className="h-4 w-4 mr-2" />
+                    Discuss ideas with AI Tutor
+                  </Button>
+                </div>
+              </div>
+            ) : lessonContent ? (
+              /* Standard Lesson Content View */
               <div className="space-y-8">
                 {/* Concept Section */}
                 <section>
@@ -271,7 +500,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   <Card>
                     <CardContent className="p-6">
                       <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
-                        {content.concept}
+                        {lessonContent.concept}
                       </p>
                     </CardContent>
                   </Card>
@@ -286,7 +515,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   <Card className="border-yellow-500/20 bg-yellow-500/5">
                     <CardContent className="p-6">
                       <p className="text-muted-foreground leading-relaxed">
-                        {content.analogy}
+                        {lessonContent.analogy}
                       </p>
                     </CardContent>
                   </Card>
@@ -296,16 +525,16 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 <section>
                   <div className="flex items-center gap-2 mb-4">
                     <Sparkles className="h-5 w-5 text-blue-500" />
-                    <h2 className="text-xl font-semibold">{content.example.title}</h2>
+                    <h2 className="text-xl font-semibold">{lessonContent.example.title}</h2>
                   </div>
                   <Card className="border-blue-500/20 bg-blue-500/5">
                     <CardContent className="p-6 space-y-4">
                       <p className="text-muted-foreground leading-relaxed">
-                        {content.example.content}
+                        {lessonContent.example.content}
                       </p>
-                      {content.example.code && (
+                      {lessonContent.example.code && (
                         <pre className="bg-muted p-4 rounded-md overflow-x-auto text-sm font-mono">
-                          {content.example.code}
+                          {lessonContent.example.code}
                         </pre>
                       )}
                     </CardContent>
@@ -313,14 +542,14 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 </section>
 
                 {/* Cross-links Section */}
-                {content.crossLinks && content.crossLinks.length > 0 && (
+                {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (
                   <section>
                     <div className="flex items-center gap-2 mb-4">
                       <Zap className="h-5 w-5 text-purple-500" />
                       <h2 className="text-xl font-semibold">Connections to What You Know</h2>
                     </div>
                     <div className="space-y-3">
-                      {content.crossLinks.map((link, i) => (
+                      {lessonContent.crossLinks.map((link, i) => (
                         <Card key={i} className="border-purple-500/20 bg-purple-500/5">
                           <CardContent className="p-4">
                             <p className="font-medium text-purple-600 dark:text-purple-400">{link.topicTitle}</p>
@@ -333,7 +562,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 )}
 
                 {/* Quiz Section */}
-                {content.quiz && content.quiz.length > 0 && (
+                {lessonContent.quiz && lessonContent.quiz.length > 0 && (
                   <section>
                     <div className="flex items-center gap-2 mb-4">
                       <Brain className="h-5 w-5 text-primary" />
@@ -341,7 +570,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     </div>
                     <Card>
                       <CardContent className="p-6 space-y-6">
-                        {content.quiz.map((q, qIndex) => (
+                        {lessonContent.quiz.map((q, qIndex) => (
                           <div key={qIndex} className="space-y-3">
                             <p className="font-medium">
                               {qIndex + 1}. {q.question}
@@ -385,7 +614,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                         {!quizSubmitted && (
                           <Button 
                             onClick={handleSubmitQuiz}
-                            disabled={Object.keys(quizAnswers).length < content.quiz.length}
+                            disabled={Object.keys(quizAnswers).length < lessonContent.quiz.length}
                             className="w-full"
                             data-testid="button-submit-quiz"
                           >
@@ -498,9 +727,9 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
             </div>
           ) : (
             <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-              <TabsList className="grid w-full grid-cols-3">
-                {["beginner", "intermediate", "advanced"].map((diff) => {
-                  const Icon = difficultyIcons[diff as keyof typeof difficultyIcons];
+              <TabsList className="grid w-full grid-cols-4">
+                {["beginner", "intermediate", "advanced", "nextgen"].map((diff) => {
+                  const Icon = difficultyIcons[diff];
                   const locked = isTabLocked(diff);
                   const progress = getProgressForDifficulty(diff);
                   
@@ -518,7 +747,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                         ) : (
                           <Icon className="h-4 w-4" />
                         )}
-                        <span className="hidden sm:inline">{diff}</span>
+                        <span className="hidden sm:inline">{diff === "nextgen" ? "Next Gen" : diff}</span>
                       </div>
                       {!locked && progress.total > 0 && (
                         <span className="ml-2 text-xs text-muted-foreground">
@@ -530,7 +759,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 })}
               </TabsList>
 
-              {["beginner", "intermediate", "advanced"].map((diff) => {
+              {["beginner", "intermediate", "advanced", "nextgen"].map((diff) => {
                 const units = unitsByDifficulty[diff] || [];
                 const progress = getProgressForDifficulty(diff);
                 
@@ -624,13 +853,22 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     
                     {/* Unlock hint for locked tabs */}
                     {isTabLocked(diff) && diff !== "beginner" && (
-                      <Card className="border-dashed">
+                      <Card className={cn("border-dashed", diff === "nextgen" && "border-purple-500/30")}>
                         <CardContent className="p-6 text-center">
-                          <Lock className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
-                          <p className="font-medium mb-1">Level Locked</p>
-                          <p className="text-sm text-muted-foreground">
-                            Complete 70% of {diff === "intermediate" ? "Beginner" : "Intermediate"} lessons to unlock.
+                          <Lock className={cn("h-8 w-8 mx-auto mb-3", diff === "nextgen" ? "text-purple-500" : "text-muted-foreground")} />
+                          <p className="font-medium mb-1">
+                            {diff === "nextgen" ? "Next Gen Analysis Locked" : "Level Locked"}
                           </p>
+                          <p className="text-sm text-muted-foreground">
+                            {diff === "nextgen" 
+                              ? "Complete 70% of Advanced lessons to unlock cutting-edge research challenges."
+                              : `Complete 70% of ${diff === "intermediate" ? "Beginner" : diff === "advanced" ? "Intermediate" : "previous"} lessons to unlock.`}
+                          </p>
+                          {diff === "nextgen" && (
+                            <p className="text-xs text-purple-500 mt-2">
+                              Explore frontier research, industry challenges, and creative thinking.
+                            </p>
+                          )}
                         </CardContent>
                       </Card>
                     )}

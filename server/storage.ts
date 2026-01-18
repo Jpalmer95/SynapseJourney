@@ -17,6 +17,7 @@ import {
   type LessonProgress, type InsertLessonProgress,
   type TopicMastery, type InsertTopicMastery,
   type LessonContent,
+  type NextGenContent,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -90,7 +91,7 @@ export interface IStorage {
   getLessonUnit(id: number): Promise<LessonUnit | undefined>;
   getLessonUnitByIndex(topicId: number, difficulty: string, unitIndex: number): Promise<LessonUnit | undefined>;
   createLessonUnit(unit: InsertLessonUnit): Promise<LessonUnit>;
-  updateLessonContent(unitId: number, contentJson: LessonContent): Promise<LessonUnit>;
+  updateLessonContent(unitId: number, contentJson: LessonContent | NextGenContent): Promise<LessonUnit>;
 
   // Lesson Progress
   getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined>;
@@ -541,7 +542,7 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async updateLessonContent(unitId: number, contentJson: LessonContent): Promise<LessonUnit> {
+  async updateLessonContent(unitId: number, contentJson: LessonContent | NextGenContent): Promise<LessonUnit> {
     const [updated] = await db.update(lessonUnits)
       .set({ contentJson })
       .where(eq(lessonUnits.id, unitId))
@@ -632,10 +633,12 @@ export class DatabaseStorage implements IStorage {
     
     const beginnerUnits = units.filter(u => u.difficulty === "beginner");
     const intermediateUnits = units.filter(u => u.difficulty === "intermediate");
+    const advancedUnits = units.filter(u => u.difficulty === "advanced");
     
     let beginnerCompleted = 0;
     let intermediateCompleted = 0;
     let advancedCompleted = 0;
+    let nextgenCompleted = 0;
     
     for (const unit of units) {
       const progress = await this.getLessonProgress(userId, unit.id);
@@ -643,22 +646,27 @@ export class DatabaseStorage implements IStorage {
         if (unit.difficulty === "beginner") beginnerCompleted++;
         else if (unit.difficulty === "intermediate") intermediateCompleted++;
         else if (unit.difficulty === "advanced") advancedCompleted++;
+        else if (unit.difficulty === "nextgen") nextgenCompleted++;
       }
     }
     
-    // Unlock intermediate if 70% of beginner completed and at least one has quiz score
+    // Unlock tiers based on 70% completion of previous tier
     const beginnerThreshold = Math.ceil(beginnerUnits.length * 0.7);
     const intermediateThreshold = Math.ceil(intermediateUnits.length * 0.7);
+    const advancedThreshold = Math.ceil(advancedUnits.length * 0.7);
     
     const intermediateUnlocked = beginnerUnits.length > 0 && beginnerCompleted >= beginnerThreshold;
     const advancedUnlocked = intermediateUnits.length > 0 && intermediateCompleted >= intermediateThreshold;
+    const nextgenUnlocked = advancedUnits.length > 0 && advancedCompleted >= advancedThreshold;
     
     return this.updateTopicMastery(userId, topicId, {
       beginnerCompleted,
       intermediateCompleted,
       advancedCompleted,
+      nextgenCompleted,
       intermediateUnlocked,
       advancedUnlocked,
+      nextgenUnlocked,
     });
   }
 

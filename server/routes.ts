@@ -716,17 +716,20 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 
       // If content already exists, return it
       if (unit.contentJson) {
-        return res.json({ unit, content: unit.contentJson });
+        return res.json({ unit, content: unit.contentJson, isNextGen: unit.difficulty === "nextgen" });
       }
 
-      // Generate content using AI
+      // Generate content using AI - use different generator for Next Gen
       const masteredTopics = await storage.getUserMasteredTopics(req.user.claims.sub);
-      const content = await generateLessonContent(topic, unit, masteredTopics);
+      const isNextGen = unit.difficulty === "nextgen";
+      const content = isNextGen 
+        ? await generateNextGenContent(topic, unit, masteredTopics)
+        : await generateLessonContent(topic, unit, masteredTopics);
       
       // Save the generated content
       const updatedUnit = await storage.updateLessonContent(unitId, content);
 
-      res.json({ unit: updatedUnit, content });
+      res.json({ unit: updatedUnit, content, isNextGen });
     } catch (error) {
       console.error("Error fetching lesson content:", error);
       res.status(500).json({ error: "Failed to fetch lesson content" });
@@ -828,11 +831,12 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 }
 
 // Helper function to check if a difficulty level is unlocked
-function isUnitUnlocked(difficulty: string, mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean }): boolean {
+function isUnitUnlocked(difficulty: string, mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean }): boolean {
   switch (difficulty) {
     case "beginner": return mastery.beginnerUnlocked;
     case "intermediate": return mastery.intermediateUnlocked;
     case "advanced": return mastery.advancedUnlocked;
+    case "nextgen": return mastery.nextgenUnlocked ?? false;
     default: return mastery.beginnerUnlocked;
   }
 }
@@ -843,7 +847,7 @@ async function generateLessonOutline(topicId: number, topicTitle: string, topicD
 
 Topic Description: ${topicDescription}
 
-Create a course outline with units across three difficulty levels. Each level should have 3-4 units that progressively build understanding.
+Create a course outline with units across FOUR difficulty levels. Each level should have 3-4 units that progressively build understanding.
 
 Respond with a JSON object in this exact format:
 {
@@ -851,7 +855,8 @@ Respond with a JSON object in this exact format:
     {"difficulty": "beginner", "unitIndex": 0, "title": "Unit Title", "outline": "Brief 1-2 sentence description of what this unit covers"},
     {"difficulty": "beginner", "unitIndex": 1, "title": "Unit Title", "outline": "Brief description"},
     {"difficulty": "intermediate", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"},
-    {"difficulty": "advanced", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"}
+    {"difficulty": "advanced", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"},
+    {"difficulty": "nextgen", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"}
   ]
 }
 
@@ -859,6 +864,7 @@ Guidelines:
 - Beginner units should use simple language and everyday analogies
 - Intermediate units should explore mechanisms and relationships  
 - Advanced units should cover edge cases, research, and expert applications
+- Next Gen (nextgen) units should focus on CUTTING-EDGE RESEARCH QUESTIONS, active industry challenges, unsolved problems, and creative frontier exploration. These encourage learners to think like researchers and contribute new ideas.
 - Each unit title should be concise (3-6 words)
 - Outlines should be specific to the content covered`;
 
@@ -947,7 +953,9 @@ ${unit.difficulty === "beginner"
   ? "- Use simple language, no jargon\n- Rely on everyday analogies\n- Focus on 'what' rather than 'how'\n- Create basic comprehension quiz questions"
   : unit.difficulty === "intermediate"
   ? "- Explain mechanisms and relationships\n- Include practical applications\n- Connect to related concepts\n- Create application-based quiz questions"
-  : "- Explore edge cases and nuances\n- Reference current research or debates\n- Challenge assumptions\n- Create analytical quiz questions"}
+  : unit.difficulty === "advanced"
+  ? "- Explore edge cases and nuances\n- Reference current research or debates\n- Challenge assumptions\n- Create analytical quiz questions"
+  : "- This is NEXT GEN content - focus on frontier research and creative challenges\n- Present open-ended thought exercises instead of traditional quizzes\n- Encourage creative synthesis of ideas\n- Reference active research questions in the field"}
 
 Include 3 quiz questions.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}`;
@@ -998,9 +1006,120 @@ async function getDefaultLessonUnits(topicId: number, topicTitle: string) {
     { difficulty: "advanced", unitIndex: 0, title: "Edge Cases", outline: "Explore unusual situations and exceptions" },
     { difficulty: "advanced", unitIndex: 1, title: "Current Research", outline: "Discover what experts are working on today" },
     { difficulty: "advanced", unitIndex: 2, title: "Expert Applications", outline: "See how professionals use these concepts" },
+    { difficulty: "nextgen", unitIndex: 0, title: "Open Research Questions", outline: "Explore unsolved problems and cutting-edge questions in the field" },
+    { difficulty: "nextgen", unitIndex: 1, title: "Industry Frontiers", outline: "Discover active challenges and emerging opportunities" },
+    { difficulty: "nextgen", unitIndex: 2, title: "Creative Synthesis", outline: "Combine ideas from different domains for breakthrough insights" },
   ];
 
   return Promise.all(defaultUnits.map(u => storage.createLessonUnit({ topicId, ...u })));
+}
+
+// Generate Next Gen content using AI (frontier research and creative challenges)
+async function generateNextGenContent(
+  topic: { title: string; description: string },
+  unit: { title: string; outline?: string | null },
+  masteredTopics: { topicId: number; topicTitle: string }[]
+): Promise<any> {
+  const crossTopicContext = masteredTopics.length > 0
+    ? `The learner has mastered these topics and can draw connections: ${masteredTopics.map(t => t.topicTitle).join(", ")}.`
+    : "";
+
+  const prompt = `You are a research mentor helping advanced learners engage with cutting-edge questions in "${topic.title}".
+
+Unit: ${unit.title}
+Unit Focus: ${unit.outline || "Frontier exploration and creative thinking"}
+
+${crossTopicContext}
+
+Create content that sparks curiosity and encourages creative thinking about active research and industry challenges.
+
+Respond with JSON in this format:
+{
+  "researchContext": "2-3 paragraphs explaining the current state of research/industry in this area, what we know, and what remains unknown or debated",
+  "industryChallenge": {
+    "title": "A specific challenge or problem being actively worked on",
+    "description": "Detailed explanation of why this is challenging",
+    "currentApproaches": ["Approach 1 being tried", "Approach 2", "Approach 3"],
+    "openQuestions": ["Unanswered question 1", "Question 2", "Question 3"]
+  },
+  "thoughtExercises": [
+    {
+      "prompt": "An open-ended question that encourages creative thinking",
+      "hints": ["Hint to get started", "Another angle to consider"],
+      "explorationPaths": ["One direction to explore", "Another possibility"]
+    }
+  ],
+  "emergingTrends": [
+    {
+      "trend": "A significant emerging trend in this field",
+      "implications": "What this could mean for the future",
+      "potentialBreakthroughs": "Possible breakthrough outcomes"
+    }
+  ],
+  "creativeSynthesis": {
+    "challenge": "A creative challenge that asks learners to combine concepts in novel ways",
+    "relatedConcepts": ["Concept from this topic", "Related idea"],
+    "suggestedConnections": ["Cross-domain connection to explore", "Unexpected application area"]
+  },
+  "resources": [
+    {
+      "title": "Resource title",
+      "type": "paper/blog/tool/community",
+      "description": "Brief description of the resource"
+    }
+  ]
+}
+
+Guidelines:
+- Focus on REAL current research questions and industry challenges
+- Include 2-3 thought exercises that encourage original thinking
+- Include 2-3 emerging trends relevant to this topic
+- The creative synthesis should encourage cross-pollination of ideas
+- Make resources diverse: academic papers, industry blogs, tools, and communities
+- This is about exploration and creativity, not right/wrong answers`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.8, // Higher creativity for frontier content
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    return JSON.parse(content);
+  } catch (error) {
+    console.error("Error generating Next Gen content:", error);
+    return {
+      researchContext: `This explores the cutting edge of ${topic.title}. Researchers and industry leaders are actively working on new frontiers in this space.`,
+      industryChallenge: {
+        title: `Current Frontiers in ${topic.title}`,
+        description: "Explore the most challenging open problems in this field.",
+        currentApproaches: ["Traditional methods", "Emerging technologies", "Hybrid approaches"],
+        openQuestions: ["What are the limits of current approaches?", "How can we improve efficiency?", "What new paradigms might emerge?"]
+      },
+      thoughtExercises: [
+        {
+          prompt: `If you could redesign ${topic.title} from scratch, what would you change?`,
+          hints: ["Consider current limitations", "Think about user needs"],
+          explorationPaths: ["Start with first principles", "Look at analogies from other fields"]
+        }
+      ],
+      emergingTrends: [
+        {
+          trend: "Emerging approaches in this space",
+          implications: "Could transform how we think about this topic",
+          potentialBreakthroughs: "New capabilities and applications"
+        }
+      ],
+      creativeSynthesis: {
+        challenge: `Combine your knowledge of ${topic.title} with another field you're interested in to propose a novel application.`,
+        relatedConcepts: [topic.title, "Cross-domain thinking"],
+        suggestedConnections: ["Biology and technology", "Art and science", "Local and global perspectives"]
+      },
+      resources: []
+    };
+  }
 }
 
 function formatTimeAgo(date: Date): string {

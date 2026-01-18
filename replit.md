@@ -44,15 +44,23 @@ Preferred communication style: Simple, everyday language.
   - `aiChatSessions`, `aiChatMessages` - AI chat history
 
 ### Lesson System (AI-Generated Content)
-- **Difficulty Levels**: Beginner → Intermediate → Advanced
+- **Difficulty Levels**: Beginner → Intermediate → Advanced → **Next Gen**
 - **Progression Gating**: 70% completion required to unlock next tier
-- **Content Structure**: Each lesson unit contains:
+- **Standard Content Structure** (Beginner/Intermediate/Advanced):
   - Concept explanation (2-3 paragraphs)
   - Real-world analogy
   - Worked example (with optional code)
   - Quiz (3 multiple choice questions with explanations)
   - Cross-topic connections (references to mastered topics)
+- **Next Gen Content Structure** (Frontier Research):
+  - Research context (current state of field)
+  - Industry challenge (active problems, current approaches, open questions)
+  - Thought exercises (creative prompts with hints and exploration paths)
+  - Emerging trends (implications and potential breakthroughs)
+  - Creative synthesis challenge (cross-domain thinking prompts)
+  - Further resources (papers, tools, communities)
 - **Content Generation**: On-demand AI generation, cached in database
+- **Next Gen Purpose**: Encourage learners to think like researchers, explore cutting-edge questions, and contribute creative insights to the frontier of knowledge
 
 ### XP & Leveling System
 - Start lesson: +5 XP (first time only)
