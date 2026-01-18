@@ -150,6 +150,137 @@ export const aiChatMessages = pgTable("ai_chat_messages", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// User Profiles (background, expertise, preferences)
+export const userProfiles = pgTable("user_profiles", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  ageRange: text("age_range"), // "under18", "18-24", "25-34", "35-44", "45-54", "55+"
+  technicalLevel: text("technical_level").default("beginner"), // beginner, intermediate, advanced, expert
+  priorExperience: text("prior_experience").array(), // ["software", "physics", "music", etc.]
+  allowTestOut: boolean("allow_test_out").default(false).notNull(),
+  huggingFaceToken: text("hugging_face_token"), // Optional HF token for free models
+  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai" or "huggingface"
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Learning Pathways (curated groupings like Physics, Engineering, etc.)
+export const pathways = pgTable("pathways", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull(),
+  icon: text("icon").notNull(),
+  color: text("color").notNull(),
+  difficulty: text("difficulty").default("mixed"), // beginner, intermediate, advanced, mixed
+  estimatedHours: integer("estimated_hours"),
+  isActive: boolean("is_active").default(true).notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Pathway Topics (topics recommended within a pathway)
+export const pathwayTopics = pgTable("pathway_topics", {
+  id: serial("id").primaryKey(),
+  pathwayId: integer("pathway_id").references(() => pathways.id).notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  order: integer("order").default(0).notNull(),
+  isRequired: boolean("is_required").default(true).notNull(),
+});
+
+// User Pathway Enrollment
+export const userPathways = pgTable("user_pathways", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  pathwayId: integer("pathway_id").references(() => pathways.id).notNull(),
+  status: text("status").default("enrolled").notNull(), // enrolled, in_progress, completed
+  progress: integer("progress").default(0).notNull(), // percentage 0-100
+  startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
+// Achievements System
+export const achievements = pgTable("achievements", {
+  id: serial("id").primaryKey(),
+  name: text("name").notNull().unique(),
+  description: text("description").notNull(),
+  icon: text("icon").notNull(),
+  category: text("category").notNull(), // milestone, streak, rare, mastery, research
+  requirement: jsonb("requirement").notNull(), // { type: "xp", value: 100 } or { type: "topics", value: 25 }
+  xpReward: integer("xp_reward").default(0),
+  isSecret: boolean("is_secret").default(false).notNull(), // Easter egg achievements
+  rarity: text("rarity").default("common"), // common, uncommon, rare, epic, legendary
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// User Achievements (earned achievements)
+export const userAchievements = pgTable("user_achievements", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  achievementId: integer("achievement_id").references(() => achievements.id).notNull(),
+  earnedAt: timestamp("earned_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  progress: integer("progress").default(0), // For tracking progress toward achievement
+});
+
+// Monthly/Quarterly Challenges
+export const monthlyChallenges = pgTable("monthly_challenges", {
+  id: serial("id").primaryKey(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  topicTitle: text("topic_title").notNull(), // The frontier topic to explore
+  topicDescription: text("topic_description").notNull(),
+  startDate: timestamp("start_date").notNull(),
+  endDate: timestamp("end_date").notNull(),
+  xpMultiplier: integer("xp_multiplier").default(2), // Bonus XP multiplier
+  isActive: boolean("is_active").default(true).notNull(),
+  challengeType: text("challenge_type").default("monthly"), // monthly, quarterly
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// User Challenge Progress
+export const userChallengeProgress = pgTable("user_challenge_progress", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  challengeId: integer("challenge_id").references(() => monthlyChallenges.id).notNull(),
+  lessonsCompleted: integer("lessons_completed").default(0).notNull(),
+  xpEarned: integer("xp_earned").default(0).notNull(),
+  rank: integer("rank"), // Leaderboard position
+  completedAt: timestamp("completed_at"),
+  joinedAt: timestamp("joined_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Research Ideas (for Polymath achievement - novel research paths)
+export const researchIdeas = pgTable("research_ideas", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  relatedTopics: integer("related_topics").array(), // Topic IDs that inspired this
+  status: text("status").default("submitted"), // submitted, validated, featured
+  votes: integer("votes").default(0),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// User Learning Streaks
+export const userStreaks = pgTable("user_streaks", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  currentStreak: integer("current_streak").default(0).notNull(),
+  longestStreak: integer("longest_streak").default(0).notNull(),
+  lastActivityDate: timestamp("last_activity_date"),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Custom User Topics (user-created learning journeys)
+export const customTopics = pgTable("custom_topics", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  generatedCategoryId: integer("generated_category_id").references(() => categories.id),
+  generatedTopicId: integer("generated_topic_id").references(() => topics.id),
+  status: text("status").default("pending"), // pending, generating, ready, failed
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -208,6 +339,17 @@ export const insertUserCategoryPreferenceSchema = createInsertSchema(userCategor
 export const insertLessonUnitSchema = createInsertSchema(lessonUnits).omit({ id: true, generatedAt: true });
 export const insertLessonProgressSchema = createInsertSchema(lessonProgress).omit({ id: true, completedAt: true, lastAccessedAt: true });
 export const insertTopicMasterySchema = createInsertSchema(topicMastery).omit({ id: true, updatedAt: true });
+export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertPathwaySchema = createInsertSchema(pathways).omit({ id: true, createdAt: true });
+export const insertPathwayTopicSchema = createInsertSchema(pathwayTopics).omit({ id: true });
+export const insertUserPathwaySchema = createInsertSchema(userPathways).omit({ id: true, startedAt: true, completedAt: true });
+export const insertAchievementSchema = createInsertSchema(achievements).omit({ id: true, createdAt: true });
+export const insertUserAchievementSchema = createInsertSchema(userAchievements).omit({ id: true, earnedAt: true });
+export const insertMonthlyChallengeSchema = createInsertSchema(monthlyChallenges).omit({ id: true, createdAt: true });
+export const insertUserChallengeProgressSchema = createInsertSchema(userChallengeProgress).omit({ id: true, joinedAt: true, completedAt: true });
+export const insertResearchIdeaSchema = createInsertSchema(researchIdeas).omit({ id: true, createdAt: true });
+export const insertUserStreakSchema = createInsertSchema(userStreaks).omit({ id: true, updatedAt: true });
+export const insertCustomTopicSchema = createInsertSchema(customTopics).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -238,6 +380,28 @@ export type LessonProgress = typeof lessonProgress.$inferSelect;
 export type InsertLessonProgress = z.infer<typeof insertLessonProgressSchema>;
 export type TopicMastery = typeof topicMastery.$inferSelect;
 export type InsertTopicMastery = z.infer<typeof insertTopicMasterySchema>;
+export type UserProfile = typeof userProfiles.$inferSelect;
+export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
+export type Pathway = typeof pathways.$inferSelect;
+export type InsertPathway = z.infer<typeof insertPathwaySchema>;
+export type PathwayTopic = typeof pathwayTopics.$inferSelect;
+export type InsertPathwayTopic = z.infer<typeof insertPathwayTopicSchema>;
+export type UserPathway = typeof userPathways.$inferSelect;
+export type InsertUserPathway = z.infer<typeof insertUserPathwaySchema>;
+export type Achievement = typeof achievements.$inferSelect;
+export type InsertAchievement = z.infer<typeof insertAchievementSchema>;
+export type UserAchievement = typeof userAchievements.$inferSelect;
+export type InsertUserAchievement = z.infer<typeof insertUserAchievementSchema>;
+export type MonthlyChallenge = typeof monthlyChallenges.$inferSelect;
+export type InsertMonthlyChallenge = z.infer<typeof insertMonthlyChallengeSchema>;
+export type UserChallengeProgress = typeof userChallengeProgress.$inferSelect;
+export type InsertUserChallengeProgress = z.infer<typeof insertUserChallengeProgressSchema>;
+export type ResearchIdea = typeof researchIdeas.$inferSelect;
+export type InsertResearchIdea = z.infer<typeof insertResearchIdeaSchema>;
+export type UserStreak = typeof userStreaks.$inferSelect;
+export type InsertUserStreak = z.infer<typeof insertUserStreakSchema>;
+export type CustomTopic = typeof customTopics.$inferSelect;
+export type InsertCustomTopic = z.infer<typeof insertCustomTopicSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

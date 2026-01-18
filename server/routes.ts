@@ -790,17 +790,27 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Complete the lesson
       const progress = await storage.completeLesson(userId, unitId, quizScore);
 
-      // Award completion XP
-      const completionXp = quizScore && quizScore >= 70 ? 10 : 5;
-      await storage.addXp(userId, completionXp);
+      // Award XP based on difficulty: beginner=1, intermediate=3, advanced=5, nextgen=10
+      const baseXp = storage.getXpForDifficulty(unit.difficulty);
+      // Bonus for passing quiz (70%+)
+      const quizBonus = quizScore && quizScore >= 70 ? Math.ceil(baseXp * 0.5) : 0;
+      const totalXp = baseXp + quizBonus;
+      await storage.addXp(userId, totalXp);
+
+      // Update user streak
+      await storage.updateStreak(userId);
 
       // Check and unlock tiers
       const mastery = await storage.checkAndUnlockTiers(userId, unit.topicId);
 
+      // Check for any new achievements
+      const newAchievements = await storage.checkAndAwardAchievements(userId);
+
       res.json({ 
         progress, 
-        xpAwarded: completionXp,
+        xpAwarded: totalXp,
         mastery,
+        newAchievements,
         message: mastery.intermediateUnlocked || mastery.advancedUnlocked 
           ? "New difficulty level unlocked!" 
           : undefined
@@ -827,7 +837,376 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // ============ USER PROFILE ROUTES ============
+  
+  // Get user profile
+  app.get("/api/user/profile", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const profile = await storage.getUserProfile(req.user.claims.sub);
+      res.json(profile || { userId: req.user.claims.sub });
+    } catch (error) {
+      console.error("Error fetching profile:", error);
+      res.status(500).json({ error: "Failed to fetch profile" });
+    }
+  });
+
+  // Update user profile
+  app.post("/api/user/profile", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { ageRange, technicalLevel, priorExperience, allowTestOut, huggingFaceToken, preferredAiProvider } = req.body;
+      const profile = await storage.createOrUpdateUserProfile(req.user.claims.sub, {
+        ageRange,
+        technicalLevel,
+        priorExperience,
+        allowTestOut,
+        huggingFaceToken,
+        preferredAiProvider,
+      });
+      res.json(profile);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // ============ PATHWAY ROUTES ============
+
+  // Get all pathways
+  app.get("/api/pathways", async (req: Request, res: Response) => {
+    try {
+      const allPathways = await storage.getPathways();
+      res.json(allPathways);
+    } catch (error) {
+      console.error("Error fetching pathways:", error);
+      res.status(500).json({ error: "Failed to fetch pathways" });
+    }
+  });
+
+  // Get pathway details with topics
+  app.get("/api/pathways/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid pathway ID" });
+      }
+      const pathway = await storage.getPathwayById(id);
+      if (!pathway) {
+        return res.status(404).json({ error: "Pathway not found" });
+      }
+      const topics = await storage.getPathwayTopics(id);
+      res.json({ pathway, topics });
+    } catch (error) {
+      console.error("Error fetching pathway:", error);
+      res.status(500).json({ error: "Failed to fetch pathway" });
+    }
+  });
+
+  // Get user enrolled pathways
+  app.get("/api/user/pathways", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userPathwaysList = await storage.getUserPathways(req.user.claims.sub);
+      res.json(userPathwaysList);
+    } catch (error) {
+      console.error("Error fetching user pathways:", error);
+      res.status(500).json({ error: "Failed to fetch user pathways" });
+    }
+  });
+
+  // Enroll in pathway
+  app.post("/api/pathways/:id/enroll", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const pathwayId = parseInt(req.params.id);
+      if (isNaN(pathwayId) || pathwayId <= 0) {
+        return res.status(400).json({ error: "Invalid pathway ID" });
+      }
+      const enrollment = await storage.enrollInPathway(req.user.claims.sub, pathwayId);
+      res.json(enrollment);
+    } catch (error) {
+      console.error("Error enrolling in pathway:", error);
+      res.status(500).json({ error: "Failed to enroll in pathway" });
+    }
+  });
+
+  // ============ ACHIEVEMENT ROUTES ============
+
+  // Get all achievements
+  app.get("/api/achievements", async (req: Request, res: Response) => {
+    try {
+      const allAchievements = await storage.getAchievements();
+      res.json(allAchievements);
+    } catch (error) {
+      console.error("Error fetching achievements:", error);
+      res.status(500).json({ error: "Failed to fetch achievements" });
+    }
+  });
+
+  // Get user achievements
+  app.get("/api/user/achievements", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userAchievementsList = await storage.getUserAchievements(req.user.claims.sub);
+      res.json(userAchievementsList);
+    } catch (error) {
+      console.error("Error fetching user achievements:", error);
+      res.status(500).json({ error: "Failed to fetch user achievements" });
+    }
+  });
+
+  // Check and award achievements (called after various actions)
+  app.post("/api/user/achievements/check", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const newAchievements = await storage.checkAndAwardAchievements(req.user.claims.sub);
+      res.json({ newAchievements });
+    } catch (error) {
+      console.error("Error checking achievements:", error);
+      res.status(500).json({ error: "Failed to check achievements" });
+    }
+  });
+
+  // ============ CHALLENGE ROUTES ============
+
+  // Get active challenges
+  app.get("/api/challenges", async (req: Request, res: Response) => {
+    try {
+      const activeChallenges = await storage.getActiveChallenges();
+      res.json(activeChallenges);
+    } catch (error) {
+      console.error("Error fetching challenges:", error);
+      res.status(500).json({ error: "Failed to fetch challenges" });
+    }
+  });
+
+  // Get challenge details with leaderboard
+  app.get("/api/challenges/:id", async (req: Request, res: Response) => {
+    try {
+      const id = parseInt(req.params.id);
+      if (isNaN(id) || id <= 0) {
+        return res.status(400).json({ error: "Invalid challenge ID" });
+      }
+      const challenge = await storage.getChallengeById(id);
+      if (!challenge) {
+        return res.status(404).json({ error: "Challenge not found" });
+      }
+      const leaderboard = await storage.getChallengeLeaderboard(id);
+      res.json({ challenge, leaderboard });
+    } catch (error) {
+      console.error("Error fetching challenge:", error);
+      res.status(500).json({ error: "Failed to fetch challenge" });
+    }
+  });
+
+  // Join challenge
+  app.post("/api/challenges/:id/join", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const challengeId = parseInt(req.params.id);
+      if (isNaN(challengeId) || challengeId <= 0) {
+        return res.status(400).json({ error: "Invalid challenge ID" });
+      }
+      const progress = await storage.joinChallenge(req.user.claims.sub, challengeId);
+      res.json(progress);
+    } catch (error) {
+      console.error("Error joining challenge:", error);
+      res.status(500).json({ error: "Failed to join challenge" });
+    }
+  });
+
+  // ============ RESEARCH IDEAS ROUTES ============
+
+  // Create research idea
+  app.post("/api/research-ideas", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { title, description, relatedTopics } = req.body;
+      if (!title || !description) {
+        return res.status(400).json({ error: "Title and description are required" });
+      }
+      const idea = await storage.createResearchIdea({
+        userId: req.user.claims.sub,
+        title,
+        description,
+        relatedTopics,
+      });
+      
+      // Check for Ideator achievement
+      await storage.checkAndAwardAchievements(req.user.claims.sub);
+      
+      res.json(idea);
+    } catch (error) {
+      console.error("Error creating research idea:", error);
+      res.status(500).json({ error: "Failed to create research idea" });
+    }
+  });
+
+  // Get user research ideas
+  app.get("/api/user/research-ideas", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const ideas = await storage.getUserResearchIdeas(req.user.claims.sub);
+      res.json(ideas);
+    } catch (error) {
+      console.error("Error fetching research ideas:", error);
+      res.status(500).json({ error: "Failed to fetch research ideas" });
+    }
+  });
+
+  // Vote on research idea
+  app.post("/api/research-ideas/:id/vote", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const ideaId = parseInt(req.params.id);
+      if (isNaN(ideaId) || ideaId <= 0) {
+        return res.status(400).json({ error: "Invalid idea ID" });
+      }
+      const idea = await storage.voteResearchIdea(ideaId);
+      res.json(idea);
+    } catch (error) {
+      console.error("Error voting on idea:", error);
+      res.status(500).json({ error: "Failed to vote on idea" });
+    }
+  });
+
+  // ============ STREAK ROUTES ============
+
+  // Get user streak
+  app.get("/api/user/streak", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const streak = await storage.getUserStreak(req.user.claims.sub);
+      res.json(streak || { currentStreak: 0, longestStreak: 0 });
+    } catch (error) {
+      console.error("Error fetching streak:", error);
+      res.status(500).json({ error: "Failed to fetch streak" });
+    }
+  });
+
+  // Update streak (called when completing a lesson)
+  app.post("/api/user/streak/update", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const streak = await storage.updateStreak(req.user.claims.sub);
+      
+      // Check for streak achievements
+      await storage.checkAndAwardAchievements(req.user.claims.sub);
+      
+      res.json(streak);
+    } catch (error) {
+      console.error("Error updating streak:", error);
+      res.status(500).json({ error: "Failed to update streak" });
+    }
+  });
+
+  // ============ CUSTOM TOPIC ROUTES ============
+
+  // Create custom topic request
+  app.post("/api/custom-topics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { title, description } = req.body;
+      if (!title || !description) {
+        return res.status(400).json({ error: "Title and description are required" });
+      }
+      
+      const customTopic = await storage.createCustomTopic({
+        userId: req.user.claims.sub,
+        title,
+        description,
+      });
+      
+      // Start generating the topic in the background
+      generateCustomTopicContent(customTopic.id, title, description).catch(console.error);
+      
+      res.json(customTopic);
+    } catch (error) {
+      console.error("Error creating custom topic:", error);
+      res.status(500).json({ error: "Failed to create custom topic" });
+    }
+  });
+
+  // Get user custom topics
+  app.get("/api/user/custom-topics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topics = await storage.getUserCustomTopics(req.user.claims.sub);
+      res.json(topics);
+    } catch (error) {
+      console.error("Error fetching custom topics:", error);
+      res.status(500).json({ error: "Failed to fetch custom topics" });
+    }
+  });
+
+  // Search topics (for custom topic creation)
+  app.get("/api/topics/search", async (req: Request, res: Response) => {
+    try {
+      const query = req.query.q as string;
+      if (!query || query.length < 2) {
+        return res.json([]);
+      }
+      const allTopics = await storage.getTopics();
+      const filtered = allTopics.filter(t => 
+        t.title.toLowerCase().includes(query.toLowerCase()) ||
+        t.description.toLowerCase().includes(query.toLowerCase())
+      );
+      res.json(filtered.slice(0, 10));
+    } catch (error) {
+      console.error("Error searching topics:", error);
+      res.status(500).json({ error: "Failed to search topics" });
+    }
+  });
+
   return httpServer;
+}
+
+// Generate custom topic content using AI
+async function generateCustomTopicContent(customTopicId: number, title: string, description: string) {
+  try {
+    await storage.updateCustomTopicStatus(customTopicId, "generating");
+    
+    // Generate a category for this topic
+    const categoryPrompt = `Given the learning topic "${title}" (${description}), suggest the best category name, color (purple, blue, green, orange, pink, or teal), and icon (Brain, Code, Calculator, Beaker, Atom, Book, Music, Wrench, Rocket, Leaf, Flask, or Lightbulb) for this topic. Return JSON: { "name": "Category Name", "color": "blue", "icon": "Code" }`;
+    
+    const categoryResponse = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: categoryPrompt }],
+      response_format: { type: "json_object" },
+    });
+    
+    const categoryData = JSON.parse(categoryResponse.choices[0].message.content || "{}");
+    
+    // Create or find category
+    let category;
+    try {
+      category = await storage.createCategory({
+        name: categoryData.name || title,
+        color: categoryData.color || "blue",
+        icon: categoryData.icon || "Book",
+      });
+    } catch (e) {
+      // Category might already exist
+      const categories = await storage.getCategories();
+      category = categories.find(c => c.name === categoryData.name) || categories[0];
+    }
+    
+    // Create the topic
+    const topic = await storage.createTopic({
+      title,
+      description,
+      categoryId: category.id,
+      difficulty: "beginner",
+    });
+    
+    // Generate lesson outline
+    const units = await generateLessonOutline(topic.id, title, description);
+    
+    // Create lesson units
+    for (const unit of units) {
+      await storage.createLessonUnit({
+        topicId: topic.id,
+        difficulty: unit.difficulty,
+        unitIndex: unit.unitIndex,
+        title: unit.title,
+        outline: unit.outline,
+      });
+    }
+    
+    // Update custom topic status
+    await storage.updateCustomTopicStatus(customTopicId, "ready", topic.id, category.id);
+    
+  } catch (error) {
+    console.error("Error generating custom topic:", error);
+    await storage.updateCustomTopicStatus(customTopicId, "failed");
+  }
 }
 
 // Helper function to check if a difficulty level is unlocked

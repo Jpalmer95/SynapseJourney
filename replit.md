@@ -42,6 +42,13 @@ Preferred communication style: Simple, everyday language.
   - `lessonProgress` - User completion tracking per lesson unit
   - `topicMastery` - Tracks unlocked difficulty tiers per user/topic
   - `aiChatSessions`, `aiChatMessages` - AI chat history
+  - `userProfiles` - Extended user profiles (age, technical level, experience)
+  - `pathways`, `pathwayTopics`, `userPathways` - Curated learning pathways
+  - `achievements`, `userAchievements` - Gamification and milestone tracking
+  - `monthlyChallenges`, `userChallengeProgress` - Monthly challenge system
+  - `userStreaks` - Learning streak tracking
+  - `researchIdeas` - User-submitted research ideas
+  - `customTopics` - AI-generated custom learning journeys
 
 ### Lesson System (AI-Generated Content)
 - **Difficulty Levels**: Beginner → Intermediate → Advanced → **Next Gen**
@@ -63,11 +70,37 @@ Preferred communication style: Simple, everyday language.
 - **Next Gen Purpose**: Encourage learners to think like researchers, explore cutting-edge questions, and contribute creative insights to the frontier of knowledge
 
 ### XP & Leveling System
-- Start lesson: +5 XP (first time only)
-- Complete lesson: +5 XP (or +10 XP if quiz score >= 70%)
+- **XP by Difficulty**: Beginner +1, Intermediate +3, Advanced +5, Next Gen +10
+- **Quiz Bonus**: +50% bonus XP for quiz score >= 70%
 - XP accumulates across all topics into a total user level
 - Level progression: Level = floor(sqrt(totalXP / 100)) + 1
 - XP displayed in RabbitHole header and Profile page
+
+### Achievements System
+- **Categories**: Milestones, Streaks, Easter Eggs, Mastery, Research
+- **20 Default Achievements**: First Spark, Ignition, 100XP Club, 1000XP Master, 3/7/30-Day Streaks, Century, Lucky 7, Early Bird, Night Owl, Generalist, Polymath, Ideator, Trailblazer
+- **Rarities**: Common, Uncommon, Rare, Epic, Legendary
+- Achievements checked automatically on lesson completion and other triggers
+
+### Learning Pathways
+- **10 Default Pathways**: Physics, Engineering, Astrophysics, Computer Science, AI, Mathematics, Chemistry, Biology, Music Theory, Open Source Contributing
+- Curated groupings of related topics for comprehensive learning
+- Progress tracking per pathway with enrollment system
+
+### Custom Topics (Explore Feature)
+- Users can search existing topics or create AI-generated custom learning journeys
+- AI generates category, topic, and lesson units for any subject
+- Status tracking: pending → generating → ready/failed
+
+### User Profiles
+- Age range, technical level, prior experience areas
+- Hugging Face token option for free AI alternative to GPT-4o
+- Test Out setting to skip basic/intermediate courses via quiz
+
+### Streak Tracking
+- Daily streak updated on lesson completion
+- Longest streak record maintained
+- Streak achievements unlock at 3, 7, 30, and 100 days
 
 ### AI Integration
 - **Provider**: OpenAI API (via Replit AI Integrations)

@@ -12,6 +12,9 @@ import { MapPage } from "@/pages/map";
 import { SavedPage } from "@/pages/saved";
 import { ProfilePage } from "@/pages/profile";
 import SettingsPage from "@/pages/settings";
+import PathwaysPage from "@/pages/pathways";
+import AchievementsPage from "@/pages/achievements";
+import ExplorePage from "@/pages/explore";
 import { Loader2 } from "lucide-react";
 
 function AppContent() {
@@ -39,6 +42,9 @@ function AppContent() {
       <Route path="/saved" component={SavedPage} />
       <Route path="/profile" component={ProfilePage} />
       <Route path="/settings" component={SettingsPage} />
+      <Route path="/pathways" component={PathwaysPage} />
+      <Route path="/achievements" component={AchievementsPage} />
+      <Route path="/explore" component={ExplorePage} />
       <Route component={NotFound} />
     </Switch>
   );

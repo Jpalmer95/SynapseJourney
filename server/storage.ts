@@ -2,6 +2,8 @@ import {
   users, categories, topics, knowledgeCards, topicConnections,
   userProgress, savedCards, learningRoadmaps, aiChatSessions, aiChatMessages,
   userXp, userCategoryPreferences, lessonUnits, lessonProgress, topicMastery,
+  userProfiles, pathways, pathwayTopics, userPathways, achievements, userAchievements,
+  monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -16,6 +18,17 @@ import {
   type LessonUnit, type InsertLessonUnit,
   type LessonProgress, type InsertLessonProgress,
   type TopicMastery, type InsertTopicMastery,
+  type UserProfile, type InsertUserProfile,
+  type Pathway, type InsertPathway,
+  type PathwayTopic, type InsertPathwayTopic,
+  type UserPathway, type InsertUserPathway,
+  type Achievement, type InsertAchievement,
+  type UserAchievement, type InsertUserAchievement,
+  type MonthlyChallenge, type InsertMonthlyChallenge,
+  type UserChallengeProgress, type InsertUserChallengeProgress,
+  type ResearchIdea, type InsertResearchIdea,
+  type UserStreak, type InsertUserStreak,
+  type CustomTopic, type InsertCustomTopic,
   type LessonContent,
   type NextGenContent,
 } from "@shared/schema";
@@ -105,6 +118,55 @@ export interface IStorage {
   updateTopicMastery(userId: string, topicId: number, updates: Partial<TopicMastery>): Promise<TopicMastery>;
   checkAndUnlockTiers(userId: string, topicId: number): Promise<TopicMastery>;
   getUserMasteredTopics(userId: string): Promise<{ topicId: number; topicTitle: string }[]>;
+
+  // User Profiles
+  getUserProfile(userId: string): Promise<UserProfile | undefined>;
+  createOrUpdateUserProfile(userId: string, data: Partial<InsertUserProfile>): Promise<UserProfile>;
+
+  // Pathways
+  getPathways(): Promise<Pathway[]>;
+  getPathwayById(id: number): Promise<Pathway | undefined>;
+  createPathway(pathway: InsertPathway): Promise<Pathway>;
+  getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean }[]>;
+  addTopicToPathway(pathwayId: number, topicId: number, order: number, isRequired: boolean): Promise<PathwayTopic>;
+  getUserPathways(userId: string): Promise<{ pathway: Pathway; enrollment: UserPathway }[]>;
+  enrollInPathway(userId: string, pathwayId: number): Promise<UserPathway>;
+  updatePathwayProgress(userId: string, pathwayId: number, progress: number): Promise<UserPathway>;
+
+  // Achievements
+  getAchievements(): Promise<Achievement[]>;
+  getAchievementById(id: number): Promise<Achievement | undefined>;
+  createAchievement(achievement: InsertAchievement): Promise<Achievement>;
+  getUserAchievements(userId: string): Promise<{ achievement: Achievement; earnedAt: Date }[]>;
+  awardAchievement(userId: string, achievementId: number): Promise<UserAchievement>;
+  hasAchievement(userId: string, achievementId: number): Promise<boolean>;
+  checkAndAwardAchievements(userId: string): Promise<Achievement[]>;
+
+  // Monthly Challenges
+  getActiveChallenges(): Promise<MonthlyChallenge[]>;
+  getChallengeById(id: number): Promise<MonthlyChallenge | undefined>;
+  createChallenge(challenge: InsertMonthlyChallenge): Promise<MonthlyChallenge>;
+  joinChallenge(userId: string, challengeId: number): Promise<UserChallengeProgress>;
+  updateChallengeProgress(userId: string, challengeId: number, lessonsCompleted: number, xpEarned: number): Promise<UserChallengeProgress>;
+  getChallengeLeaderboard(challengeId: number): Promise<{ userId: string; lessonsCompleted: number; xpEarned: number; rank: number }[]>;
+
+  // Research Ideas
+  createResearchIdea(idea: InsertResearchIdea): Promise<ResearchIdea>;
+  getUserResearchIdeas(userId: string): Promise<ResearchIdea[]>;
+  getValidatedResearchIdeas(userId: string): Promise<ResearchIdea[]>;
+  voteResearchIdea(ideaId: number): Promise<ResearchIdea>;
+
+  // User Streaks
+  getUserStreak(userId: string): Promise<UserStreak | undefined>;
+  updateStreak(userId: string): Promise<UserStreak>;
+
+  // Custom Topics
+  createCustomTopic(topic: InsertCustomTopic): Promise<CustomTopic>;
+  getUserCustomTopics(userId: string): Promise<CustomTopic[]>;
+  updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic>;
+
+  // XP by difficulty
+  getXpForDifficulty(difficulty: string): number;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -686,6 +748,371 @@ export class DatabaseStorage implements IStorage {
       }
     }
     return masteredTopics;
+  }
+
+  // User Profiles
+  async getUserProfile(userId: string): Promise<UserProfile | undefined> {
+    const [profile] = await db.select().from(userProfiles).where(eq(userProfiles.userId, userId));
+    return profile;
+  }
+
+  async createOrUpdateUserProfile(userId: string, data: Partial<InsertUserProfile>): Promise<UserProfile> {
+    const existing = await this.getUserProfile(userId);
+    if (existing) {
+      const [updated] = await db.update(userProfiles)
+        .set({ ...data, updatedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(userProfiles.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(userProfiles)
+      .values({ userId, ...data })
+      .returning();
+    return created;
+  }
+
+  // Pathways
+  async getPathways(): Promise<Pathway[]> {
+    return db.select().from(pathways).where(eq(pathways.isActive, true));
+  }
+
+  async getPathwayById(id: number): Promise<Pathway | undefined> {
+    const [pathway] = await db.select().from(pathways).where(eq(pathways.id, id));
+    return pathway;
+  }
+
+  async createPathway(pathway: InsertPathway): Promise<Pathway> {
+    const [created] = await db.insert(pathways).values(pathway).returning();
+    return created;
+  }
+
+  async getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean }[]> {
+    const results = await db.select({
+      pathwayTopic: pathwayTopics,
+      topic: topics,
+    })
+      .from(pathwayTopics)
+      .innerJoin(topics, eq(pathwayTopics.topicId, topics.id))
+      .where(eq(pathwayTopics.pathwayId, pathwayId))
+      .orderBy(pathwayTopics.order);
+    
+    return results.map(r => ({
+      topic: r.topic,
+      order: r.pathwayTopic.order,
+      isRequired: r.pathwayTopic.isRequired,
+    }));
+  }
+
+  async addTopicToPathway(pathwayId: number, topicId: number, order: number, isRequired: boolean): Promise<PathwayTopic> {
+    const [created] = await db.insert(pathwayTopics)
+      .values({ pathwayId, topicId, order, isRequired })
+      .returning();
+    return created;
+  }
+
+  async getUserPathways(userId: string): Promise<{ pathway: Pathway; enrollment: UserPathway }[]> {
+    const results = await db.select({
+      pathway: pathways,
+      enrollment: userPathways,
+    })
+      .from(userPathways)
+      .innerJoin(pathways, eq(userPathways.pathwayId, pathways.id))
+      .where(eq(userPathways.userId, userId));
+    
+    return results.map(r => ({ pathway: r.pathway, enrollment: r.enrollment }));
+  }
+
+  async enrollInPathway(userId: string, pathwayId: number): Promise<UserPathway> {
+    const existing = await db.select().from(userPathways)
+      .where(and(eq(userPathways.userId, userId), eq(userPathways.pathwayId, pathwayId)));
+    if (existing.length > 0) return existing[0];
+    
+    const [created] = await db.insert(userPathways)
+      .values({ userId, pathwayId })
+      .returning();
+    return created;
+  }
+
+  async updatePathwayProgress(userId: string, pathwayId: number, progress: number): Promise<UserPathway> {
+    const [updated] = await db.update(userPathways)
+      .set({ 
+        progress, 
+        status: progress >= 100 ? "completed" : "in_progress",
+        completedAt: progress >= 100 ? sql`CURRENT_TIMESTAMP` : null,
+      })
+      .where(and(eq(userPathways.userId, userId), eq(userPathways.pathwayId, pathwayId)))
+      .returning();
+    return updated;
+  }
+
+  // Achievements
+  async getAchievements(): Promise<Achievement[]> {
+    return db.select().from(achievements);
+  }
+
+  async getAchievementById(id: number): Promise<Achievement | undefined> {
+    const [achievement] = await db.select().from(achievements).where(eq(achievements.id, id));
+    return achievement;
+  }
+
+  async createAchievement(achievement: InsertAchievement): Promise<Achievement> {
+    const [created] = await db.insert(achievements).values(achievement).returning();
+    return created;
+  }
+
+  async getUserAchievements(userId: string): Promise<{ achievement: Achievement; earnedAt: Date }[]> {
+    const results = await db.select({
+      userAchievement: userAchievements,
+      achievement: achievements,
+    })
+      .from(userAchievements)
+      .innerJoin(achievements, eq(userAchievements.achievementId, achievements.id))
+      .where(eq(userAchievements.userId, userId));
+    
+    return results.map(r => ({ 
+      achievement: r.achievement, 
+      earnedAt: r.userAchievement.earnedAt 
+    }));
+  }
+
+  async awardAchievement(userId: string, achievementId: number): Promise<UserAchievement> {
+    const [created] = await db.insert(userAchievements)
+      .values({ userId, achievementId })
+      .returning();
+    
+    // Award XP for the achievement
+    const achievement = await this.getAchievementById(achievementId);
+    if (achievement?.xpReward && achievement.xpReward > 0) {
+      await this.addXp(userId, achievement.xpReward);
+    }
+    
+    return created;
+  }
+
+  async hasAchievement(userId: string, achievementId: number): Promise<boolean> {
+    const [existing] = await db.select().from(userAchievements)
+      .where(and(eq(userAchievements.userId, userId), eq(userAchievements.achievementId, achievementId)));
+    return !!existing;
+  }
+
+  async checkAndAwardAchievements(userId: string): Promise<Achievement[]> {
+    const allAchievements = await this.getAchievements();
+    const userXpData = await this.getUserXp(userId);
+    const masteredTopics = await this.getUserMasteredTopics(userId);
+    const researchIdeasList = await this.getValidatedResearchIdeas(userId);
+    const streak = await this.getUserStreak(userId);
+    const lessonsProgress = await db.select().from(lessonProgress)
+      .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.status, "completed")));
+    
+    const awarded: Achievement[] = [];
+    
+    for (const achievement of allAchievements) {
+      if (await this.hasAchievement(userId, achievement.id)) continue;
+      
+      const req = achievement.requirement as { type: string; value: number };
+      let earned = false;
+      
+      switch (req.type) {
+        case "xp":
+          earned = (userXpData?.totalXp || 0) >= req.value;
+          break;
+        case "topics":
+          earned = masteredTopics.length >= req.value;
+          break;
+        case "lessons":
+          earned = lessonsProgress.length >= req.value;
+          break;
+        case "streak":
+          earned = (streak?.currentStreak || 0) >= req.value;
+          break;
+        case "research_ideas":
+          earned = researchIdeasList.length >= req.value;
+          break;
+        case "polymath":
+          earned = masteredTopics.length >= 50 && researchIdeasList.length >= 5;
+          break;
+      }
+      
+      if (earned) {
+        await this.awardAchievement(userId, achievement.id);
+        awarded.push(achievement);
+      }
+    }
+    
+    return awarded;
+  }
+
+  // Monthly Challenges
+  async getActiveChallenges(): Promise<MonthlyChallenge[]> {
+    const now = new Date();
+    return db.select().from(monthlyChallenges)
+      .where(and(
+        eq(monthlyChallenges.isActive, true),
+        sql`${monthlyChallenges.startDate} <= ${now}`,
+        sql`${monthlyChallenges.endDate} >= ${now}`
+      ));
+  }
+
+  async getChallengeById(id: number): Promise<MonthlyChallenge | undefined> {
+    const [challenge] = await db.select().from(monthlyChallenges).where(eq(monthlyChallenges.id, id));
+    return challenge;
+  }
+
+  async createChallenge(challenge: InsertMonthlyChallenge): Promise<MonthlyChallenge> {
+    const [created] = await db.insert(monthlyChallenges).values(challenge).returning();
+    return created;
+  }
+
+  async joinChallenge(userId: string, challengeId: number): Promise<UserChallengeProgress> {
+    const existing = await db.select().from(userChallengeProgress)
+      .where(and(eq(userChallengeProgress.userId, userId), eq(userChallengeProgress.challengeId, challengeId)));
+    if (existing.length > 0) return existing[0];
+    
+    const [created] = await db.insert(userChallengeProgress)
+      .values({ userId, challengeId })
+      .returning();
+    return created;
+  }
+
+  async updateChallengeProgress(userId: string, challengeId: number, lessonsCompleted: number, xpEarned: number): Promise<UserChallengeProgress> {
+    const [updated] = await db.update(userChallengeProgress)
+      .set({ lessonsCompleted, xpEarned })
+      .where(and(eq(userChallengeProgress.userId, userId), eq(userChallengeProgress.challengeId, challengeId)))
+      .returning();
+    return updated;
+  }
+
+  async getChallengeLeaderboard(challengeId: number): Promise<{ userId: string; lessonsCompleted: number; xpEarned: number; rank: number }[]> {
+    const participants = await db.select().from(userChallengeProgress)
+      .where(eq(userChallengeProgress.challengeId, challengeId))
+      .orderBy(desc(userChallengeProgress.xpEarned));
+    
+    return participants.map((p, index) => ({
+      userId: p.userId,
+      lessonsCompleted: p.lessonsCompleted,
+      xpEarned: p.xpEarned,
+      rank: index + 1,
+    }));
+  }
+
+  // Research Ideas
+  async createResearchIdea(idea: InsertResearchIdea): Promise<ResearchIdea> {
+    const [created] = await db.insert(researchIdeas).values(idea).returning();
+    return created;
+  }
+
+  async getUserResearchIdeas(userId: string): Promise<ResearchIdea[]> {
+    return db.select().from(researchIdeas)
+      .where(eq(researchIdeas.userId, userId))
+      .orderBy(desc(researchIdeas.createdAt));
+  }
+
+  async getValidatedResearchIdeas(userId: string): Promise<ResearchIdea[]> {
+    return db.select().from(researchIdeas)
+      .where(and(eq(researchIdeas.userId, userId), eq(researchIdeas.status, "validated")));
+  }
+
+  async voteResearchIdea(ideaId: number): Promise<ResearchIdea> {
+    const [updated] = await db.update(researchIdeas)
+      .set({ votes: sql`${researchIdeas.votes} + 1` })
+      .where(eq(researchIdeas.id, ideaId))
+      .returning();
+    
+    // Auto-validate if reaches 10 votes
+    if (updated.votes >= 10 && updated.status === "submitted") {
+      const [validated] = await db.update(researchIdeas)
+        .set({ status: "validated" })
+        .where(eq(researchIdeas.id, ideaId))
+        .returning();
+      return validated;
+    }
+    
+    return updated;
+  }
+
+  // User Streaks
+  async getUserStreak(userId: string): Promise<UserStreak | undefined> {
+    const [streak] = await db.select().from(userStreaks).where(eq(userStreaks.userId, userId));
+    return streak;
+  }
+
+  async updateStreak(userId: string): Promise<UserStreak> {
+    const existing = await this.getUserStreak(userId);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    if (existing) {
+      const lastActivity = existing.lastActivityDate ? new Date(existing.lastActivityDate) : null;
+      lastActivity?.setHours(0, 0, 0, 0);
+      
+      const yesterday = new Date(today);
+      yesterday.setDate(yesterday.getDate() - 1);
+      
+      let newStreak = existing.currentStreak;
+      
+      if (lastActivity?.getTime() === today.getTime()) {
+        // Already logged today
+        return existing;
+      } else if (lastActivity?.getTime() === yesterday.getTime()) {
+        // Consecutive day
+        newStreak = existing.currentStreak + 1;
+      } else {
+        // Streak broken
+        newStreak = 1;
+      }
+      
+      const [updated] = await db.update(userStreaks)
+        .set({
+          currentStreak: newStreak,
+          longestStreak: Math.max(newStreak, existing.longestStreak),
+          lastActivityDate: sql`CURRENT_TIMESTAMP`,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(userStreaks.id, existing.id))
+        .returning();
+      return updated;
+    }
+    
+    const [created] = await db.insert(userStreaks)
+      .values({ userId, currentStreak: 1, longestStreak: 1, lastActivityDate: sql`CURRENT_TIMESTAMP` })
+      .returning();
+    return created;
+  }
+
+  // Custom Topics
+  async createCustomTopic(topic: InsertCustomTopic): Promise<CustomTopic> {
+    const [created] = await db.insert(customTopics).values(topic).returning();
+    return created;
+  }
+
+  async getUserCustomTopics(userId: string): Promise<CustomTopic[]> {
+    return db.select().from(customTopics)
+      .where(eq(customTopics.userId, userId))
+      .orderBy(desc(customTopics.createdAt));
+  }
+
+  async updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic> {
+    const [updated] = await db.update(customTopics)
+      .set({ status, generatedTopicId, generatedCategoryId })
+      .where(eq(customTopics.id, id))
+      .returning();
+    return updated;
+  }
+
+  // XP by difficulty
+  getXpForDifficulty(difficulty: string): number {
+    switch (difficulty) {
+      case "beginner":
+        return 1;
+      case "intermediate":
+        return 3;
+      case "advanced":
+        return 5;
+      case "nextgen":
+        return 10;
+      default:
+        return 1;
+    }
   }
 }
 

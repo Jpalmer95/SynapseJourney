@@ -1,12 +1,18 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { BottomNav, SideNav } from "@/components/navigation";
 import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useState, useEffect } from "react";
+import { useToast } from "@/hooks/use-toast";
 
 interface CategoryPreference {
   categoryId: number;
@@ -14,6 +20,16 @@ interface CategoryPreference {
   categoryColor: string;
   categoryIcon: string;
   enabled: boolean;
+}
+
+interface UserProfile {
+  userId?: string;
+  ageRange?: string;
+  technicalLevel?: string;
+  priorExperience?: string[];
+  allowTestOut?: boolean;
+  huggingFaceToken?: string;
+  preferredAiProvider?: string;
 }
 
 const iconMap: Record<string, typeof Brain> = {
@@ -30,10 +46,59 @@ const colorMap: Record<string, string> = {
   orange: "bg-orange-500",
 };
 
+const ageRanges = [
+  { value: "under18", label: "Under 18" },
+  { value: "18-24", label: "18-24" },
+  { value: "25-34", label: "25-34" },
+  { value: "35-44", label: "35-44" },
+  { value: "45-54", label: "45-54" },
+  { value: "55+", label: "55+" },
+];
+
+const technicalLevels = [
+  { value: "beginner", label: "Beginner", description: "New to technical topics" },
+  { value: "intermediate", label: "Intermediate", description: "Some technical background" },
+  { value: "advanced", label: "Advanced", description: "Strong technical foundation" },
+  { value: "expert", label: "Expert", description: "Deep expertise in technical fields" },
+];
+
+const experienceAreas = [
+  "Software Development",
+  "Data Science",
+  "Physics",
+  "Mathematics",
+  "Engineering",
+  "Biology",
+  "Chemistry",
+  "Music",
+  "Art & Design",
+  "Business",
+  "Finance",
+  "Healthcare",
+  "Education",
+  "Other Sciences",
+];
+
 export default function SettingsPage() {
-  const { data: preferences, isLoading } = useQuery<CategoryPreference[]>({
+  const { toast } = useToast();
+  
+  const { data: preferences, isLoading: prefsLoading } = useQuery<CategoryPreference[]>({
     queryKey: ["/api/user/preferences"],
   });
+
+  const { data: profile, isLoading: profileLoading } = useQuery<UserProfile>({
+    queryKey: ["/api/user/profile"],
+  });
+
+  const [localProfile, setLocalProfile] = useState<UserProfile>({});
+  const [hasChanges, setHasChanges] = useState(false);
+
+  useEffect(() => {
+    if (profile) {
+      setLocalProfile(profile);
+      setHasChanges(false);
+    }
+  }, [profile]);
 
   const toggleMutation = useMutation({
     mutationFn: async ({ categoryId, enabled }: { categoryId: number; enabled: boolean }) => {
@@ -60,6 +125,44 @@ export default function SettingsPage() {
     },
   });
 
+  const profileMutation = useMutation({
+    mutationFn: async (data: Partial<UserProfile>) => {
+      return apiRequest("POST", "/api/user/profile", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
+      setHasChanges(false);
+      toast({
+        title: "Profile Updated",
+        description: "Your learning profile has been saved.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to save profile. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateLocalProfile = (updates: Partial<UserProfile>) => {
+    setLocalProfile(prev => ({ ...prev, ...updates }));
+    setHasChanges(true);
+  };
+
+  const toggleExperience = (area: string) => {
+    const current = localProfile.priorExperience || [];
+    const updated = current.includes(area)
+      ? current.filter(a => a !== area)
+      : [...current, area];
+    updateLocalProfile({ priorExperience: updated });
+  };
+
+  const saveProfile = () => {
+    profileMutation.mutate(localProfile);
+  };
+
   const enabledCount = preferences?.filter((p) => p.enabled).length || 0;
 
   return (
@@ -81,14 +184,244 @@ export default function SettingsPage() {
               <h1 className="text-2xl md:text-3xl font-bold">Settings</h1>
             </div>
             <p className="text-muted-foreground">
-              Customize your learning experience by selecting the topics that interest you.
+              Customize your learning experience and personalize lesson content.
             </p>
           </motion.div>
 
+          {/* User Profile Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.05 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <User className="h-5 w-5 text-primary" />
+                  <CardTitle>Your Learning Profile</CardTitle>
+                </div>
+                <CardDescription>
+                  Help us personalize lesson content to your background and experience
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {profileLoading ? (
+                  <div className="space-y-4">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-20 w-full" />
+                  </div>
+                ) : (
+                  <>
+                    {/* Age Range */}
+                    <div className="space-y-2">
+                      <Label htmlFor="age-range">Age Range</Label>
+                      <Select
+                        value={localProfile.ageRange || ""}
+                        onValueChange={(value) => updateLocalProfile({ ageRange: value })}
+                      >
+                        <SelectTrigger id="age-range" data-testid="select-age-range">
+                          <SelectValue placeholder="Select your age range" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ageRanges.map((range) => (
+                            <SelectItem key={range.value} value={range.value}>
+                              {range.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    {/* Technical Level */}
+                    <div className="space-y-2">
+                      <Label>Technical Level</Label>
+                      <div className="grid grid-cols-2 gap-2">
+                        {technicalLevels.map((level) => (
+                          <Button
+                            key={level.value}
+                            variant={localProfile.technicalLevel === level.value ? "default" : "outline"}
+                            className="h-auto py-3 flex-col items-start"
+                            onClick={() => updateLocalProfile({ technicalLevel: level.value })}
+                            data-testid={`btn-level-${level.value}`}
+                          >
+                            <span className="font-medium">{level.label}</span>
+                            <span className="text-xs opacity-70">{level.description}</span>
+                          </Button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Prior Experience */}
+                    <div className="space-y-2">
+                      <Label>Prior Experience (select all that apply)</Label>
+                      <div className="flex flex-wrap gap-2">
+                        {experienceAreas.map((area) => (
+                          <Badge
+                            key={area}
+                            variant={localProfile.priorExperience?.includes(area) ? "default" : "outline"}
+                            className="cursor-pointer"
+                            onClick={() => toggleExperience(area)}
+                            data-testid={`badge-exp-${area.toLowerCase().replace(/\s+/g, "-")}`}
+                          >
+                            {area}
+                          </Badge>
+                        ))}
+                      </div>
+                    </div>
+
+                    {hasChanges && (
+                      <Button 
+                        onClick={saveProfile} 
+                        disabled={profileMutation.isPending}
+                        className="w-full"
+                        data-testid="btn-save-profile"
+                      >
+                        {profileMutation.isPending ? "Saving..." : "Save Profile"}
+                      </Button>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Learning Preferences Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <GraduationCap className="h-5 w-5 text-primary" />
+                  <CardTitle>Learning Preferences</CardTitle>
+                </div>
+                <CardDescription>
+                  Customize how you progress through courses
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* Test Out Option */}
+                <div className="flex items-center justify-between p-4 rounded-lg border">
+                  <div className="space-y-1">
+                    <p className="font-medium">Allow Test Out</p>
+                    <p className="text-sm text-muted-foreground">
+                      Skip basic/intermediate courses by passing all quizzes
+                    </p>
+                  </div>
+                  <Switch
+                    checked={localProfile.allowTestOut || false}
+                    onCheckedChange={(checked) => {
+                      updateLocalProfile({ allowTestOut: checked });
+                      profileMutation.mutate({ ...localProfile, allowTestOut: checked });
+                    }}
+                    data-testid="switch-test-out"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* AI Provider Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  <CardTitle>AI Provider</CardTitle>
+                </div>
+                <CardDescription>
+                  Choose which AI model generates your lessons
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {/* AI Provider Selection */}
+                <div className="space-y-2">
+                  <Label>Preferred AI Provider</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button
+                      variant={localProfile.preferredAiProvider !== "huggingface" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "openai" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "openai" });
+                      }}
+                      data-testid="btn-provider-openai"
+                    >
+                      <span className="font-medium">OpenAI GPT-4o</span>
+                      <span className="text-xs opacity-70">Default (API cost)</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "huggingface" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "huggingface" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "huggingface" });
+                      }}
+                      data-testid="btn-provider-huggingface"
+                    >
+                      <span className="font-medium">Hugging Face</span>
+                      <span className="text-xs opacity-70">Free models</span>
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Hugging Face Token */}
+                {localProfile.preferredAiProvider === "huggingface" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="hf-token" className="flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      Hugging Face Access Token
+                    </Label>
+                    <Input
+                      id="hf-token"
+                      type="password"
+                      placeholder="hf_..."
+                      value={localProfile.huggingFaceToken || ""}
+                      onChange={(e) => updateLocalProfile({ huggingFaceToken: e.target.value })}
+                      data-testid="input-hf-token"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Get your free token at{" "}
+                      <a 
+                        href="https://huggingface.co/settings/tokens" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-primary underline"
+                      >
+                        huggingface.co/settings/tokens
+                      </a>
+                    </p>
+                    {hasChanges && (
+                      <Button 
+                        onClick={saveProfile} 
+                        disabled={profileMutation.isPending}
+                        size="sm"
+                        data-testid="btn-save-hf-token"
+                      >
+                        Save Token
+                      </Button>
+                    )}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Category Preferences Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.2 }}
           >
             <Card>
               <CardHeader>
@@ -105,7 +438,7 @@ export default function SettingsPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {isLoading ? (
+                {prefsLoading ? (
                   <>
                     {[1, 2, 3, 4].map((i) => (
                       <div key={i} className="flex items-center justify-between p-3 rounded-lg border border-border">
@@ -173,7 +506,7 @@ export default function SettingsPage() {
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.2 }}
+            transition={{ delay: 0.25 }}
             className="mt-6"
           >
             <Card>
