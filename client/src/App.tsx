@@ -11,6 +11,7 @@ import { HomePage } from "@/pages/home";
 import { MapPage } from "@/pages/map";
 import { SavedPage } from "@/pages/saved";
 import { ProfilePage } from "@/pages/profile";
+import SettingsPage from "@/pages/settings";
 import { Loader2 } from "lucide-react";
 
 function AppContent() {
@@ -37,6 +38,7 @@ function AppContent() {
       <Route path="/map" component={MapPage} />
       <Route path="/saved" component={SavedPage} />
       <Route path="/profile" component={ProfilePage} />
+      <Route path="/settings" component={SettingsPage} />
       <Route component={NotFound} />
     </Switch>
   );

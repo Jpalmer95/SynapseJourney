@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Compass, Map, BookMarked, User, Sparkles } from "lucide-react";
+import { Compass, Map, BookMarked, User, Sparkles, Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ const navItems = [
   { href: "/map", icon: Map, label: "Map" },
   { href: "/saved", icon: BookMarked, label: "Saved" },
   { href: "/profile", icon: User, label: "Profile" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
 export function BottomNav() {

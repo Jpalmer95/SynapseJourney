@@ -46,7 +46,7 @@ export const topicConnections = pgTable("topic_connections", {
   strength: integer("strength").default(1),
 });
 
-// User Learning Progress
+// User Learning Progress with XP tracking
 export const userProgress = pgTable("user_progress", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
@@ -54,8 +54,27 @@ export const userProgress = pgTable("user_progress", {
   status: text("status").notNull().default("discovered"),
   mastery: integer("mastery").default(0),
   timeSpent: integer("time_spent").default(0),
+  xp: integer("xp").default(0),
+  currentLevel: integer("current_level").default(0),
   lastAccessedAt: timestamp("last_accessed_at").default(sql`CURRENT_TIMESTAMP`),
   startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// User XP totals and level
+export const userXp = pgTable("user_xp", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  totalXp: integer("total_xp").default(0).notNull(),
+  level: integer("level").default(1).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// User Category Preferences (for settings)
+export const userCategoryPreferences = pgTable("user_category_preferences", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  categoryId: integer("category_id").references(() => categories.id).notNull(),
+  enabled: boolean("enabled").default(true).notNull(),
 });
 
 // Saved/Favorite Cards
@@ -145,6 +164,8 @@ export const insertSavedCardSchema = createInsertSchema(savedCards).omit({ id: t
 export const insertLearningRoadmapSchema = createInsertSchema(learningRoadmaps).omit({ id: true, createdAt: true });
 export const insertAiChatSessionSchema = createInsertSchema(aiChatSessions).omit({ id: true, createdAt: true });
 export const insertAiChatMessageSchema = createInsertSchema(aiChatMessages).omit({ id: true, createdAt: true });
+export const insertUserXpSchema = createInsertSchema(userXp).omit({ id: true, updatedAt: true });
+export const insertUserCategoryPreferenceSchema = createInsertSchema(userCategoryPreferences).omit({ id: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -165,3 +186,7 @@ export type AiChatSession = typeof aiChatSessions.$inferSelect;
 export type InsertAiChatSession = z.infer<typeof insertAiChatSessionSchema>;
 export type AiChatMessage = typeof aiChatMessages.$inferSelect;
 export type InsertAiChatMessage = z.infer<typeof insertAiChatMessageSchema>;
+export type UserXp = typeof userXp.$inferSelect;
+export type InsertUserXp = z.infer<typeof insertUserXpSchema>;
+export type UserCategoryPreference = typeof userCategoryPreferences.$inferSelect;
+export type InsertUserCategoryPreference = z.infer<typeof insertUserCategoryPreferenceSchema>;

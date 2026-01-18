@@ -448,6 +448,123 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // XP System
+  app.get("/api/user/xp", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const xp = await storage.getUserXp(userId);
+      
+      if (!xp) {
+        // Return default XP for new users
+        res.json({ totalXp: 0, level: 1, xpToNextLevel: 100, progress: 0 });
+        return;
+      }
+
+      // Calculate XP progress to next level
+      const currentLevelXp = Math.pow((xp.level - 1), 2) * 100;
+      const nextLevelXp = Math.pow(xp.level, 2) * 100;
+      const xpInCurrentLevel = (xp.totalXp || 0) - currentLevelXp;
+      const xpNeededForLevel = nextLevelXp - currentLevelXp;
+      const progress = Math.min(100, (xpInCurrentLevel / xpNeededForLevel) * 100);
+
+      res.json({
+        totalXp: xp.totalXp,
+        level: xp.level,
+        xpToNextLevel: nextLevelXp - (xp.totalXp || 0),
+        progress: Math.round(progress),
+      });
+    } catch (error) {
+      console.error("Error fetching XP:", error);
+      res.status(500).json({ error: "Failed to fetch XP" });
+    }
+  });
+
+  app.post("/api/user/xp", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { topicId, amount } = req.body;
+
+      if (!topicId || typeof amount !== "number" || amount < 0 || amount > 100) {
+        return res.status(400).json({ error: "Invalid XP data" });
+      }
+
+      // Verify topic exists
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      const progress = await storage.addTopicXp(userId, topicId, amount);
+      const xp = await storage.getUserXp(userId);
+
+      res.json({ progress, xp });
+    } catch (error) {
+      console.error("Error adding XP:", error);
+      res.status(500).json({ error: "Failed to add XP" });
+    }
+  });
+
+  // Category Preferences
+  app.get("/api/user/preferences", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const preferences = await storage.getCategoryPreferences(userId);
+      const categories = await storage.getCategories();
+
+      // Create a full list with defaults for categories without preferences
+      const fullPreferences = categories.map((cat) => {
+        const pref = preferences.find((p) => p.categoryId === cat.id);
+        return {
+          categoryId: cat.id,
+          categoryName: cat.name,
+          categoryColor: cat.color,
+          categoryIcon: cat.icon,
+          enabled: pref?.enabled ?? true, // Default to enabled
+        };
+      });
+
+      res.json(fullPreferences);
+    } catch (error) {
+      console.error("Error fetching preferences:", error);
+      res.status(500).json({ error: "Failed to fetch preferences" });
+    }
+  });
+
+  app.post("/api/user/preferences", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { categoryId, enabled } = req.body;
+
+      if (typeof categoryId !== "number" || typeof enabled !== "boolean") {
+        return res.status(400).json({ error: "Invalid preference data" });
+      }
+
+      // Verify category exists
+      const category = await storage.getCategoryById(categoryId);
+      if (!category) {
+        return res.status(404).json({ error: "Category not found" });
+      }
+
+      const pref = await storage.setCategoryPreference(userId, categoryId, enabled);
+      res.json(pref);
+    } catch (error) {
+      console.error("Error setting preference:", error);
+      res.status(500).json({ error: "Failed to set preference" });
+    }
+  });
+
+  // Filtered feed (respects user preferences)
+  app.get("/api/feed/personalized", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const feedCards = await storage.getFeedCardsFiltered(userId, 20);
+      res.json(feedCards);
+    } catch (error) {
+      console.error("Error fetching personalized feed:", error);
+      res.status(500).json({ error: "Failed to fetch personalized feed" });
+    }
+  });
+
   // Seed sample data endpoint (for development)
   app.post("/api/seed", async (req: Request, res: Response) => {
     try {

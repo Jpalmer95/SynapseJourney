@@ -38,6 +38,13 @@ interface RecentTopic {
   lastAccessed: string;
 }
 
+interface UserXpData {
+  totalXp: number;
+  level: number;
+  xpToNextLevel: number;
+  progress: number;
+}
+
 export function ProfilePage() {
   const { user, logout, isLoading: authLoading } = useAuth();
 
@@ -47,6 +54,10 @@ export function ProfilePage() {
 
   const { data: recentTopics, isLoading: topicsLoading } = useQuery<RecentTopic[]>({
     queryKey: ["/api/user/recent-topics"],
+  });
+
+  const { data: userXp } = useQuery<UserXpData>({
+    queryKey: ["/api/user/xp"],
   });
 
   const isLoading = authLoading || statsLoading;
@@ -136,6 +147,41 @@ export function ProfilePage() {
               </CardContent>
             </Card>
           </motion.div>
+
+          {userXp && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.05 }}
+              className="mb-6"
+            >
+              <Card className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent border-primary/20">
+                <CardContent className="pt-6">
+                  <div className="flex flex-col md:flex-row items-center gap-6">
+                    <div className="flex items-center justify-center w-20 h-20 rounded-full bg-primary/20 border-4 border-primary">
+                      <span className="text-3xl font-bold text-primary">{userXp.level}</span>
+                    </div>
+                    <div className="flex-1 text-center md:text-left">
+                      <div className="flex items-center gap-2 justify-center md:justify-start mb-2">
+                        <Trophy className="h-5 w-5 text-primary" />
+                        <h3 className="text-lg font-semibold">Level {userXp.level} Learner</h3>
+                      </div>
+                      <div className="mb-2">
+                        <div className="flex items-center justify-between text-sm mb-1">
+                          <span className="text-muted-foreground">{userXp.totalXp} XP total</span>
+                          <span className="text-muted-foreground">{userXp.xpToNextLevel} XP to level {userXp.level + 1}</span>
+                        </div>
+                        <Progress value={userXp.progress} className="h-2" />
+                      </div>
+                      <p className="text-sm text-muted-foreground">
+                        Keep learning to earn XP and level up! Spend time in modules to gain experience.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          )}
 
           <motion.div
             initial={{ opacity: 0, y: 20 }}

@@ -36,7 +36,16 @@ Preferred communication style: Simple, everyday language.
   - `categories`, `topics`, `knowledgeCards` - Knowledge graph content
   - `topicConnections` - Graph edges connecting related topics
   - `userProgress`, `savedCards` - User learning state
-  - `conversations`, `messages` - AI chat history
+  - `userXp` - User total XP and level tracking
+  - `userCategoryPreferences` - Category filter preferences for personalized feed
+  - `learningRoadmaps` - AI-generated learning paths per topic
+  - `aiChatSessions`, `aiChatMessages` - AI chat history
+
+### XP & Leveling System
+- Users earn XP by starting learning levels (+5 XP per level)
+- XP accumulates across all topics into a total user level
+- Level progression: Level = floor(sqrt(totalXP / 100)) + 1
+- XP displayed in RabbitHole header and Profile page
 
 ### AI Integration
 - **Provider**: OpenAI API (via Replit AI Integrations)

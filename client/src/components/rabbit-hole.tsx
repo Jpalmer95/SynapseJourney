@@ -13,15 +13,17 @@ import {
   Lightbulb,
   Zap,
   Brain,
+  Trophy,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiChat } from "@/components/ai-chat";
 import { cn } from "@/lib/utils";
-import type { Topic, Category, LearningRoadmap } from "@shared/schema";
+import { queryClient, apiRequest } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import type { Topic, Category } from "@shared/schema";
 
 interface RoadmapLevel {
   id: number;
@@ -43,12 +45,54 @@ const levelIcons = [Lightbulb, BookOpen, Brain, Zap, Sparkles];
 export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [showChat, setShowChat] = useState(false);
   const [expandedLevel, setExpandedLevel] = useState<number | null>(null);
+  const [activeLevel, setActiveLevel] = useState<number | null>(null);
+  const [xpEarned, setXpEarned] = useState(0);
+  const { toast } = useToast();
 
-  const { data: roadmap, isLoading } = useQuery<{ levels: RoadmapLevel[] }>({
+  const { data: roadmap, isLoading } = useQuery<{ levels: { levels: RoadmapLevel[] } | RoadmapLevel[] }>({
     queryKey: ["/api/roadmap", topic.id],
   });
 
-  const levels: RoadmapLevel[] = roadmap?.levels || [
+  const { data: userXp } = useQuery<{ totalXp: number; level: number; progress: number }>({
+    queryKey: ["/api/user/xp"],
+  });
+
+  const addXpMutation = useMutation({
+    mutationFn: async ({ topicId, amount }: { topicId: number; amount: number }) => {
+      return apiRequest("POST", "/api/user/xp", { topicId, amount });
+    },
+    onSuccess: (_, variables) => {
+      setXpEarned((prev) => prev + variables.amount);
+      queryClient.invalidateQueries({ queryKey: ["/api/user/xp"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/stats"] });
+    },
+  });
+
+  const handleStartLevel = (levelId: number) => {
+    if (activeLevel === levelId) return;
+    
+    setActiveLevel(levelId);
+    addXpMutation.mutate({ topicId: topic.id, amount: 5 });
+    toast({
+      title: "+5 XP",
+      description: `Started learning ${levels.find((l) => l.id === levelId)?.title}`,
+    });
+  };
+
+  // Handle both nested {levels: {levels: [...]}} and flat {levels: [...]} structures
+  const extractLevels = (): RoadmapLevel[] => {
+    if (!roadmap?.levels) return [];
+    // Check if levels is nested (API returns {levels: {levels: [...]}})
+    if (Array.isArray(roadmap.levels)) {
+      return roadmap.levels;
+    }
+    if (roadmap.levels && typeof roadmap.levels === 'object' && 'levels' in roadmap.levels) {
+      return (roadmap.levels as { levels: RoadmapLevel[] }).levels || [];
+    }
+    return [];
+  };
+
+  const levels: RoadmapLevel[] = extractLevels().length > 0 ? extractLevels() : [
     {
       id: 1,
       title: "The Basics",
@@ -124,7 +168,18 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
             <h1 className="text-lg font-semibold truncate">{topic.title}</h1>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
+            {userXp && (
+              <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
+                <Trophy className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium">Lvl {userXp.level}</span>
+                {xpEarned > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    +{xpEarned} XP
+                  </Badge>
+                )}
+              </div>
+            )}
             <div className="hidden md:flex items-center gap-2">
               <span className="text-sm text-muted-foreground">
                 {completedCount}/{levels.length}
@@ -261,12 +316,27 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                               transition={{ duration: 0.2 }}
                             >
                               <CardContent className="pt-0 pb-4">
-                                <p className="text-muted-foreground">
+                                <p className="text-muted-foreground leading-relaxed">
                                   {level.content}
                                 </p>
                                 <div className="flex items-center gap-2 mt-4">
-                                  <Button size="sm" data-testid={`button-start-level-${level.id}`}>
-                                    Start Learning
+                                  <Button 
+                                    size="sm" 
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleStartLevel(level.id);
+                                    }}
+                                    disabled={activeLevel === level.id}
+                                    data-testid={`button-start-level-${level.id}`}
+                                  >
+                                    {activeLevel === level.id ? (
+                                      <>
+                                        <CheckCircle className="h-4 w-4 mr-1" />
+                                        In Progress
+                                      </>
+                                    ) : (
+                                      "Start Learning"
+                                    )}
                                   </Button>
                                   <Button
                                     variant="outline"
@@ -280,6 +350,9 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                                     <MessageCircle className="h-4 w-4 mr-1" />
                                     Ask AI
                                   </Button>
+                                  <Badge variant="secondary" className="text-xs">
+                                    +5 XP
+                                  </Badge>
                                 </div>
                               </CardContent>
                             </motion.div>

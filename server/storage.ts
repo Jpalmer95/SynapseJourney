@@ -1,6 +1,7 @@
 import {
   users, categories, topics, knowledgeCards, topicConnections,
   userProgress, savedCards, learningRoadmaps, aiChatSessions, aiChatMessages,
+  userXp, userCategoryPreferences,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -10,6 +11,8 @@ import {
   type LearningRoadmap, type InsertLearningRoadmap,
   type AiChatSession, type InsertAiChatSession,
   type AiChatMessage, type InsertAiChatMessage,
+  type UserXp, type InsertUserXp,
+  type UserCategoryPreference, type InsertUserCategoryPreference,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -66,6 +69,17 @@ export interface IStorage {
     edges: { from: number; to: number; strength: number }[];
     stats: { total: number; mastered: number; learning: number };
   }>;
+
+  // XP System
+  getUserXp(userId: string): Promise<UserXp | undefined>;
+  addXp(userId: string, amount: number): Promise<UserXp>;
+  addTopicXp(userId: string, topicId: number, amount: number): Promise<UserProgress>;
+
+  // Category Preferences
+  getCategoryPreferences(userId: string): Promise<{ categoryId: number; enabled: boolean }[]>;
+  setCategoryPreference(userId: string, categoryId: number, enabled: boolean): Promise<UserCategoryPreference>;
+  getEnabledCategories(userId: string): Promise<number[]>;
+  getFeedCardsFiltered(userId: string, limit?: number): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -321,6 +335,154 @@ export class DatabaseStorage implements IStorage {
     };
 
     return { nodes, edges, stats };
+  }
+
+  // XP System
+  async getUserXp(userId: string): Promise<UserXp | undefined> {
+    const [xp] = await db.select().from(userXp).where(eq(userXp.userId, userId));
+    return xp;
+  }
+
+  async addXp(userId: string, amount: number): Promise<UserXp> {
+    const existing = await this.getUserXp(userId);
+    
+    // Calculate level based on XP (100 XP per level, exponential growth)
+    const calculateLevel = (totalXp: number): number => {
+      return Math.floor(Math.sqrt(totalXp / 100)) + 1;
+    };
+
+    if (existing) {
+      const newTotalXp = (existing.totalXp || 0) + amount;
+      const newLevel = calculateLevel(newTotalXp);
+      
+      const [updated] = await db.update(userXp)
+        .set({
+          totalXp: newTotalXp,
+          level: newLevel,
+          updatedAt: new Date(),
+        })
+        .where(eq(userXp.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const newLevel = calculateLevel(amount);
+    const [created] = await db.insert(userXp).values({
+      userId,
+      totalXp: amount,
+      level: newLevel,
+    }).returning();
+    return created;
+  }
+
+  async addTopicXp(userId: string, topicId: number, amount: number): Promise<UserProgress> {
+    const existing = await this.getProgressForTopic(userId, topicId);
+    
+    // Calculate level for topic (10 XP per level for topics)
+    const calculateTopicLevel = (xp: number): number => {
+      return Math.floor(xp / 10);
+    };
+
+    // Also add to total XP
+    await this.addXp(userId, amount);
+
+    if (existing) {
+      const newXp = (existing.xp || 0) + amount;
+      const newLevel = calculateTopicLevel(newXp);
+      
+      const [updated] = await db.update(userProgress)
+        .set({
+          xp: newXp,
+          currentLevel: newLevel,
+          lastAccessedAt: new Date(),
+        })
+        .where(eq(userProgress.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(userProgress).values({
+      userId,
+      topicId,
+      xp: amount,
+      currentLevel: calculateTopicLevel(amount),
+      status: "learning",
+    }).returning();
+    return created;
+  }
+
+  // Category Preferences
+  async getCategoryPreferences(userId: string): Promise<{ categoryId: number; enabled: boolean }[]> {
+    const prefs = await db.select().from(userCategoryPreferences)
+      .where(eq(userCategoryPreferences.userId, userId));
+    return prefs.map((p) => ({ categoryId: p.categoryId, enabled: p.enabled }));
+  }
+
+  async setCategoryPreference(userId: string, categoryId: number, enabled: boolean): Promise<UserCategoryPreference> {
+    const existing = await db.select().from(userCategoryPreferences)
+      .where(and(
+        eq(userCategoryPreferences.userId, userId),
+        eq(userCategoryPreferences.categoryId, categoryId)
+      ));
+
+    if (existing.length > 0) {
+      const [updated] = await db.update(userCategoryPreferences)
+        .set({ enabled })
+        .where(eq(userCategoryPreferences.id, existing[0].id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(userCategoryPreferences)
+      .values({ userId, categoryId, enabled })
+      .returning();
+    return created;
+  }
+
+  async getEnabledCategories(userId: string): Promise<number[]> {
+    const prefs = await this.getCategoryPreferences(userId);
+    const allCategories = await this.getCategories();
+    
+    // If no preferences set, all categories are enabled by default
+    if (prefs.length === 0) {
+      return allCategories.map((c) => c.id);
+    }
+    
+    const prefsMap = new Map(prefs.map((p) => [p.categoryId, p.enabled]));
+    
+    // Categories without explicit preference are enabled by default
+    return allCategories
+      .filter((c) => prefsMap.get(c.id) !== false)
+      .map((c) => c.id);
+  }
+
+  async getFeedCardsFiltered(userId: string, limit = 20): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]> {
+    const enabledCategories = await this.getEnabledCategories(userId);
+    
+    if (enabledCategories.length === 0) {
+      return [];
+    }
+
+    const cards = await db
+      .select({
+        card: knowledgeCards,
+        topic: topics,
+        category: categories,
+      })
+      .from(knowledgeCards)
+      .innerJoin(topics, eq(knowledgeCards.topicId, topics.id))
+      .leftJoin(categories, eq(topics.categoryId, categories.id))
+      .orderBy(sql`RANDOM()`)
+      .limit(limit);
+
+    // Filter by enabled categories
+    return cards
+      .filter((row) => !row.topic.categoryId || enabledCategories.includes(row.topic.categoryId))
+      .map((row) => ({
+        card: row.card,
+        topic: row.topic,
+        category: row.category || undefined,
+      }));
   }
 }
 
