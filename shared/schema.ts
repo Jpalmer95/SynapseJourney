@@ -94,6 +94,43 @@ export const learningRoadmaps = pgTable("learning_roadmaps", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Lesson Units (AI-generated learning content)
+export const lessonUnits = pgTable("lesson_units", {
+  id: serial("id").primaryKey(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  difficulty: text("difficulty").notNull(), // beginner, intermediate, advanced
+  unitIndex: integer("unit_index").notNull(),
+  title: text("title").notNull(),
+  outline: text("outline"), // Brief description of unit
+  contentJson: jsonb("content_json"), // Full lesson content: { concept, analogy, example, quiz, crossLinks }
+  generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Lesson Progress (user completion tracking per unit)
+export const lessonProgress = pgTable("lesson_progress", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  unitId: integer("unit_id").references(() => lessonUnits.id).notNull(),
+  status: text("status").notNull().default("not_started"), // not_started, in_progress, completed
+  quizScore: integer("quiz_score"), // null if not attempted, 0-100
+  completedAt: timestamp("completed_at"),
+  lastAccessedAt: timestamp("last_accessed_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Topic Mastery (tracks unlocked tiers per user per topic)
+export const topicMastery = pgTable("topic_mastery", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  beginnerUnlocked: boolean("beginner_unlocked").default(true).notNull(),
+  intermediateUnlocked: boolean("intermediate_unlocked").default(false).notNull(),
+  advancedUnlocked: boolean("advanced_unlocked").default(false).notNull(),
+  beginnerCompleted: integer("beginner_completed").default(0).notNull(),
+  intermediateCompleted: integer("intermediate_completed").default(0).notNull(),
+  advancedCompleted: integer("advanced_completed").default(0).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // AI Chat Sessions (per topic context)
 export const aiChatSessions = pgTable("ai_chat_sessions", {
   id: serial("id").primaryKey(),
@@ -166,6 +203,9 @@ export const insertAiChatSessionSchema = createInsertSchema(aiChatSessions).omit
 export const insertAiChatMessageSchema = createInsertSchema(aiChatMessages).omit({ id: true, createdAt: true });
 export const insertUserXpSchema = createInsertSchema(userXp).omit({ id: true, updatedAt: true });
 export const insertUserCategoryPreferenceSchema = createInsertSchema(userCategoryPreferences).omit({ id: true });
+export const insertLessonUnitSchema = createInsertSchema(lessonUnits).omit({ id: true, generatedAt: true });
+export const insertLessonProgressSchema = createInsertSchema(lessonProgress).omit({ id: true, completedAt: true, lastAccessedAt: true });
+export const insertTopicMasterySchema = createInsertSchema(topicMastery).omit({ id: true, updatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -190,3 +230,31 @@ export type UserXp = typeof userXp.$inferSelect;
 export type InsertUserXp = z.infer<typeof insertUserXpSchema>;
 export type UserCategoryPreference = typeof userCategoryPreferences.$inferSelect;
 export type InsertUserCategoryPreference = z.infer<typeof insertUserCategoryPreferenceSchema>;
+export type LessonUnit = typeof lessonUnits.$inferSelect;
+export type InsertLessonUnit = z.infer<typeof insertLessonUnitSchema>;
+export type LessonProgress = typeof lessonProgress.$inferSelect;
+export type InsertLessonProgress = z.infer<typeof insertLessonProgressSchema>;
+export type TopicMastery = typeof topicMastery.$inferSelect;
+export type InsertTopicMastery = z.infer<typeof insertTopicMasterySchema>;
+
+// Lesson content structure for AI generation
+export interface LessonContent {
+  concept: string;
+  analogy: string;
+  example: {
+    title: string;
+    content: string;
+    code?: string;
+  };
+  quiz: {
+    question: string;
+    options: string[];
+    correctIndex: number;
+    explanation: string;
+  }[];
+  crossLinks?: {
+    topicId: number;
+    topicTitle: string;
+    connection: string;
+  }[];
+}

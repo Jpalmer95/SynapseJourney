@@ -14,24 +14,53 @@ import {
   Zap,
   Brain,
   Trophy,
+  Loader2,
+  ArrowRight,
+  X,
+  Check,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiChat } from "@/components/ai-chat";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Topic, Category } from "@shared/schema";
+import type { Topic, Category, LessonContent } from "@shared/schema";
 
-interface RoadmapLevel {
+interface LessonUnit {
   id: number;
-  title: string;
-  description: string;
+  topicId: number;
   difficulty: string;
-  completed: boolean;
-  content?: string;
+  unitIndex: number;
+  title: string;
+  outline?: string | null;
+  contentJson?: LessonContent | null;
+  progress?: {
+    status: string;
+    quizScore?: number | null;
+  } | null;
+  locked?: boolean;
+}
+
+interface TopicMastery {
+  beginnerUnlocked: boolean;
+  intermediateUnlocked: boolean;
+  advancedUnlocked: boolean;
+  beginnerCompleted: number;
+  intermediateCompleted: number;
+  advancedCompleted: number;
+}
+
+interface LessonOutlineResponse {
+  topic: Topic;
+  units: LessonUnit[];
+  mastery: TopicMastery;
 }
 
 interface RabbitHoleProps {
@@ -40,104 +69,363 @@ interface RabbitHoleProps {
   onBack: () => void;
 }
 
-const levelIcons = [Lightbulb, BookOpen, Brain, Zap, Sparkles];
+const difficultyColors = {
+  beginner: "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
+  intermediate: "border-yellow-500/50 text-yellow-600 dark:text-yellow-400 bg-yellow-500/10",
+  advanced: "border-orange-500/50 text-orange-600 dark:text-orange-400 bg-orange-500/10",
+};
+
+const difficultyIcons = {
+  beginner: Lightbulb,
+  intermediate: BookOpen,
+  advanced: Brain,
+};
 
 export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [showChat, setShowChat] = useState(false);
-  const [expandedLevel, setExpandedLevel] = useState<number | null>(null);
-  const [activeLevel, setActiveLevel] = useState<number | null>(null);
+  const [selectedUnit, setSelectedUnit] = useState<LessonUnit | null>(null);
+  const [activeTab, setActiveTab] = useState("beginner");
+  const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [xpEarned, setXpEarned] = useState(0);
   const { toast } = useToast();
 
-  const { data: roadmap, isLoading } = useQuery<{ levels: { levels: RoadmapLevel[] } | RoadmapLevel[] }>({
-    queryKey: ["/api/roadmap", topic.id],
+  // Fetch lesson outline
+  const { data: lessonData, isLoading } = useQuery<LessonOutlineResponse>({
+    queryKey: ["/api/lessons", topic.id, "outline"],
   });
 
+  // Fetch lesson content when a unit is selected
+  const { data: unitContent, isLoading: isLoadingContent } = useQuery<{
+    unit: LessonUnit;
+    content: LessonContent;
+  }>({
+    queryKey: ["/api/lessons/unit", selectedUnit?.id, "content"],
+    enabled: !!selectedUnit && !selectedUnit.locked,
+  });
+
+  // Fetch user XP
   const { data: userXp } = useQuery<{ totalXp: number; level: number; progress: number }>({
     queryKey: ["/api/user/xp"],
   });
 
-  const addXpMutation = useMutation({
-    mutationFn: async ({ topicId, amount }: { topicId: number; amount: number }) => {
-      return apiRequest("POST", "/api/user/xp", { topicId, amount });
+  // Start lesson mutation
+  const startLessonMutation = useMutation({
+    mutationFn: async (unitId: number) => {
+      const res = await apiRequest("POST", "/api/lessons/start", { unitId });
+      return res.json();
     },
-    onSuccess: (_, variables) => {
-      setXpEarned((prev) => prev + variables.amount);
+    onSuccess: (data: { progress: any; xpAwarded: number }) => {
+      if (data.xpAwarded > 0) {
+        setXpEarned((prev) => prev + data.xpAwarded);
+        toast({
+          title: `+${data.xpAwarded} XP`,
+          description: "Started a new lesson!",
+        });
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
       queryClient.invalidateQueries({ queryKey: ["/api/user/xp"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/user/stats"] });
     },
   });
 
-  const handleStartLevel = (levelId: number) => {
-    if (activeLevel === levelId) return;
+  // Complete lesson mutation
+  const completeLessonMutation = useMutation({
+    mutationFn: async ({ unitId, quizScore }: { unitId: number; quizScore?: number }) => {
+      const res = await apiRequest("POST", "/api/lessons/complete", { unitId, quizScore });
+      return res.json();
+    },
+    onSuccess: (data: { progress: any; xpAwarded: number; mastery: any; message?: string }) => {
+      setXpEarned((prev) => prev + data.xpAwarded);
+      toast({
+        title: `+${data.xpAwarded} XP`,
+        description: data.message || "Lesson completed!",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/xp"] });
+      
+      // Close content view and reset quiz state
+      setSelectedUnit(null);
+      setQuizAnswers({});
+      setQuizSubmitted(false);
+    },
+  });
+
+  const handleStartUnit = (unit: LessonUnit) => {
+    if (unit.locked) {
+      toast({
+        title: "Lesson Locked",
+        description: "Complete more lessons in the previous difficulty to unlock this level.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setSelectedUnit(unit);
+    startLessonMutation.mutate(unit.id);
+  };
+
+  const handleSubmitQuiz = () => {
+    if (!unitContent?.content.quiz) return;
     
-    setActiveLevel(levelId);
-    addXpMutation.mutate({ topicId: topic.id, amount: 5 });
-    toast({
-      title: "+5 XP",
-      description: `Started learning ${levels.find((l) => l.id === levelId)?.title}`,
+    const quiz = unitContent.content.quiz;
+    let correct = 0;
+    quiz.forEach((q, i) => {
+      if (quizAnswers[i] === q.correctIndex) correct++;
     });
+    
+    const score = Math.round((correct / quiz.length) * 100);
+    setQuizSubmitted(true);
+    
+    if (selectedUnit) {
+      completeLessonMutation.mutate({ unitId: selectedUnit.id, quizScore: score });
+    }
   };
 
-  // Handle both nested {levels: {levels: [...]}} and flat {levels: [...]} structures
-  const extractLevels = (): RoadmapLevel[] => {
-    if (!roadmap?.levels) return [];
-    // Check if levels is nested (API returns {levels: {levels: [...]}})
-    if (Array.isArray(roadmap.levels)) {
-      return roadmap.levels;
-    }
-    if (roadmap.levels && typeof roadmap.levels === 'object' && 'levels' in roadmap.levels) {
-      return (roadmap.levels as { levels: RoadmapLevel[] }).levels || [];
-    }
-    return [];
+  // Group units by difficulty
+  const unitsByDifficulty = lessonData?.units.reduce((acc, unit) => {
+    if (!acc[unit.difficulty]) acc[unit.difficulty] = [];
+    acc[unit.difficulty].push(unit);
+    return acc;
+  }, {} as Record<string, LessonUnit[]>) || {};
+
+  const mastery = lessonData?.mastery;
+  
+  const getProgressForDifficulty = (difficulty: string) => {
+    const units = unitsByDifficulty[difficulty] || [];
+    const completed = units.filter(u => u.progress?.status === "completed").length;
+    return { completed, total: units.length, percentage: units.length > 0 ? (completed / units.length) * 100 : 0 };
   };
 
-  const levels: RoadmapLevel[] = extractLevels().length > 0 ? extractLevels() : [
-    {
-      id: 1,
-      title: "The Basics",
-      description: "Understand the fundamental concepts",
-      difficulty: "beginner",
-      completed: false,
-      content: "Start with a simple explanation that anyone can understand. This level introduces core vocabulary and basic principles.",
-    },
-    {
-      id: 2,
-      title: "Core Concepts",
-      description: "Dive deeper into the main ideas",
-      difficulty: "intermediate",
-      completed: false,
-      content: "Now we explore the underlying mechanisms and relationships between concepts.",
-    },
-    {
-      id: 3,
-      title: "Real-World Applications",
-      description: "See how it applies in practice",
-      difficulty: "intermediate",
-      completed: false,
-      content: "Discover how these concepts manifest in everyday scenarios and professional contexts.",
-    },
-    {
-      id: 4,
-      title: "Advanced Topics",
-      description: "Master the complexities",
-      difficulty: "advanced",
-      completed: false,
-      content: "Challenge yourself with nuanced aspects and edge cases that require deeper understanding.",
-    },
-    {
-      id: 5,
-      title: "Expert Insights",
-      description: "Explore cutting-edge developments",
-      difficulty: "expert",
-      completed: false,
-      content: "Connect with the latest research and innovations in this field.",
-    },
-  ];
+  const isTabLocked = (difficulty: string) => {
+    if (!mastery) return difficulty !== "beginner";
+    switch (difficulty) {
+      case "beginner": return !mastery.beginnerUnlocked;
+      case "intermediate": return !mastery.intermediateUnlocked;
+      case "advanced": return !mastery.advancedUnlocked;
+      default: return true;
+    }
+  };
 
-  const completedCount = levels.filter((l) => l.completed).length;
-  const progress = (completedCount / levels.length) * 100;
+  // Render content viewer
+  if (selectedUnit && !selectedUnit.locked) {
+    const content = unitContent?.content;
+    
+    return (
+      <motion.div
+        className="min-h-screen bg-background"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+      >
+        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-lg border-b border-border">
+          <div className="flex items-center gap-4 px-4 py-3 md:px-8">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                setSelectedUnit(null);
+                setQuizAnswers({});
+                setQuizSubmitted(false);
+              }}
+              data-testid="button-back-to-outline"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div className="flex-1 min-w-0">
+              <Badge 
+                variant="outline" 
+                className={cn("text-xs capitalize mb-1", difficultyColors[selectedUnit.difficulty as keyof typeof difficultyColors])}
+              >
+                {selectedUnit.difficulty}
+              </Badge>
+              <h1 className="text-lg font-semibold truncate">{selectedUnit.title}</h1>
+            </div>
+            {userXp && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
+                <Trophy className="h-4 w-4 text-primary" />
+                <span className="text-sm font-medium">Lvl {userXp.level}</span>
+                {xpEarned > 0 && (
+                  <Badge variant="secondary" className="text-xs">
+                    +{xpEarned} XP
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+        </header>
 
+        <ScrollArea className="h-[calc(100vh-64px)]">
+          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8">
+            {isLoadingContent ? (
+              <div className="flex items-center justify-center py-20">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <span className="ml-3 text-muted-foreground">Generating lesson content...</span>
+              </div>
+            ) : content ? (
+              <div className="space-y-8">
+                {/* Concept Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <BookOpen className="h-5 w-5 text-primary" />
+                    <h2 className="text-xl font-semibold">Concept</h2>
+                  </div>
+                  <Card>
+                    <CardContent className="p-6">
+                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap">
+                        {content.concept}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </section>
+
+                {/* Analogy Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Lightbulb className="h-5 w-5 text-yellow-500" />
+                    <h2 className="text-xl font-semibold">Think of it like...</h2>
+                  </div>
+                  <Card className="border-yellow-500/20 bg-yellow-500/5">
+                    <CardContent className="p-6">
+                      <p className="text-muted-foreground leading-relaxed">
+                        {content.analogy}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </section>
+
+                {/* Example Section */}
+                <section>
+                  <div className="flex items-center gap-2 mb-4">
+                    <Sparkles className="h-5 w-5 text-blue-500" />
+                    <h2 className="text-xl font-semibold">{content.example.title}</h2>
+                  </div>
+                  <Card className="border-blue-500/20 bg-blue-500/5">
+                    <CardContent className="p-6 space-y-4">
+                      <p className="text-muted-foreground leading-relaxed">
+                        {content.example.content}
+                      </p>
+                      {content.example.code && (
+                        <pre className="bg-muted p-4 rounded-md overflow-x-auto text-sm font-mono">
+                          {content.example.code}
+                        </pre>
+                      )}
+                    </CardContent>
+                  </Card>
+                </section>
+
+                {/* Cross-links Section */}
+                {content.crossLinks && content.crossLinks.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Zap className="h-5 w-5 text-purple-500" />
+                      <h2 className="text-xl font-semibold">Connections to What You Know</h2>
+                    </div>
+                    <div className="space-y-3">
+                      {content.crossLinks.map((link, i) => (
+                        <Card key={i} className="border-purple-500/20 bg-purple-500/5">
+                          <CardContent className="p-4">
+                            <p className="font-medium text-purple-600 dark:text-purple-400">{link.topicTitle}</p>
+                            <p className="text-sm text-muted-foreground mt-1">{link.connection}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Quiz Section */}
+                {content.quiz && content.quiz.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Brain className="h-5 w-5 text-primary" />
+                      <h2 className="text-xl font-semibold">Check Your Understanding</h2>
+                    </div>
+                    <Card>
+                      <CardContent className="p-6 space-y-6">
+                        {content.quiz.map((q, qIndex) => (
+                          <div key={qIndex} className="space-y-3">
+                            <p className="font-medium">
+                              {qIndex + 1}. {q.question}
+                            </p>
+                            <RadioGroup
+                              value={quizAnswers[qIndex]?.toString()}
+                              onValueChange={(val) => setQuizAnswers(prev => ({ ...prev, [qIndex]: parseInt(val) }))}
+                              disabled={quizSubmitted}
+                            >
+                              {q.options.map((option, oIndex) => (
+                                <div 
+                                  key={oIndex} 
+                                  className={cn(
+                                    "flex items-center space-x-3 p-3 rounded-md border transition-colors",
+                                    quizSubmitted && oIndex === q.correctIndex && "bg-green-500/10 border-green-500/50",
+                                    quizSubmitted && quizAnswers[qIndex] === oIndex && oIndex !== q.correctIndex && "bg-red-500/10 border-red-500/50",
+                                    !quizSubmitted && "hover:bg-muted"
+                                  )}
+                                >
+                                  <RadioGroupItem value={oIndex.toString()} id={`q${qIndex}-o${oIndex}`} />
+                                  <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer">
+                                    {option}
+                                  </Label>
+                                  {quizSubmitted && oIndex === q.correctIndex && (
+                                    <Check className="h-4 w-4 text-green-500" />
+                                  )}
+                                  {quizSubmitted && quizAnswers[qIndex] === oIndex && oIndex !== q.correctIndex && (
+                                    <X className="h-4 w-4 text-red-500" />
+                                  )}
+                                </div>
+                              ))}
+                            </RadioGroup>
+                            {quizSubmitted && (
+                              <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
+                                {q.explanation}
+                              </p>
+                            )}
+                          </div>
+                        ))}
+                        
+                        {!quizSubmitted && (
+                          <Button 
+                            onClick={handleSubmitQuiz}
+                            disabled={Object.keys(quizAnswers).length < content.quiz.length}
+                            className="w-full"
+                            data-testid="button-submit-quiz"
+                          >
+                            Submit Answers
+                            <ArrowRight className="ml-2 h-4 w-4" />
+                          </Button>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </section>
+                )}
+
+                {/* AI Chat Button */}
+                <div className="flex justify-center pt-4">
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowChat(true)}
+                    data-testid="button-ask-ai"
+                  >
+                    <MessageCircle className="h-4 w-4 mr-2" />
+                    Have questions? Ask the AI Tutor
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-20 text-muted-foreground">
+                Unable to load content. Please try again.
+              </div>
+            )}
+          </main>
+        </ScrollArea>
+
+        <AnimatePresence>
+          {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
+        </AnimatePresence>
+      </motion.div>
+    );
+  }
+
+  // Render main outline view
   return (
     <motion.div
       className="min-h-screen bg-background"
@@ -180,12 +468,6 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 )}
               </div>
             )}
-            <div className="hidden md:flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">
-                {completedCount}/{levels.length}
-              </span>
-              <Progress value={progress} className="w-24 h-2" />
-            </div>
             <Button
               variant="outline"
               size="icon"
@@ -198,201 +480,170 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
         </div>
       </header>
 
-      <div className="flex flex-col lg:flex-row">
-        <main className="flex-1 px-4 py-6 md:px-8 md:py-8">
-          <div className="max-w-3xl mx-auto">
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mb-8"
-            >
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
-              <p className="text-lg text-muted-foreground">{topic.description}</p>
-            </motion.div>
+      <main className="px-4 py-6 md:px-8 md:py-8">
+        <div className="max-w-3xl mx-auto">
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8"
+          >
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
+            <p className="text-lg text-muted-foreground">{topic.description}</p>
+          </motion.div>
 
-            <div className="md:hidden mb-6">
-              <div className="flex items-center gap-2 mb-2">
-                <span className="text-sm text-muted-foreground">
-                  Progress: {completedCount}/{levels.length} levels
-                </span>
-              </div>
-              <Progress value={progress} className="h-2" />
+          {isLoading ? (
+            <div className="flex items-center justify-center py-20">
+              <Loader2 className="h-8 w-8 animate-spin text-primary" />
+              <span className="ml-3 text-muted-foreground">Loading course outline...</span>
             </div>
-
-            <div className="space-y-4">
-              <h3 className="text-xl font-semibold flex items-center gap-2">
-                <Sparkles className="h-5 w-5 text-primary" />
-                Learning Path
-              </h3>
-
-              <div className="relative">
-                <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-border" />
-
-                {levels.map((level, index) => {
-                  const LevelIcon = levelIcons[index % levelIcons.length];
-                  const isExpanded = expandedLevel === level.id;
-                  const isLocked = index > 0 && !levels[index - 1].completed;
-
+          ) : (
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+              <TabsList className="grid w-full grid-cols-3">
+                {["beginner", "intermediate", "advanced"].map((diff) => {
+                  const Icon = difficultyIcons[diff as keyof typeof difficultyIcons];
+                  const locked = isTabLocked(diff);
+                  const progress = getProgressForDifficulty(diff);
+                  
                   return (
-                    <motion.div
-                      key={level.id}
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      transition={{ delay: index * 0.1 }}
-                      className="relative pl-14 pb-6"
+                    <TabsTrigger
+                      key={diff}
+                      value={diff}
+                      disabled={locked}
+                      className={cn("relative capitalize", locked && "opacity-50")}
+                      data-testid={`tab-${diff}`}
                     >
-                      <div
-                        className={cn(
-                          "absolute left-4 w-5 h-5 rounded-full flex items-center justify-center z-10",
-                          level.completed
-                            ? "bg-primary text-primary-foreground"
-                            : isLocked
-                            ? "bg-muted text-muted-foreground"
-                            : "bg-background border-2 border-primary"
-                        )}
-                      >
-                        {level.completed ? (
-                          <CheckCircle className="h-3 w-3" />
-                        ) : isLocked ? (
-                          <Lock className="h-3 w-3" />
+                      <div className="flex items-center gap-2">
+                        {locked ? (
+                          <Lock className="h-4 w-4" />
                         ) : (
-                          <Circle className="h-3 w-3 text-primary" />
+                          <Icon className="h-4 w-4" />
                         )}
+                        <span className="hidden sm:inline">{diff}</span>
                       </div>
-
-                      <Card
-                        className={cn(
-                          "cursor-pointer transition-all",
-                          isLocked && "opacity-60",
-                          isExpanded && "ring-2 ring-primary"
-                        )}
-                        onClick={() => !isLocked && setExpandedLevel(isExpanded ? null : level.id)}
-                        data-testid={`level-${level.id}`}
-                      >
-                        <CardHeader className="py-4">
-                          <div className="flex items-center justify-between gap-4">
-                            <div className="flex items-center gap-3">
-                              <div className="p-2 rounded-md bg-muted">
-                                <LevelIcon className="h-4 w-4" />
-                              </div>
-                              <div>
-                                <CardTitle className="text-base">
-                                  Level {index + 1}: {level.title}
-                                </CardTitle>
-                                <p className="text-sm text-muted-foreground mt-0.5">
-                                  {level.description}
-                                </p>
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Badge
-                                variant="outline"
-                                className={cn(
-                                  "text-xs capitalize",
-                                  level.difficulty === "beginner" && "border-green-500/50 text-green-600 dark:text-green-400",
-                                  level.difficulty === "intermediate" && "border-yellow-500/50 text-yellow-600 dark:text-yellow-400",
-                                  level.difficulty === "advanced" && "border-orange-500/50 text-orange-600 dark:text-orange-400",
-                                  level.difficulty === "expert" && "border-red-500/50 text-red-600 dark:text-red-400"
-                                )}
-                              >
-                                {level.difficulty}
-                              </Badge>
-                              <ChevronRight
-                                className={cn(
-                                  "h-4 w-4 text-muted-foreground transition-transform",
-                                  isExpanded && "rotate-90"
-                                )}
-                              />
-                            </div>
-                          </div>
-                        </CardHeader>
-
-                        <AnimatePresence>
-                          {isExpanded && level.content && (
-                            <motion.div
-                              initial={{ height: 0, opacity: 0 }}
-                              animate={{ height: "auto", opacity: 1 }}
-                              exit={{ height: 0, opacity: 0 }}
-                              transition={{ duration: 0.2 }}
-                            >
-                              <CardContent className="pt-0 pb-4">
-                                <p className="text-muted-foreground leading-relaxed">
-                                  {level.content}
-                                </p>
-                                <div className="flex items-center gap-2 mt-4">
-                                  <Button 
-                                    size="sm" 
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleStartLevel(level.id);
-                                    }}
-                                    disabled={activeLevel === level.id}
-                                    data-testid={`button-start-level-${level.id}`}
-                                  >
-                                    {activeLevel === level.id ? (
-                                      <>
-                                        <CheckCircle className="h-4 w-4 mr-1" />
-                                        In Progress
-                                      </>
-                                    ) : (
-                                      "Start Learning"
-                                    )}
-                                  </Button>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setShowChat(true);
-                                    }}
-                                    data-testid={`button-ask-ai-level-${level.id}`}
-                                  >
-                                    <MessageCircle className="h-4 w-4 mr-1" />
-                                    Ask AI
-                                  </Button>
-                                  <Badge variant="secondary" className="text-xs">
-                                    +5 XP
-                                  </Badge>
-                                </div>
-                              </CardContent>
-                            </motion.div>
-                          )}
-                        </AnimatePresence>
-                      </Card>
-                    </motion.div>
+                      {!locked && progress.total > 0 && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {progress.completed}/{progress.total}
+                        </span>
+                      )}
+                    </TabsTrigger>
                   );
                 })}
-              </div>
-            </div>
-          </div>
-        </main>
+              </TabsList>
 
-        <aside className="hidden xl:block w-80 border-l border-border p-6">
-          <h3 className="text-lg font-semibold mb-4">Related Topics</h3>
-          <div className="space-y-2">
-            <Card className="hover-elevate cursor-pointer">
-              <CardContent className="p-4">
-                <p className="font-medium">Graph Theory</p>
-                <p className="text-sm text-muted-foreground">Mathematics</p>
-              </CardContent>
-            </Card>
-            <Card className="hover-elevate cursor-pointer">
-              <CardContent className="p-4">
-                <p className="font-medium">Neural Networks</p>
-                <p className="text-sm text-muted-foreground">Computer Science</p>
-              </CardContent>
-            </Card>
-          </div>
-        </aside>
-      </div>
+              {["beginner", "intermediate", "advanced"].map((diff) => {
+                const units = unitsByDifficulty[diff] || [];
+                const progress = getProgressForDifficulty(diff);
+                
+                return (
+                  <TabsContent key={diff} value={diff} className="space-y-4">
+                    {progress.total > 0 && (
+                      <div className="flex items-center gap-3 mb-6">
+                        <Progress value={progress.percentage} className="flex-1 h-2" />
+                        <span className="text-sm text-muted-foreground whitespace-nowrap">
+                          {progress.completed} of {progress.total} complete
+                        </span>
+                      </div>
+                    )}
+                    
+                    {units.length === 0 ? (
+                      <Card>
+                        <CardContent className="p-8 text-center text-muted-foreground">
+                          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3" />
+                          No lessons available yet. Check back soon!
+                        </CardContent>
+                      </Card>
+                    ) : (
+                      <div className="space-y-3">
+                        {units.map((unit, index) => {
+                          const isCompleted = unit.progress?.status === "completed";
+                          const isInProgress = unit.progress?.status === "in_progress";
+                          
+                          return (
+                            <motion.div
+                              key={unit.id}
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              transition={{ delay: index * 0.05 }}
+                            >
+                              <Card
+                                className={cn(
+                                  "cursor-pointer transition-all hover-elevate",
+                                  unit.locked && "opacity-60 cursor-not-allowed",
+                                  isCompleted && "border-green-500/30 bg-green-500/5"
+                                )}
+                                onClick={() => handleStartUnit(unit)}
+                                data-testid={`unit-${unit.id}`}
+                              >
+                                <CardContent className="p-4 flex items-center gap-4">
+                                  <div className={cn(
+                                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
+                                    isCompleted ? "bg-green-500 text-white" :
+                                    unit.locked ? "bg-muted text-muted-foreground" :
+                                    "bg-primary/10 text-primary border border-primary/20"
+                                  )}>
+                                    {isCompleted ? (
+                                      <CheckCircle className="h-5 w-5" />
+                                    ) : unit.locked ? (
+                                      <Lock className="h-4 w-4" />
+                                    ) : (
+                                      <span className="font-semibold">{index + 1}</span>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="flex-1 min-w-0">
+                                    <h3 className="font-medium truncate">{unit.title}</h3>
+                                    {unit.outline && (
+                                      <p className="text-sm text-muted-foreground truncate">
+                                        {unit.outline}
+                                      </p>
+                                    )}
+                                  </div>
+                                  
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    {isInProgress && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        In Progress
+                                      </Badge>
+                                    )}
+                                    {isCompleted && unit.progress?.quizScore !== null && unit.progress?.quizScore !== undefined && (
+                                      <Badge variant="outline" className="text-xs">
+                                        {unit.progress.quizScore}%
+                                      </Badge>
+                                    )}
+                                    {!unit.locked && (
+                                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                                    )}
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+                    
+                    {/* Unlock hint for locked tabs */}
+                    {isTabLocked(diff) && diff !== "beginner" && (
+                      <Card className="border-dashed">
+                        <CardContent className="p-6 text-center">
+                          <Lock className="h-8 w-8 mx-auto mb-3 text-muted-foreground" />
+                          <p className="font-medium mb-1">Level Locked</p>
+                          <p className="text-sm text-muted-foreground">
+                            Complete 70% of {diff === "intermediate" ? "Beginner" : "Intermediate"} lessons to unlock.
+                          </p>
+                        </CardContent>
+                      </Card>
+                    )}
+                  </TabsContent>
+                );
+              })}
+            </Tabs>
+          )}
+        </div>
+      </main>
 
       <AnimatePresence>
-        {showChat && (
-          <AiChat
-            topic={topic}
-            onClose={() => setShowChat(false)}
-          />
-        )}
+        {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
       </AnimatePresence>
     </motion.div>
   );

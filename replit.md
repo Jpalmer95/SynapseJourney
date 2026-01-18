@@ -38,11 +38,25 @@ Preferred communication style: Simple, everyday language.
   - `userProgress`, `savedCards` - User learning state
   - `userXp` - User total XP and level tracking
   - `userCategoryPreferences` - Category filter preferences for personalized feed
-  - `learningRoadmaps` - AI-generated learning paths per topic
+  - `lessonUnits` - AI-generated lesson content per topic/difficulty
+  - `lessonProgress` - User completion tracking per lesson unit
+  - `topicMastery` - Tracks unlocked difficulty tiers per user/topic
   - `aiChatSessions`, `aiChatMessages` - AI chat history
 
+### Lesson System (AI-Generated Content)
+- **Difficulty Levels**: Beginner → Intermediate → Advanced
+- **Progression Gating**: 70% completion required to unlock next tier
+- **Content Structure**: Each lesson unit contains:
+  - Concept explanation (2-3 paragraphs)
+  - Real-world analogy
+  - Worked example (with optional code)
+  - Quiz (3 multiple choice questions with explanations)
+  - Cross-topic connections (references to mastered topics)
+- **Content Generation**: On-demand AI generation, cached in database
+
 ### XP & Leveling System
-- Users earn XP by starting learning levels (+5 XP per level)
+- Start lesson: +5 XP (first time only)
+- Complete lesson: +5 XP (or +10 XP if quiz score >= 70%)
 - XP accumulates across all topics into a total user level
 - Level progression: Level = floor(sqrt(totalXP / 100)) + 1
 - XP displayed in RabbitHole header and Profile page

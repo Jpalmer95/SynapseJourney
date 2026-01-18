@@ -628,7 +628,379 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // ============================================
+  // LESSON SYSTEM ENDPOINTS
+  // ============================================
+
+  // Validation schemas for lessons
+  const lessonStartSchema = z.object({
+    unitId: z.number().int().positive(),
+  });
+
+  const lessonCompleteSchema = z.object({
+    unitId: z.number().int().positive(),
+    quizScore: z.number().int().min(0).max(100).optional(),
+  });
+
+  // Get or generate lesson outline for a topic
+  app.get("/api/lessons/:topicId/outline", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Check if we already have generated units for this topic
+      let units = await storage.getLessonUnits(topicId);
+      
+      if (units.length === 0) {
+        // Generate outline using AI
+        units = await generateLessonOutline(topicId, topic.title, topic.description);
+      }
+
+      // Get user's mastery status
+      const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, topicId);
+      
+      // Get user's progress for each unit
+      const unitsWithProgress = await Promise.all(units.map(async (unit) => {
+        const progress = await storage.getLessonProgress(req.user.claims.sub, unit.id);
+        return {
+          ...unit,
+          progress: progress || null,
+          locked: !isUnitUnlocked(unit.difficulty, mastery),
+        };
+      }));
+
+      res.json({
+        topic,
+        units: unitsWithProgress,
+        mastery,
+      });
+    } catch (error) {
+      console.error("Error fetching lesson outline:", error);
+      res.status(500).json({ error: "Failed to fetch lesson outline" });
+    }
+  });
+
+  // Get or generate lesson content for a specific unit
+  app.get("/api/lessons/unit/:unitId/content", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const unitId = parseInt(req.params.unitId);
+      if (isNaN(unitId) || unitId <= 0) {
+        return res.status(400).json({ error: "Invalid unit ID" });
+      }
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) {
+        return res.status(404).json({ error: "Unit not found" });
+      }
+
+      const topic = await storage.getTopicById(unit.topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Check if user has unlocked this difficulty level
+      const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, unit.topicId);
+      if (!isUnitUnlocked(unit.difficulty, mastery)) {
+        return res.status(403).json({ 
+          error: "This lesson is locked",
+          message: "Complete more lessons in the previous difficulty to unlock this level."
+        });
+      }
+
+      // If content already exists, return it
+      if (unit.contentJson) {
+        return res.json({ unit, content: unit.contentJson });
+      }
+
+      // Generate content using AI
+      const masteredTopics = await storage.getUserMasteredTopics(req.user.claims.sub);
+      const content = await generateLessonContent(topic, unit, masteredTopics);
+      
+      // Save the generated content
+      const updatedUnit = await storage.updateLessonContent(unitId, content);
+
+      res.json({ unit: updatedUnit, content });
+    } catch (error) {
+      console.error("Error fetching lesson content:", error);
+      res.status(500).json({ error: "Failed to fetch lesson content" });
+    }
+  });
+
+  // Start a lesson (records progress and awards XP)
+  app.post("/api/lessons/start", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = lessonStartSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
+      }
+
+      const { unitId } = parsed.data;
+      const userId = req.user.claims.sub;
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) {
+        return res.status(404).json({ error: "Unit not found" });
+      }
+
+      // Check if this is a new start (first time starting this lesson)
+      const existingProgress = await storage.getLessonProgress(userId, unitId);
+      const isFirstStart = !existingProgress || existingProgress.status === "not_started";
+
+      // Start the lesson
+      const progress = await storage.startLesson(userId, unitId);
+
+      // Award XP only on first start
+      if (isFirstStart) {
+        await storage.addXp(userId, 5);
+      }
+
+      res.json({ progress, xpAwarded: isFirstStart ? 5 : 0 });
+    } catch (error) {
+      console.error("Error starting lesson:", error);
+      res.status(500).json({ error: "Failed to start lesson" });
+    }
+  });
+
+  // Complete a lesson (records completion and checks for tier unlocks)
+  app.post("/api/lessons/complete", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = lessonCompleteSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.errors });
+      }
+
+      const { unitId, quizScore } = parsed.data;
+      const userId = req.user.claims.sub;
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) {
+        return res.status(404).json({ error: "Unit not found" });
+      }
+
+      // Complete the lesson
+      const progress = await storage.completeLesson(userId, unitId, quizScore);
+
+      // Award completion XP
+      const completionXp = quizScore && quizScore >= 70 ? 10 : 5;
+      await storage.addXp(userId, completionXp);
+
+      // Check and unlock tiers
+      const mastery = await storage.checkAndUnlockTiers(userId, unit.topicId);
+
+      res.json({ 
+        progress, 
+        xpAwarded: completionXp,
+        mastery,
+        message: mastery.intermediateUnlocked || mastery.advancedUnlocked 
+          ? "New difficulty level unlocked!" 
+          : undefined
+      });
+    } catch (error) {
+      console.error("Error completing lesson:", error);
+      res.status(500).json({ error: "Failed to complete lesson" });
+    }
+  });
+
+  // Get topic mastery status
+  app.get("/api/lessons/:topicId/mastery", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+
+      const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, topicId);
+      res.json(mastery);
+    } catch (error) {
+      console.error("Error fetching mastery:", error);
+      res.status(500).json({ error: "Failed to fetch mastery" });
+    }
+  });
+
   return httpServer;
+}
+
+// Helper function to check if a difficulty level is unlocked
+function isUnitUnlocked(difficulty: string, mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean }): boolean {
+  switch (difficulty) {
+    case "beginner": return mastery.beginnerUnlocked;
+    case "intermediate": return mastery.intermediateUnlocked;
+    case "advanced": return mastery.advancedUnlocked;
+    default: return mastery.beginnerUnlocked;
+  }
+}
+
+// Generate lesson outline using AI
+async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
+  const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
+
+Topic Description: ${topicDescription}
+
+Create a course outline with units across three difficulty levels. Each level should have 3-4 units that progressively build understanding.
+
+Respond with a JSON object in this exact format:
+{
+  "units": [
+    {"difficulty": "beginner", "unitIndex": 0, "title": "Unit Title", "outline": "Brief 1-2 sentence description of what this unit covers"},
+    {"difficulty": "beginner", "unitIndex": 1, "title": "Unit Title", "outline": "Brief description"},
+    {"difficulty": "intermediate", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"},
+    {"difficulty": "advanced", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"}
+  ]
+}
+
+Guidelines:
+- Beginner units should use simple language and everyday analogies
+- Intermediate units should explore mechanisms and relationships  
+- Advanced units should cover edge cases, research, and expert applications
+- Each unit title should be concise (3-6 words)
+- Outlines should be specific to the content covered`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    const parsed = JSON.parse(content);
+    
+    if (!parsed.units || !Array.isArray(parsed.units)) {
+      throw new Error("Invalid AI response format");
+    }
+
+    // Save units to database
+    const { storage } = await import("./storage");
+    const createdUnits = await Promise.all(
+      parsed.units.map((u: any) => storage.createLessonUnit({
+        topicId,
+        difficulty: u.difficulty,
+        unitIndex: u.unitIndex,
+        title: u.title,
+        outline: u.outline,
+      }))
+    );
+
+    return createdUnits;
+  } catch (error) {
+    console.error("Error generating lesson outline:", error);
+    // Return default outline on failure
+    return getDefaultLessonUnits(topicId, topicTitle);
+  }
+}
+
+// Generate lesson content using AI
+async function generateLessonContent(
+  topic: { title: string; description: string },
+  unit: { title: string; difficulty: string; outline?: string | null },
+  masteredTopics: { topicId: number; topicTitle: string }[]
+): Promise<any> {
+  const crossTopicContext = masteredTopics.length > 0
+    ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
+    : "";
+
+  const prompt = `You are a Socratic learning tutor. Create engaging lesson content for:
+
+Topic: ${topic.title}
+Unit: ${unit.title}
+Difficulty Level: ${unit.difficulty}
+Unit Description: ${unit.outline || ""}
+
+${crossTopicContext}
+
+Create comprehensive lesson content in this JSON format:
+{
+  "concept": "Clear explanation of the main concept (2-3 paragraphs, engaging and accessible)",
+  "analogy": "A creative real-world analogy that makes the concept intuitive",
+  "example": {
+    "title": "Example title",
+    "content": "Detailed worked example with step-by-step explanation",
+    "code": "Optional: code snippet if relevant to the topic"
+  },
+  "quiz": [
+    {
+      "question": "Question text",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Why this answer is correct and others are not"
+    }
+  ],
+  "crossLinks": [
+    {
+      "topicId": 1,
+      "topicTitle": "Related Topic",
+      "connection": "How this concept connects to the related topic"
+    }
+  ]
+}
+
+Guidelines for ${unit.difficulty} level:
+${unit.difficulty === "beginner" 
+  ? "- Use simple language, no jargon\n- Rely on everyday analogies\n- Focus on 'what' rather than 'how'\n- Create basic comprehension quiz questions"
+  : unit.difficulty === "intermediate"
+  ? "- Explain mechanisms and relationships\n- Include practical applications\n- Connect to related concepts\n- Create application-based quiz questions"
+  : "- Explore edge cases and nuances\n- Reference current research or debates\n- Challenge assumptions\n- Create analytical quiz questions"}
+
+Include 3 quiz questions.
+${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}`;
+
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    return JSON.parse(content);
+  } catch (error) {
+    console.error("Error generating lesson content:", error);
+    // Return default content on failure
+    return {
+      concept: `This lesson covers ${unit.title} in ${topic.title}. Content is being generated...`,
+      analogy: "Think of this concept like a familiar everyday process.",
+      example: {
+        title: "Example",
+        content: "A detailed example will be provided here.",
+      },
+      quiz: [
+        {
+          question: `What is the main focus of ${unit.title}?`,
+          options: ["Understanding basics", "Advanced theory", "History", "None of the above"],
+          correctIndex: 0,
+          explanation: "This unit focuses on building foundational understanding."
+        }
+      ],
+      crossLinks: []
+    };
+  }
+}
+
+// Default lesson units when AI fails
+async function getDefaultLessonUnits(topicId: number, topicTitle: string) {
+  const { storage } = await import("./storage");
+  const defaultUnits = [
+    { difficulty: "beginner", unitIndex: 0, title: "Introduction & Basics", outline: `Get started with the fundamentals of ${topicTitle}` },
+    { difficulty: "beginner", unitIndex: 1, title: "Core Vocabulary", outline: "Learn the essential terms and concepts" },
+    { difficulty: "beginner", unitIndex: 2, title: "Simple Examples", outline: "See the concepts in action with easy examples" },
+    { difficulty: "intermediate", unitIndex: 0, title: "Deeper Mechanisms", outline: "Understand how things work under the hood" },
+    { difficulty: "intermediate", unitIndex: 1, title: "Practical Applications", outline: "Apply your knowledge to real scenarios" },
+    { difficulty: "intermediate", unitIndex: 2, title: "Common Patterns", outline: "Recognize recurring themes and approaches" },
+    { difficulty: "advanced", unitIndex: 0, title: "Edge Cases", outline: "Explore unusual situations and exceptions" },
+    { difficulty: "advanced", unitIndex: 1, title: "Current Research", outline: "Discover what experts are working on today" },
+    { difficulty: "advanced", unitIndex: 2, title: "Expert Applications", outline: "See how professionals use these concepts" },
+  ];
+
+  return Promise.all(defaultUnits.map(u => storage.createLessonUnit({ topicId, ...u })));
 }
 
 function formatTimeAgo(date: Date): string {

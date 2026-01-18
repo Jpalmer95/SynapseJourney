@@ -1,7 +1,7 @@
 import {
   users, categories, topics, knowledgeCards, topicConnections,
   userProgress, savedCards, learningRoadmaps, aiChatSessions, aiChatMessages,
-  userXp, userCategoryPreferences,
+  userXp, userCategoryPreferences, lessonUnits, lessonProgress, topicMastery,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -13,6 +13,10 @@ import {
   type AiChatMessage, type InsertAiChatMessage,
   type UserXp, type InsertUserXp,
   type UserCategoryPreference, type InsertUserCategoryPreference,
+  type LessonUnit, type InsertLessonUnit,
+  type LessonProgress, type InsertLessonProgress,
+  type TopicMastery, type InsertTopicMastery,
+  type LessonContent,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql } from "drizzle-orm";
@@ -80,6 +84,26 @@ export interface IStorage {
   setCategoryPreference(userId: string, categoryId: number, enabled: boolean): Promise<UserCategoryPreference>;
   getEnabledCategories(userId: string): Promise<number[]>;
   getFeedCardsFiltered(userId: string, limit?: number): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]>;
+
+  // Lesson Units
+  getLessonUnits(topicId: number, difficulty?: string): Promise<LessonUnit[]>;
+  getLessonUnit(id: number): Promise<LessonUnit | undefined>;
+  getLessonUnitByIndex(topicId: number, difficulty: string, unitIndex: number): Promise<LessonUnit | undefined>;
+  createLessonUnit(unit: InsertLessonUnit): Promise<LessonUnit>;
+  updateLessonContent(unitId: number, contentJson: LessonContent): Promise<LessonUnit>;
+
+  // Lesson Progress
+  getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined>;
+  getUserLessonProgress(userId: string, topicId: number): Promise<{ unit: LessonUnit; progress: LessonProgress | null }[]>;
+  startLesson(userId: string, unitId: number): Promise<LessonProgress>;
+  completeLesson(userId: string, unitId: number, quizScore?: number): Promise<LessonProgress>;
+
+  // Topic Mastery
+  getTopicMastery(userId: string, topicId: number): Promise<TopicMastery | undefined>;
+  getOrCreateTopicMastery(userId: string, topicId: number): Promise<TopicMastery>;
+  updateTopicMastery(userId: string, topicId: number, updates: Partial<TopicMastery>): Promise<TopicMastery>;
+  checkAndUnlockTiers(userId: string, topicId: number): Promise<TopicMastery>;
+  getUserMasteredTopics(userId: string): Promise<{ topicId: number; topicTitle: string }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -483,6 +507,177 @@ export class DatabaseStorage implements IStorage {
         topic: row.topic,
         category: row.category || undefined,
       }));
+  }
+
+  // Lesson Units
+  async getLessonUnits(topicId: number, difficulty?: string): Promise<LessonUnit[]> {
+    if (difficulty) {
+      return db.select().from(lessonUnits)
+        .where(and(eq(lessonUnits.topicId, topicId), eq(lessonUnits.difficulty, difficulty)))
+        .orderBy(lessonUnits.unitIndex);
+    }
+    return db.select().from(lessonUnits)
+      .where(eq(lessonUnits.topicId, topicId))
+      .orderBy(lessonUnits.difficulty, lessonUnits.unitIndex);
+  }
+
+  async getLessonUnit(id: number): Promise<LessonUnit | undefined> {
+    const [unit] = await db.select().from(lessonUnits).where(eq(lessonUnits.id, id));
+    return unit;
+  }
+
+  async getLessonUnitByIndex(topicId: number, difficulty: string, unitIndex: number): Promise<LessonUnit | undefined> {
+    const [unit] = await db.select().from(lessonUnits)
+      .where(and(
+        eq(lessonUnits.topicId, topicId),
+        eq(lessonUnits.difficulty, difficulty),
+        eq(lessonUnits.unitIndex, unitIndex)
+      ));
+    return unit;
+  }
+
+  async createLessonUnit(unit: InsertLessonUnit): Promise<LessonUnit> {
+    const [created] = await db.insert(lessonUnits).values(unit).returning();
+    return created;
+  }
+
+  async updateLessonContent(unitId: number, contentJson: LessonContent): Promise<LessonUnit> {
+    const [updated] = await db.update(lessonUnits)
+      .set({ contentJson })
+      .where(eq(lessonUnits.id, unitId))
+      .returning();
+    return updated;
+  }
+
+  // Lesson Progress
+  async getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined> {
+    const [progress] = await db.select().from(lessonProgress)
+      .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.unitId, unitId)));
+    return progress;
+  }
+
+  async getUserLessonProgress(userId: string, topicId: number): Promise<{ unit: LessonUnit; progress: LessonProgress | null }[]> {
+    const units = await this.getLessonUnits(topicId);
+    const results = await Promise.all(units.map(async (unit) => {
+      const progress = await this.getLessonProgress(userId, unit.id);
+      return { unit, progress: progress || null };
+    }));
+    return results;
+  }
+
+  async startLesson(userId: string, unitId: number): Promise<LessonProgress> {
+    const existing = await this.getLessonProgress(userId, unitId);
+    if (existing) {
+      const [updated] = await db.update(lessonProgress)
+        .set({ status: "in_progress", lastAccessedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(lessonProgress.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(lessonProgress)
+      .values({ userId, unitId, status: "in_progress" })
+      .returning();
+    return created;
+  }
+
+  async completeLesson(userId: string, unitId: number, quizScore?: number): Promise<LessonProgress> {
+    const existing = await this.getLessonProgress(userId, unitId);
+    if (existing) {
+      const [updated] = await db.update(lessonProgress)
+        .set({ 
+          status: "completed", 
+          quizScore: quizScore ?? existing.quizScore,
+          completedAt: sql`CURRENT_TIMESTAMP`,
+          lastAccessedAt: sql`CURRENT_TIMESTAMP`
+        })
+        .where(eq(lessonProgress.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(lessonProgress)
+      .values({ userId, unitId, status: "completed", quizScore })
+      .returning();
+    return created;
+  }
+
+  // Topic Mastery
+  async getTopicMastery(userId: string, topicId: number): Promise<TopicMastery | undefined> {
+    const [mastery] = await db.select().from(topicMastery)
+      .where(and(eq(topicMastery.userId, userId), eq(topicMastery.topicId, topicId)));
+    return mastery;
+  }
+
+  async getOrCreateTopicMastery(userId: string, topicId: number): Promise<TopicMastery> {
+    const existing = await this.getTopicMastery(userId, topicId);
+    if (existing) return existing;
+    
+    const [created] = await db.insert(topicMastery)
+      .values({ userId, topicId })
+      .returning();
+    return created;
+  }
+
+  async updateTopicMastery(userId: string, topicId: number, updates: Partial<TopicMastery>): Promise<TopicMastery> {
+    const mastery = await this.getOrCreateTopicMastery(userId, topicId);
+    const [updated] = await db.update(topicMastery)
+      .set({ ...updates, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(eq(topicMastery.id, mastery.id))
+      .returning();
+    return updated;
+  }
+
+  async checkAndUnlockTiers(userId: string, topicId: number): Promise<TopicMastery> {
+    const mastery = await this.getOrCreateTopicMastery(userId, topicId);
+    const units = await this.getLessonUnits(topicId);
+    
+    const beginnerUnits = units.filter(u => u.difficulty === "beginner");
+    const intermediateUnits = units.filter(u => u.difficulty === "intermediate");
+    
+    let beginnerCompleted = 0;
+    let intermediateCompleted = 0;
+    let advancedCompleted = 0;
+    
+    for (const unit of units) {
+      const progress = await this.getLessonProgress(userId, unit.id);
+      if (progress?.status === "completed") {
+        if (unit.difficulty === "beginner") beginnerCompleted++;
+        else if (unit.difficulty === "intermediate") intermediateCompleted++;
+        else if (unit.difficulty === "advanced") advancedCompleted++;
+      }
+    }
+    
+    // Unlock intermediate if 70% of beginner completed and at least one has quiz score
+    const beginnerThreshold = Math.ceil(beginnerUnits.length * 0.7);
+    const intermediateThreshold = Math.ceil(intermediateUnits.length * 0.7);
+    
+    const intermediateUnlocked = beginnerUnits.length > 0 && beginnerCompleted >= beginnerThreshold;
+    const advancedUnlocked = intermediateUnits.length > 0 && intermediateCompleted >= intermediateThreshold;
+    
+    return this.updateTopicMastery(userId, topicId, {
+      beginnerCompleted,
+      intermediateCompleted,
+      advancedCompleted,
+      intermediateUnlocked,
+      advancedUnlocked,
+    });
+  }
+
+  async getUserMasteredTopics(userId: string): Promise<{ topicId: number; topicTitle: string }[]> {
+    const masteries = await db.select().from(topicMastery)
+      .where(eq(topicMastery.userId, userId));
+    
+    const masteredTopics = [];
+    for (const m of masteries) {
+      // Consider a topic "mastered" if beginner is fully completed
+      const units = await this.getLessonUnits(m.topicId, "beginner");
+      if (units.length > 0 && m.beginnerCompleted >= units.length) {
+        const topic = await this.getTopicById(m.topicId);
+        if (topic) {
+          masteredTopics.push({ topicId: topic.id, topicTitle: topic.title });
+        }
+      }
+    }
+    return masteredTopics;
   }
 }
 
