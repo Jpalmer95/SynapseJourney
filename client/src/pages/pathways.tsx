@@ -1,6 +1,9 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Compass, Clock, ChevronRight, Check, Plus, Atom, Wrench, Rocket, Code, Brain, Calculator, Beaker, Leaf, Music, GitBranch, FlaskConical } from "lucide-react";
+import { 
+  Compass, Clock, ChevronRight, Check, Plus, Atom, Wrench, Rocket, Code, Brain, Calculator, Beaker, Leaf, Music, GitBranch, FlaskConical,
+  Zap, AudioWaveform, Lightbulb, Cog, Cpu, Boxes, Flower2, Dna, BrainCircuit, Globe2, Network, Lock, Layers
+} from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -43,6 +46,19 @@ const iconMap: Record<string, typeof Brain> = {
   Music: Music,
   GitBranch: GitBranch,
   Flask: FlaskConical,
+  Zap: Zap,
+  AudioWaveform: AudioWaveform,
+  Lightbulb: Lightbulb,
+  Cog: Cog,
+  Cpu: Cpu,
+  Boxes: Boxes,
+  Flower2: Flower2,
+  Dna: Dna,
+  BrainCircuit: BrainCircuit,
+  Globe2: Globe2,
+  Network: Network,
+  Lock: Lock,
+  Layers: Layers,
 };
 
 const colorMap: Record<string, string> = {
@@ -56,6 +72,18 @@ const colorMap: Record<string, string> = {
   lime: "bg-lime-500",
   rose: "bg-rose-500",
   gray: "bg-gray-500",
+  yellow: "bg-yellow-500",
+  cyan: "bg-cyan-500",
+  violet: "bg-violet-500",
+  amber: "bg-amber-500",
+  slate: "bg-slate-500",
+  emerald: "bg-emerald-500",
+  sky: "bg-sky-500",
+  fuchsia: "bg-fuchsia-500",
+  red: "bg-red-500",
+  neutral: "bg-neutral-500",
+  zinc: "bg-zinc-500",
+  stone: "bg-stone-500",
 };
 
 const difficultyColors: Record<string, string> = {
