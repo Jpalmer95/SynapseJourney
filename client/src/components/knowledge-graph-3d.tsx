@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
 import { RotateCcw, Info, Minus, Plus, Search, X, Focus, Expand } from "lucide-react";
 import { Link } from "wouter";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 interface GraphNode {
   id: number;
@@ -28,6 +29,8 @@ interface GraphEdge {
 
 export function KnowledgeGraph3D() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const isMobile = useIsMobile();
+  const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
   const [centeredNode, setCenteredNode] = useState<GraphNode | null>(null);
@@ -41,6 +44,23 @@ export function KnowledgeGraph3D() {
   const [rotation, setRotation] = useState(0);
   const [isAutoRotating, setIsAutoRotating] = useState(true);
 
+  useEffect(() => {
+    const updateSize = () => {
+      if (containerRef.current) {
+        setContainerSize({
+          width: containerRef.current.clientWidth,
+          height: containerRef.current.clientHeight,
+        });
+      }
+    };
+    updateSize();
+    const resizeObserver = new ResizeObserver(updateSize);
+    if (containerRef.current) {
+      resizeObserver.observe(containerRef.current);
+    }
+    return () => resizeObserver.disconnect();
+  }, []);
+
   const { data: graphData } = useQuery<{
     nodes: GraphNode[];
     edges: GraphEdge[];
@@ -49,28 +69,42 @@ export function KnowledgeGraph3D() {
     queryKey: ["/api/knowledge-graph"],
   });
 
+  const viewBoxWidth = 800;
+  const viewBoxHeight = 600;
+  const graphCenterX = viewBoxWidth / 2;
+  const graphCenterY = viewBoxHeight / 2;
+
+  const mobileScale = useMemo(() => {
+    if (!isMobile) return 1;
+    const aspectRatio = containerSize.width / containerSize.height;
+    if (aspectRatio < 0.6) return 0.55;
+    if (aspectRatio < 0.8) return 0.65;
+    return 0.75;
+  }, [isMobile, containerSize]);
+
   const sampleNodes: GraphNode[] = useMemo(() => {
-    const centerX = 400;
-    const centerY = 300;
+    const centerX = graphCenterX;
+    const centerY = graphCenterY;
+    const scale = mobileScale;
     
     return [
       { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", x: centerX, y: centerY, mastery: 75, status: "learning" as const },
-      { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: centerX + 120, y: centerY - 80, mastery: 60, status: "learning" as const },
-      { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: centerX - 100, y: centerY - 120, mastery: 85, status: "mastered" as const },
-      { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: centerX - 150, y: centerY + 50, mastery: 90, status: "mastered" as const },
-      { id: 5, title: "Python", category: "Programming", color: "#22c55e", x: centerX + 80, y: centerY + 130, mastery: 95, status: "mastered" as const },
-      { id: 6, title: "Data Structures", category: "CS", color: "#f59e0b", x: centerX + 180, y: centerY + 40, mastery: 70, status: "learning" as const },
-      { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: centerX + 50, y: centerY - 170, mastery: 40, status: "discovered" as const },
-      { id: 8, title: "Statistics", category: "Math", color: "#3b82f6", x: centerX - 60, y: centerY + 150, mastery: 55, status: "learning" as const },
-      { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: centerX + 160, y: centerY - 140, mastery: 30, status: "discovered" as const },
-      { id: 10, title: "Graph Theory", category: "Math", color: "#3b82f6", x: centerX - 180, y: centerY - 40, mastery: 45, status: "discovered" as const },
-      { id: 11, title: "Quantum Computing", category: "Physics", color: "#a855f7", x: centerX - 200, y: centerY - 150, mastery: 0, status: "unexplored" as const },
-      { id: 12, title: "Cryptography", category: "Security", color: "#6366f1", x: centerX + 220, y: centerY - 60, mastery: 0, status: "unexplored" as const },
-      { id: 13, title: "Robotics", category: "Engineering", color: "#ec4899", x: centerX - 120, y: centerY + 180, mastery: 0, status: "unexplored" as const },
-      { id: 14, title: "Electromagnetism", category: "Physics", color: "#eab308", x: centerX + 100, y: centerY + 200, mastery: 0, status: "unexplored" as const },
-      { id: 15, title: "Neuroscience", category: "Biology", color: "#f97316", x: centerX - 220, y: centerY + 100, mastery: 0, status: "unexplored" as const },
+      { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: centerX + 120 * scale, y: centerY - 80 * scale, mastery: 60, status: "learning" as const },
+      { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: centerX - 100 * scale, y: centerY - 120 * scale, mastery: 85, status: "mastered" as const },
+      { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: centerX - 150 * scale, y: centerY + 50 * scale, mastery: 90, status: "mastered" as const },
+      { id: 5, title: "Python", category: "Programming", color: "#22c55e", x: centerX + 80 * scale, y: centerY + 130 * scale, mastery: 95, status: "mastered" as const },
+      { id: 6, title: "Data Structures", category: "CS", color: "#f59e0b", x: centerX + 140 * scale, y: centerY + 40 * scale, mastery: 70, status: "learning" as const },
+      { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: centerX + 50 * scale, y: centerY - 150 * scale, mastery: 40, status: "discovered" as const },
+      { id: 8, title: "Statistics", category: "Math", color: "#3b82f6", x: centerX - 60 * scale, y: centerY + 130 * scale, mastery: 55, status: "learning" as const },
+      { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: centerX + 130 * scale, y: centerY - 120 * scale, mastery: 30, status: "discovered" as const },
+      { id: 10, title: "Graph Theory", category: "Math", color: "#3b82f6", x: centerX - 140 * scale, y: centerY - 40 * scale, mastery: 45, status: "discovered" as const },
+      { id: 11, title: "Quantum Computing", category: "Physics", color: "#a855f7", x: centerX - 160 * scale, y: centerY - 130 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 12, title: "Cryptography", category: "Security", color: "#6366f1", x: centerX + 170 * scale, y: centerY - 50 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 13, title: "Robotics", category: "Engineering", color: "#ec4899", x: centerX - 100 * scale, y: centerY + 160 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 14, title: "Electromagnetism", category: "Physics", color: "#eab308", x: centerX + 80 * scale, y: centerY + 170 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 15, title: "Neuroscience", category: "Biology", color: "#f97316", x: centerX - 170 * scale, y: centerY + 80 * scale, mastery: 0, status: "unexplored" as const },
     ];
-  }, []);
+  }, [mobileScale, graphCenterX, graphCenterY]);
 
   const sampleEdges: GraphEdge[] = useMemo(() => [
     { from: 1, to: 2, strength: 8 },
@@ -158,14 +192,12 @@ export function KnowledgeGraph3D() {
   }, [isAutoRotating]);
 
   const getRotatedPosition = useCallback((node: GraphNode) => {
-    const centerX = 400;
-    const centerY = 300;
+    const centerX = graphCenterX;
+    const centerY = graphCenterY;
     let dx = node.x - centerX;
     let dy = node.y - centerY;
 
     if (centeredNode) {
-      const cdx = centeredNode.x - centerX;
-      const cdy = centeredNode.y - centerY;
       dx = (node.x - centeredNode.x) * 0.8;
       dy = (node.y - centeredNode.y) * 0.8;
       if (node.id === centeredNode.id) {
@@ -180,7 +212,7 @@ export function KnowledgeGraph3D() {
       x: centerX + dx * cos - dy * sin,
       y: centerY + dx * sin + dy * cos,
     };
-  }, [rotation, centeredNode]);
+  }, [rotation, centeredNode, graphCenterX, graphCenterY]);
 
   const getNodeColor = (status: string) => {
     if (status === "mastered") return "#fbbf24";
@@ -247,10 +279,10 @@ export function KnowledgeGraph3D() {
     <div className="h-screen w-full relative bg-background overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
       
-      <div className="absolute top-4 left-4 md:left-20 z-10 flex flex-col gap-4 max-w-xs">
-        <Card className="p-4 bg-background/80 backdrop-blur-lg">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="text-lg font-semibold">Knowledge Map</h2>
+      <div className="absolute top-4 left-4 md:left-20 z-10 flex flex-col gap-2 md:gap-4 max-w-[200px] md:max-w-xs">
+        <Card className="p-3 md:p-4 bg-background/80 backdrop-blur-lg">
+          <div className="flex items-center justify-between mb-2 md:mb-3 gap-2">
+            <h2 className="text-sm md:text-lg font-semibold">Knowledge Map</h2>
             <Button 
               variant="ghost" 
               size="icon" 
@@ -418,6 +450,8 @@ export function KnowledgeGraph3D() {
       >
         <svg
           className="w-full h-full"
+          viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
+          preserveAspectRatio="xMidYMid meet"
           style={{
             transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             transformOrigin: "center center",
@@ -597,12 +631,12 @@ export function KnowledgeGraph3D() {
 
       {selectedNode && (
         <motion.div
-          className="absolute bottom-24 md:bottom-28 right-4 md:right-20 z-20"
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: 20 }}
+          className="absolute bottom-24 md:bottom-28 left-4 right-4 md:left-auto md:right-20 z-20"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 20 }}
         >
-          <Card className="p-4 w-72 bg-background/95 backdrop-blur-lg">
+          <Card className="p-4 w-full md:w-72 max-w-sm mx-auto md:mx-0 bg-background/95 backdrop-blur-lg">
             <div className="flex items-start justify-between mb-2 gap-2">
               <div className="flex-1 min-w-0">
                 <h3 className="font-semibold truncate">{selectedNode.title}</h3>
