@@ -88,47 +88,102 @@ export function KnowledgeGraph3D() {
     const scale = mobileScale;
     
     return [
+      // AI & ML cluster (center-right)
       { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", x: centerX, y: centerY, mastery: 75, status: "learning" as const },
-      { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: centerX + 120 * scale, y: centerY - 80 * scale, mastery: 60, status: "learning" as const },
-      { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: centerX - 100 * scale, y: centerY - 120 * scale, mastery: 85, status: "mastered" as const },
-      { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: centerX - 150 * scale, y: centerY + 50 * scale, mastery: 90, status: "mastered" as const },
-      { id: 5, title: "Python", category: "Programming", color: "#22c55e", x: centerX + 80 * scale, y: centerY + 130 * scale, mastery: 95, status: "mastered" as const },
-      { id: 6, title: "Data Structures", category: "CS", color: "#f59e0b", x: centerX + 140 * scale, y: centerY + 40 * scale, mastery: 70, status: "learning" as const },
-      { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: centerX + 50 * scale, y: centerY - 150 * scale, mastery: 40, status: "discovered" as const },
-      { id: 8, title: "Statistics", category: "Math", color: "#3b82f6", x: centerX - 60 * scale, y: centerY + 130 * scale, mastery: 55, status: "learning" as const },
-      { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: centerX + 130 * scale, y: centerY - 120 * scale, mastery: 30, status: "discovered" as const },
-      { id: 10, title: "Graph Theory", category: "Math", color: "#3b82f6", x: centerX - 140 * scale, y: centerY - 40 * scale, mastery: 45, status: "discovered" as const },
-      { id: 11, title: "Quantum Computing", category: "Physics", color: "#a855f7", x: centerX - 160 * scale, y: centerY - 130 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 12, title: "Cryptography", category: "Security", color: "#6366f1", x: centerX + 170 * scale, y: centerY - 50 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 13, title: "Robotics", category: "Engineering", color: "#ec4899", x: centerX - 100 * scale, y: centerY + 160 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 14, title: "Electromagnetism", category: "Physics", color: "#eab308", x: centerX + 80 * scale, y: centerY + 170 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 15, title: "Neuroscience", category: "Biology", color: "#f97316", x: centerX - 170 * scale, y: centerY + 80 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: centerX + 100 * scale, y: centerY - 60 * scale, mastery: 60, status: "learning" as const },
+      { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: centerX + 110 * scale, y: centerY - 100 * scale, mastery: 30, status: "discovered" as const },
+      { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: centerX + 40 * scale, y: centerY - 120 * scale, mastery: 40, status: "discovered" as const },
+      { id: 16, title: "Hugging Face", category: "AI", color: "#fbbf24", x: centerX + 130 * scale, y: centerY + 20 * scale, mastery: 20, status: "discovered" as const },
+      { id: 17, title: "Gradio", category: "AI", color: "#f97316", x: centerX + 160 * scale, y: centerY - 20 * scale, mastery: 15, status: "discovered" as const },
+      
+      // Math cluster (left)
+      { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: centerX - 90 * scale, y: centerY - 80 * scale, mastery: 85, status: "mastered" as const },
+      { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: centerX - 130 * scale, y: centerY + 20 * scale, mastery: 90, status: "mastered" as const },
+      { id: 8, title: "Statistics", category: "Math", color: "#3b82f6", x: centerX - 50 * scale, y: centerY + 80 * scale, mastery: 55, status: "learning" as const },
+      { id: 10, title: "Graph Theory", category: "Math", color: "#3b82f6", x: centerX - 120 * scale, y: centerY - 30 * scale, mastery: 45, status: "discovered" as const },
+      
+      // CS cluster (right)
+      { id: 5, title: "Python", category: "CS", color: "#22c55e", x: centerX + 60 * scale, y: centerY + 90 * scale, mastery: 95, status: "mastered" as const },
+      { id: 6, title: "Data Structures", category: "CS", color: "#22c55e", x: centerX + 120 * scale, y: centerY + 70 * scale, mastery: 70, status: "learning" as const },
+      { id: 18, title: "Open Source", category: "CS", color: "#22c55e", x: centerX + 80 * scale, y: centerY + 130 * scale, mastery: 50, status: "learning" as const },
+      { id: 12, title: "Cryptography", category: "CS", color: "#6366f1", x: centerX + 150 * scale, y: centerY - 70 * scale, mastery: 0, status: "unexplored" as const },
+      
+      // Physics cluster (top-left and bottom)
+      { id: 11, title: "Quantum Mechanics", category: "Physics", color: "#eab308", x: centerX - 150 * scale, y: centerY - 100 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 19, title: "Classical Mechanics", category: "Physics", color: "#eab308", x: centerX - 160 * scale, y: centerY + 60 * scale, mastery: 25, status: "discovered" as const },
+      { id: 20, title: "Orbital Mechanics", category: "Physics", color: "#eab308", x: centerX - 180 * scale, y: centerY + 100 * scale, mastery: 10, status: "discovered" as const },
+      { id: 21, title: "Optics & Light", category: "Physics", color: "#eab308", x: centerX - 30 * scale, y: centerY - 140 * scale, mastery: 15, status: "discovered" as const },
+      { id: 22, title: "Fluid Dynamics", category: "Physics", color: "#eab308", x: centerX - 170 * scale, y: centerY - 50 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 14, title: "Electromagnetism", category: "Physics", color: "#eab308", x: centerX + 20 * scale, y: centerY + 140 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 23, title: "Waves & Frequencies", category: "Physics", color: "#eab308", x: centerX - 80 * scale, y: centerY + 140 * scale, mastery: 20, status: "discovered" as const },
+      
+      // Chemistry cluster (bottom-left)
+      { id: 24, title: "General Chemistry", category: "Chemistry", color: "#14b8a6", x: centerX - 140 * scale, y: centerY + 130 * scale, mastery: 35, status: "learning" as const },
+      { id: 25, title: "Organic Chemistry", category: "Chemistry", color: "#14b8a6", x: centerX - 100 * scale, y: centerY + 170 * scale, mastery: 0, status: "unexplored" as const },
+      
+      // Music (connected to waves/frequencies)
+      { id: 26, title: "Music Theory", category: "Music", color: "#ec4899", x: centerX - 40 * scale, y: centerY + 170 * scale, mastery: 40, status: "learning" as const },
+      
+      // Other
+      { id: 13, title: "Robotics", category: "Engineering", color: "#ec4899", x: centerX + 170 * scale, y: centerY + 110 * scale, mastery: 0, status: "unexplored" as const },
+      { id: 15, title: "Neuroscience", category: "Biology", color: "#f97316", x: centerX - 60 * scale, y: centerY - 170 * scale, mastery: 0, status: "unexplored" as const },
     ];
   }, [mobileScale, graphCenterX, graphCenterY]);
 
   const sampleEdges: GraphEdge[] = useMemo(() => [
+    // AI/ML connections
     { from: 1, to: 2, strength: 8 },
     { from: 1, to: 3, strength: 6 },
     { from: 2, to: 7, strength: 7 },
     { from: 2, to: 9, strength: 9 },
+    { from: 16, to: 1, strength: 8 },
+    { from: 16, to: 2, strength: 9 },
+    { from: 16, to: 17, strength: 9 },
+    { from: 17, to: 1, strength: 7 },
+    { from: 2, to: 15, strength: 6 },
+    
+    // Math connections
     { from: 3, to: 4, strength: 8 },
     { from: 3, to: 8, strength: 5 },
-    { from: 5, to: 1, strength: 6 },
-    { from: 5, to: 6, strength: 7 },
-    { from: 6, to: 10, strength: 4 },
     { from: 8, to: 1, strength: 6 },
     { from: 4, to: 1, strength: 5 },
     { from: 10, to: 11, strength: 5 },
+    
+    // CS connections
+    { from: 5, to: 1, strength: 6 },
+    { from: 5, to: 6, strength: 7 },
+    { from: 6, to: 10, strength: 4 },
     { from: 6, to: 12, strength: 6 },
-    { from: 2, to: 13, strength: 4 },
-    { from: 4, to: 14, strength: 5 },
-    { from: 2, to: 15, strength: 6 },
+    { from: 18, to: 6, strength: 8 },
+    { from: 18, to: 16, strength: 8 },
+    { from: 18, to: 17, strength: 7 },
     { from: 11, to: 12, strength: 7 },
+    
+    // Physics connections
+    { from: 4, to: 19, strength: 9 },
+    { from: 19, to: 20, strength: 9 },
+    { from: 19, to: 22, strength: 7 },
+    { from: 21, to: 14, strength: 9 },
+    { from: 14, to: 23, strength: 8 },
+    { from: 21, to: 23, strength: 8 },
+    { from: 4, to: 14, strength: 5 },
+    { from: 11, to: 14, strength: 6 },
+    
+    // Chemistry connections
+    { from: 24, to: 25, strength: 9 },
+    { from: 24, to: 11, strength: 7 },
+    
+    // Music connections
+    { from: 26, to: 23, strength: 7 },
+    
+    // Engineering connections
+    { from: 2, to: 13, strength: 4 },
+    { from: 19, to: 13, strength: 6 },
   ], []);
 
   const allNodes = graphData?.nodes || sampleNodes;
   const allEdges = graphData?.edges || sampleEdges;
-  const stats = graphData?.stats || { total: 15, mastered: 3, learning: 4 };
+  const stats = graphData?.stats || { total: 27, mastered: 3, learning: 7 };
 
   const getConnectedNodeIds = useCallback((nodeId: number, degrees: number = 2): Set<number> => {
     const connected = new Set<number>([nodeId]);
