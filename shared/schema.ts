@@ -159,7 +159,10 @@ export const userProfiles = pgTable("user_profiles", {
   priorExperience: text("prior_experience").array(), // ["software", "physics", "music", etc.]
   allowTestOut: boolean("allow_test_out").default(false).notNull(),
   huggingFaceToken: text("hugging_face_token"), // Optional HF token for free models
-  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai" or "huggingface"
+  ollamaUrl: text("ollama_url"), // Optional local Ollama URL (e.g., http://localhost:11434)
+  openRouterKey: text("open_router_key"), // Optional OpenRouter API key for paid models
+  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
+  preferredModel: text("preferred_model"), // Specific model name for the provider
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -281,6 +284,30 @@ export const customTopics = pgTable("custom_topics", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// User Infographics (recap cheat sheets earned on topic completion)
+export const userInfographics = pgTable("user_infographics", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  topicTitle: text("topic_title").notNull(),
+  imageUrl: text("image_url").notNull(),
+  thumbnailUrl: text("thumbnail_url"),
+  prompt: text("prompt"), // The prompt used to generate the infographic
+  generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// 3D Model Rewards (earned after collecting 10 infographics)
+export const user3DRewards = pgTable("user_3d_rewards", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicIds: integer("topic_ids").array().notNull(), // The 10 topics that unlocked this reward
+  artDescription: text("art_description").notNull(), // AI-generated artistic blend description
+  modelUrl: text("model_url"), // URL to the 3D model once generated (null = pending)
+  status: text("status").default("pending").notNull(), // pending, generating, ready, failed
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -350,6 +377,8 @@ export const insertUserChallengeProgressSchema = createInsertSchema(userChalleng
 export const insertResearchIdeaSchema = createInsertSchema(researchIdeas).omit({ id: true, createdAt: true });
 export const insertUserStreakSchema = createInsertSchema(userStreaks).omit({ id: true, updatedAt: true });
 export const insertCustomTopicSchema = createInsertSchema(customTopics).omit({ id: true, createdAt: true });
+export const insertUserInfographicSchema = createInsertSchema(userInfographics).omit({ id: true, generatedAt: true });
+export const insertUser3DRewardSchema = createInsertSchema(user3DRewards).omit({ id: true, createdAt: true, completedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -402,6 +431,10 @@ export type UserStreak = typeof userStreaks.$inferSelect;
 export type InsertUserStreak = z.infer<typeof insertUserStreakSchema>;
 export type CustomTopic = typeof customTopics.$inferSelect;
 export type InsertCustomTopic = z.infer<typeof insertCustomTopicSchema>;
+export type UserInfographic = typeof userInfographics.$inferSelect;
+export type InsertUserInfographic = z.infer<typeof insertUserInfographicSchema>;
+export type User3DReward = typeof user3DRewards.$inferSelect;
+export type InsertUser3DReward = z.infer<typeof insertUser3DRewardSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
