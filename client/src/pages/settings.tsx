@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -29,7 +29,10 @@ interface UserProfile {
   priorExperience?: string[];
   allowTestOut?: boolean;
   huggingFaceToken?: string;
+  ollamaUrl?: string;
+  openRouterKey?: string;
   preferredAiProvider?: string;
+  preferredModel?: string;
 }
 
 const iconMap: Record<string, typeof Brain> = {
@@ -349,7 +352,7 @@ export default function SettingsPage() {
                   <Label>Preferred AI Provider</Label>
                   <div className="grid grid-cols-2 gap-2">
                     <Button
-                      variant={localProfile.preferredAiProvider !== "huggingface" ? "default" : "outline"}
+                      variant={localProfile.preferredAiProvider === "openai" || !localProfile.preferredAiProvider ? "default" : "outline"}
                       className="h-auto py-3 flex-col"
                       onClick={() => {
                         updateLocalProfile({ preferredAiProvider: "openai" });
@@ -357,8 +360,9 @@ export default function SettingsPage() {
                       }}
                       data-testid="btn-provider-openai"
                     >
+                      <Sparkles className="h-4 w-4 mb-1" />
                       <span className="font-medium">OpenAI GPT-4o</span>
-                      <span className="text-xs opacity-70">Default (API cost)</span>
+                      <span className="text-xs opacity-70">Default</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "huggingface" ? "default" : "outline"}
@@ -369,15 +373,42 @@ export default function SettingsPage() {
                       }}
                       data-testid="btn-provider-huggingface"
                     >
+                      <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">Hugging Face</span>
                       <span className="text-xs opacity-70">Free models</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "ollama" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "ollama" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "ollama" });
+                      }}
+                      data-testid="btn-provider-ollama"
+                    >
+                      <Server className="h-4 w-4 mb-1" />
+                      <span className="font-medium">Ollama</span>
+                      <span className="text-xs opacity-70">Local models</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "openrouter" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "openrouter" });
+                      }}
+                      data-testid="btn-provider-openrouter"
+                    >
+                      <Zap className="h-4 w-4 mb-1" />
+                      <span className="font-medium">OpenRouter</span>
+                      <span className="text-xs opacity-70">Many models</span>
                     </Button>
                   </div>
                 </div>
 
                 {/* Hugging Face Token */}
                 {localProfile.preferredAiProvider === "huggingface" && (
-                  <div className="space-y-2">
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
                     <Label htmlFor="hf-token" className="flex items-center gap-2">
                       <Key className="h-4 w-4" />
                       Hugging Face Access Token
@@ -401,14 +432,127 @@ export default function SettingsPage() {
                         huggingface.co/settings/tokens
                       </a>
                     </p>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="hf-model">Model (optional)</Label>
+                      <Input
+                        id="hf-model"
+                        placeholder="meta-llama/Llama-3.3-70B-Instruct"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                        data-testid="input-hf-model"
+                      />
+                    </div>
                     {hasChanges && (
                       <Button 
                         onClick={saveProfile} 
                         disabled={profileMutation.isPending}
                         size="sm"
+                        className="mt-2"
                         data-testid="btn-save-hf-token"
                       >
-                        Save Token
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Ollama Configuration */}
+                {localProfile.preferredAiProvider === "ollama" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="ollama-url" className="flex items-center gap-2">
+                      <Server className="h-4 w-4" />
+                      Ollama Server URL
+                    </Label>
+                    <Input
+                      id="ollama-url"
+                      placeholder="http://localhost:11434"
+                      value={localProfile.ollamaUrl || ""}
+                      onChange={(e) => updateLocalProfile({ ollamaUrl: e.target.value })}
+                      data-testid="input-ollama-url"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Run Ollama locally and enter your server URL
+                    </p>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="ollama-model">Model Name</Label>
+                      <Input
+                        id="ollama-model"
+                        placeholder="llama3.2"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                        data-testid="input-ollama-model"
+                      />
+                    </div>
+                    {hasChanges && (
+                      <Button 
+                        onClick={saveProfile} 
+                        disabled={profileMutation.isPending}
+                        size="sm"
+                        className="mt-2"
+                        data-testid="btn-save-ollama"
+                      >
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* OpenRouter Configuration */}
+                {localProfile.preferredAiProvider === "openrouter" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="openrouter-key" className="flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      OpenRouter API Key
+                    </Label>
+                    <Input
+                      id="openrouter-key"
+                      type="password"
+                      placeholder="sk-or-..."
+                      value={localProfile.openRouterKey || ""}
+                      onChange={(e) => updateLocalProfile({ openRouterKey: e.target.value })}
+                      data-testid="input-openrouter-key"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Get your API key at{" "}
+                      <a 
+                        href="https://openrouter.ai/keys" 
+                        target="_blank" 
+                        rel="noopener noreferrer"
+                        className="text-primary underline"
+                      >
+                        openrouter.ai/keys
+                      </a>
+                    </p>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="openrouter-model">Model (optional)</Label>
+                      <Input
+                        id="openrouter-model"
+                        placeholder="anthropic/claude-3.5-sonnet"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                        data-testid="input-openrouter-model"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Browse models at{" "}
+                        <a 
+                          href="https://openrouter.ai/models" 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="text-primary underline"
+                        >
+                          openrouter.ai/models
+                        </a>
+                      </p>
+                    </div>
+                    {hasChanges && (
+                      <Button 
+                        onClick={saveProfile} 
+                        disabled={profileMutation.isPending}
+                        size="sm"
+                        className="mt-2"
+                        data-testid="btn-save-openrouter"
+                      >
+                        Save Settings
                       </Button>
                     )}
                   </div>
