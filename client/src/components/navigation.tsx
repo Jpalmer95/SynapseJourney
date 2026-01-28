@@ -21,28 +21,30 @@ export function BottomNav() {
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-lg border-t border-border md:hidden">
-      <div className="flex items-center justify-around h-16 px-4">
-        {navItems.map((item) => {
-          const isActive = location === item.href;
-          return (
-            <Link key={item.href} href={item.href}>
-              <Button
-                variant="ghost"
-                size="icon"
-                className={cn(
-                  "flex flex-col items-center justify-center gap-1 h-14 w-14",
-                  isActive && "text-primary"
-                )}
-                data-testid={`nav-${item.label.toLowerCase()}`}
-              >
-                <item.icon className={cn("h-5 w-5", isActive && "text-primary")} />
-                <span className={cn("text-[10px]", isActive ? "text-primary" : "text-muted-foreground")}>
-                  {item.label}
-                </span>
-              </Button>
-            </Link>
-          );
-        })}
+      <div className="overflow-x-auto scrollbar-hide">
+        <div className="flex items-center justify-center min-w-max h-16 px-2 gap-1">
+          {navItems.map((item) => {
+            const isActive = location === item.href;
+            return (
+              <Link key={item.href} href={item.href}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className={cn(
+                    "flex flex-col items-center justify-center gap-0.5 h-14 w-11 shrink-0",
+                    isActive && "text-primary"
+                  )}
+                  data-testid={`nav-${item.label.toLowerCase()}`}
+                >
+                  <item.icon className={cn("h-5 w-5", isActive && "text-primary")} />
+                  <span className={cn("text-[9px] leading-tight", isActive ? "text-primary" : "text-muted-foreground")}>
+                    {item.label}
+                  </span>
+                </Button>
+              </Link>
+            );
+          })}
+        </div>
       </div>
     </nav>
   );
