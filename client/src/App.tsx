@@ -16,6 +16,7 @@ import PathwaysPage from "@/pages/pathways";
 import AchievementsPage from "@/pages/achievements";
 import ExplorePage from "@/pages/explore";
 import RabbitHolePage from "@/pages/rabbit-hole";
+import CollectionPage from "@/pages/collection";
 import { Loader2 } from "lucide-react";
 
 function AppContent() {
@@ -47,6 +48,7 @@ function AppContent() {
       <Route path="/achievements" component={AchievementsPage} />
       <Route path="/explore" component={ExplorePage} />
       <Route path="/rabbit-hole" component={RabbitHolePage} />
+      <Route path="/collection" component={CollectionPage} />
       <Route component={NotFound} />
     </Switch>
   );

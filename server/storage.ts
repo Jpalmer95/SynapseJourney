@@ -4,6 +4,7 @@ import {
   userXp, userCategoryPreferences, lessonUnits, lessonProgress, topicMastery,
   userProfiles, pathways, pathwayTopics, userPathways, achievements, userAchievements,
   monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
+  userInfographics, user3DRewards,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -29,6 +30,8 @@ import {
   type ResearchIdea, type InsertResearchIdea,
   type UserStreak, type InsertUserStreak,
   type CustomTopic, type InsertCustomTopic,
+  type UserInfographic, type InsertUserInfographic,
+  type User3DReward, type InsertUser3DReward,
   type LessonContent,
   type NextGenContent,
 } from "@shared/schema";
@@ -164,6 +167,18 @@ export interface IStorage {
   createCustomTopic(topic: InsertCustomTopic): Promise<CustomTopic>;
   getUserCustomTopics(userId: string): Promise<CustomTopic[]>;
   updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic>;
+
+  // User Infographics
+  createUserInfographic(infographic: InsertUserInfographic): Promise<UserInfographic>;
+  getUserInfographics(userId: string): Promise<UserInfographic[]>;
+  getUserInfographicByTopic(userId: string, topicId: number): Promise<UserInfographic | undefined>;
+  countUserInfographics(userId: string): Promise<number>;
+
+  // 3D Rewards
+  createUser3DReward(reward: InsertUser3DReward): Promise<User3DReward>;
+  getUser3DRewards(userId: string): Promise<User3DReward[]>;
+  updateUser3DRewardStatus(id: number, status: string, modelUrl?: string): Promise<User3DReward>;
+  getPending3DRewards(): Promise<User3DReward[]>;
 
   // XP by difficulty
   getXpForDifficulty(difficulty: string): number;
@@ -1019,7 +1034,7 @@ export class DatabaseStorage implements IStorage {
       .returning();
     
     // Auto-validate if reaches 10 votes
-    if (updated.votes >= 10 && updated.status === "submitted") {
+    if ((updated.votes ?? 0) >= 10 && updated.status === "submitted") {
       const [validated] = await db.update(researchIdeas)
         .set({ status: "validated" })
         .where(eq(researchIdeas.id, ideaId))
@@ -1113,6 +1128,64 @@ export class DatabaseStorage implements IStorage {
       default:
         return 1;
     }
+  }
+
+  // User Infographics
+  async createUserInfographic(infographic: InsertUserInfographic): Promise<UserInfographic> {
+    const [created] = await db.insert(userInfographics).values(infographic).returning();
+    return created;
+  }
+
+  async getUserInfographics(userId: string): Promise<UserInfographic[]> {
+    return db.select().from(userInfographics)
+      .where(eq(userInfographics.userId, userId))
+      .orderBy(desc(userInfographics.generatedAt));
+  }
+
+  async getUserInfographicByTopic(userId: string, topicId: number): Promise<UserInfographic | undefined> {
+    const [infographic] = await db.select().from(userInfographics)
+      .where(and(
+        eq(userInfographics.userId, userId),
+        eq(userInfographics.topicId, topicId)
+      ));
+    return infographic;
+  }
+
+  async countUserInfographics(userId: string): Promise<number> {
+    const [result] = await db.select({ count: sql<number>`count(*)` })
+      .from(userInfographics)
+      .where(eq(userInfographics.userId, userId));
+    return Number(result?.count || 0);
+  }
+
+  // 3D Rewards
+  async createUser3DReward(reward: InsertUser3DReward): Promise<User3DReward> {
+    const [created] = await db.insert(user3DRewards).values(reward).returning();
+    return created;
+  }
+
+  async getUser3DRewards(userId: string): Promise<User3DReward[]> {
+    return db.select().from(user3DRewards)
+      .where(eq(user3DRewards.userId, userId))
+      .orderBy(desc(user3DRewards.createdAt));
+  }
+
+  async updateUser3DRewardStatus(id: number, status: string, modelUrl?: string): Promise<User3DReward> {
+    const updates: any = { status };
+    if (modelUrl) {
+      updates.modelUrl = modelUrl;
+      updates.completedAt = sql`CURRENT_TIMESTAMP`;
+    }
+    const [updated] = await db.update(user3DRewards)
+      .set(updates)
+      .where(eq(user3DRewards.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getPending3DRewards(): Promise<User3DReward[]> {
+    return db.select().from(user3DRewards)
+      .where(eq(user3DRewards.status, "pending"));
   }
 }
 

@@ -1,5 +1,5 @@
 import { Link, useLocation } from "wouter";
-import { Compass, Map, BookMarked, User, Sparkles, Settings, Trophy, Search, GitBranch } from "lucide-react";
+import { Compass, Map, BookMarked, User, Sparkles, Settings, Trophy, Search, GitBranch, Image } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
@@ -9,6 +9,7 @@ const navItems = [
   { href: "/explore", icon: Search, label: "Explore" },
   { href: "/pathways", icon: GitBranch, label: "Pathways" },
   { href: "/achievements", icon: Trophy, label: "Trophies" },
+  { href: "/collection", icon: Image, label: "Collection" },
   { href: "/map", icon: Map, label: "Map" },
   { href: "/saved", icon: BookMarked, label: "Saved" },
   { href: "/profile", icon: User, label: "Profile" },

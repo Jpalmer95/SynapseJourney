@@ -5,6 +5,7 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
+import { getAIProvider, type ProviderConfig } from "./ai-providers";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -343,6 +344,16 @@ Make the progression natural from fundamentals to advanced concepts.`,
 
       const { message, topicId, history } = validationResult.data;
 
+      // Get user's preferred AI provider
+      const userProfile = await storage.getUserProfile(userId);
+      const providerConfig: ProviderConfig = {
+        provider: (userProfile?.preferredAiProvider as "openai" | "huggingface" | "ollama" | "openrouter") || "openai",
+        huggingFaceToken: userProfile?.huggingFaceToken || undefined,
+        ollamaUrl: userProfile?.ollamaUrl || undefined,
+        openRouterKey: userProfile?.openRouterKey || undefined,
+        preferredModel: userProfile?.preferredModel || undefined,
+      };
+
       // Get topic context if provided
       let topicContext = "";
       if (topicId) {
@@ -379,18 +390,31 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       ];
 
       try {
-        const stream = await openai.chat.completions.create({
-          model: "gpt-4o",
-          messages,
-          stream: true,
-          max_completion_tokens: 1024,
-        });
+        // Use streaming for OpenAI, non-streaming for other providers
+        if (providerConfig.provider === "openai" || !userProfile?.preferredAiProvider) {
+          const stream = await openai.chat.completions.create({
+            model: "gpt-4o",
+            messages,
+            stream: true,
+            max_completion_tokens: 1024,
+          });
 
-        for await (const chunk of stream) {
-          const content = chunk.choices[0]?.delta?.content || "";
-          if (content) {
-            res.write(`data: ${JSON.stringify({ content })}\n\n`);
+          for await (const chunk of stream) {
+            const content = chunk.choices[0]?.delta?.content || "";
+            if (content) {
+              res.write(`data: ${JSON.stringify({ content })}\n\n`);
+            }
           }
+        } else {
+          // Use the AI provider abstraction for other providers (non-streaming)
+          const provider = getAIProvider(providerConfig);
+          const response = await provider.chat(
+            messages.map(m => ({ role: m.role, content: m.content })),
+            { maxTokens: 1024 }
+          );
+          
+          // Send the full response at once
+          res.write(`data: ${JSON.stringify({ content: response })}\n\n`);
         }
 
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
@@ -806,11 +830,35 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Check for any new achievements
       const newAchievements = await storage.checkAndAwardAchievements(userId);
 
+      // Generate infographic reward when completing advanced or nextgen level
+      let infographicEarned = false;
+      if (unit.difficulty === "advanced" || unit.difficulty === "nextgen") {
+        const existing = await storage.getUserInfographicByTopic(userId, unit.topicId);
+        if (!existing) {
+          // Trigger infographic generation in the background
+          const topic = await storage.getTopicById(unit.topicId);
+          if (topic) {
+            infographicEarned = true;
+            import("./infographic-generator").then(({ generateAndStoreInfographic }) => {
+              generateAndStoreInfographic(
+                userId,
+                unit.topicId,
+                topic.title,
+                topic.description,
+                unit.difficulty,
+                unit.content
+              ).catch(console.error);
+            });
+          }
+        }
+      }
+
       res.json({ 
         progress, 
         xpAwarded: totalXp,
         mastery,
         newAchievements,
+        infographicEarned,
         message: mastery.intermediateUnlocked || mastery.advancedUnlocked 
           ? "New difficulty level unlocked!" 
           : undefined
@@ -853,14 +901,27 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   // Update user profile
   app.post("/api/user/profile", isAuthenticated, async (req: any, res: Response) => {
     try {
-      const { ageRange, technicalLevel, priorExperience, allowTestOut, huggingFaceToken, preferredAiProvider } = req.body;
+      const { 
+        ageRange, 
+        technicalLevel, 
+        priorExperience, 
+        allowTestOut, 
+        huggingFaceToken, 
+        ollamaUrl,
+        openRouterKey,
+        preferredAiProvider,
+        preferredModel
+      } = req.body;
       const profile = await storage.createOrUpdateUserProfile(req.user.claims.sub, {
         ageRange,
         technicalLevel,
         priorExperience,
         allowTestOut,
         huggingFaceToken,
+        ollamaUrl,
+        openRouterKey,
         preferredAiProvider,
+        preferredModel,
       });
       res.json(profile);
     } catch (error) {
@@ -1086,6 +1147,102 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("Error updating streak:", error);
       res.status(500).json({ error: "Failed to update streak" });
+    }
+  });
+
+  // ============ INFOGRAPHIC ROUTES ============
+
+  // Get user's collected infographics
+  app.get("/api/user/infographics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const infographics = await storage.getUserInfographics(req.user.claims.sub);
+      res.json(infographics);
+    } catch (error) {
+      console.error("Error fetching infographics:", error);
+      res.status(500).json({ error: "Failed to fetch infographics" });
+    }
+  });
+
+  // Get infographic count
+  app.get("/api/user/infographics/count", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const count = await storage.countUserInfographics(req.user.claims.sub);
+      res.json({ count });
+    } catch (error) {
+      console.error("Error counting infographics:", error);
+      res.status(500).json({ error: "Failed to count infographics" });
+    }
+  });
+
+  // Generate infographic for a topic (called on lesson completion)
+  app.post("/api/infographics/generate", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { topicId, difficulty } = req.body;
+      if (!topicId) {
+        return res.status(400).json({ error: "Topic ID is required" });
+      }
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Get the latest lesson content for context
+      const units = await storage.getLessonUnits(topicId);
+      const lessonContent = units.find(u => u.difficulty === difficulty)?.content;
+
+      const { generateAndStoreInfographic } = await import("./infographic-generator");
+      const result = await generateAndStoreInfographic(
+        req.user.claims.sub,
+        topicId,
+        topic.title,
+        topic.description,
+        difficulty || "advanced",
+        lessonContent
+      );
+
+      if (result.success) {
+        res.json({ success: true, imageUrl: result.imageUrl });
+      } else {
+        res.status(500).json({ error: result.error || "Failed to generate infographic" });
+      }
+    } catch (error) {
+      console.error("Error generating infographic:", error);
+      res.status(500).json({ error: "Failed to generate infographic" });
+    }
+  });
+
+  // ============ 3D REWARDS ROUTES ============
+
+  // Get user's 3D rewards
+  app.get("/api/user/3d-rewards", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const rewards = await storage.getUser3DRewards(req.user.claims.sub);
+      res.json(rewards);
+    } catch (error) {
+      console.error("Error fetching 3D rewards:", error);
+      res.status(500).json({ error: "Failed to fetch 3D rewards" });
+    }
+  });
+
+  // Get pending 3D rewards count (for milestone display)
+  app.get("/api/user/3d-rewards/progress", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const count = await storage.countUserInfographics(req.user.claims.sub);
+      const rewards = await storage.getUser3DRewards(req.user.claims.sub);
+      const nextMilestone = (rewards.length + 1) * 10;
+      const progress = count % 10;
+      
+      res.json({
+        infographicsCollected: count,
+        rewardsEarned: rewards.length,
+        nextMilestone,
+        progressToNext: progress,
+        percentToNext: Math.round((progress / 10) * 100)
+      });
+    } catch (error) {
+      console.error("Error fetching 3D reward progress:", error);
+      res.status(500).json({ error: "Failed to fetch 3D reward progress" });
     }
   });
 
