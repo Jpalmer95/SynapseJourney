@@ -103,12 +103,26 @@ Preferred communication style: Simple, everyday language.
 - Streak achievements unlock at 3, 7, 30, and 100 days
 
 ### AI Integration
-- **Provider**: OpenAI API (via Replit AI Integrations)
+- **Provider**: Multi-provider support (OpenAI, HuggingFace, Ollama, OpenRouter)
+- **Provider Selection**: Users configure preferred provider in Settings page
 - **Features**: 
   - Socratic AI tutor chat with topic context
   - Dynamic learning roadmap generation
   - Image generation capabilities
+  - Infographic generation via Gemini API
 - **Batch Processing**: Rate-limited batch utilities with retry logic
+- **Provider Abstraction**: `server/ai-providers.ts` provides unified interface
+
+### Reward System
+- **Infographic Rewards**: Recap cheat sheets auto-generated on completing advanced/nextgen lessons
+  - Uses Gemini API for high-quality visual generation
+  - Stored in `userInfographics` table with base64 image data
+  - Viewable and downloadable from Collection page (/collection)
+- **3D Model Milestones**: Special rewards unlock every 10 infographics collected
+  - Artistic blend descriptions combine themes from contributing topics
+  - Status tracking: pending → generating → ready
+  - Stored in `user3DRewards` table
+- **Collection Page**: Gallery view at /collection showing all earned rewards
 
 ### Key Design Patterns
 - **Monorepo Structure**: Client (`client/`), server (`server/`), shared (`shared/`)
