@@ -297,6 +297,23 @@ export default function SettingsPage() {
             transition={{ delay: 0.1 }}
             className="mb-6"
           >
+            <Card className="mb-6">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Sparkles className="h-5 w-5 text-primary" />
+                  <CardTitle>Synaptodendrogenesis</CardTitle>
+                </div>
+                <CardDescription>
+                  The essence of your journey in Synapse.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm leading-relaxed text-muted-foreground italic">
+                  "The simultaneous proliferation of neural branches (dendrites) and the formation of new connection points (synapses), resulting in a denser and more complex neural network."
+                </p>
+              </CardContent>
+            </Card>
+
             <Card>
               <CardHeader>
                 <div className="flex items-center gap-2">
