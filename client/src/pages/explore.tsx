@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle } from "lucide-react";
+import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle, ChevronLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -31,12 +31,15 @@ interface CustomTopic {
   createdAt: string;
 }
 
+const TOPICS_PER_PAGE = 10;
+
 export default function ExplorePage() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTopicTitle, setNewTopicTitle] = useState("");
   const [newTopicDescription, setNewTopicDescription] = useState("");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const { data: topics, isLoading: topicsLoading } = useQuery<Topic[]>({
     queryKey: ["/api/topics"],
@@ -255,7 +258,7 @@ export default function ExplorePage() {
                       transition={{ delay: index * 0.05 }}
                     >
                       {ct.status === "ready" && ct.generatedTopicId ? (
-                        <Link href={`/topic/${ct.generatedTopicId}`}>
+                        <Link href={`/rabbit-hole?topic=${ct.generatedTopicId}`}>
                           <Card className="hover-elevate cursor-pointer">
                             <CardContent className="p-4">
                               <div className="flex items-center gap-4">
@@ -321,41 +324,85 @@ export default function ExplorePage() {
                 ))}
               </div>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2">
-                {filteredTopics.slice(0, searchQuery ? undefined : 10).map((topic, index) => (
-                  <motion.div
-                    key={topic.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.03 }}
-                  >
-                    <Link href={`/topic/${topic.id}`}>
-                      <Card className="hover-elevate cursor-pointer h-full">
-                        <CardContent className="p-4">
-                          <div className="flex items-start gap-3">
-                            <div className="p-2 rounded-md bg-primary/10 shrink-0">
-                              <BookOpen className="h-5 w-5 text-primary" />
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <h3 className="font-medium mb-1">{topic.title}</h3>
-                              <p className="text-sm text-muted-foreground line-clamp-2">
-                                {topic.description}
-                              </p>
-                            </div>
-                            <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
-                          </div>
-                        </CardContent>
-                      </Card>
-                    </Link>
-                  </motion.div>
-                ))}
-              </div>
-            )}
+              <>
+                {(() => {
+                  const displayTopics = searchQuery 
+                    ? filteredTopics 
+                    : filteredTopics.slice((currentPage - 1) * TOPICS_PER_PAGE, currentPage * TOPICS_PER_PAGE);
+                  const totalPages = Math.ceil(filteredTopics.length / TOPICS_PER_PAGE);
 
-            {!searchQuery && filteredTopics.length > 10 && (
-              <p className="text-center text-sm text-muted-foreground mt-4">
-                Showing 10 of {filteredTopics.length} topics. Use search to find more.
-              </p>
+                  return (
+                    <>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        {displayTopics.map((topic, index) => (
+                          <motion.div
+                            key={topic.id}
+                            initial={{ opacity: 0, y: 20 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: index * 0.03 }}
+                          >
+                            <Link href={`/rabbit-hole?topic=${topic.id}`}>
+                              <Card className="hover-elevate cursor-pointer h-full">
+                                <CardContent className="p-4">
+                                  <div className="flex items-start gap-3">
+                                    <div className="p-2 rounded-md bg-primary/10 shrink-0">
+                                      <BookOpen className="h-5 w-5 text-primary" />
+                                    </div>
+                                    <div className="flex-1 min-w-0">
+                                      <h3 className="font-medium mb-1">{topic.title}</h3>
+                                      <p className="text-sm text-muted-foreground line-clamp-2">
+                                        {topic.description}
+                                      </p>
+                                    </div>
+                                    <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            </Link>
+                          </motion.div>
+                        ))}
+                      </div>
+
+                      {/* Pagination controls */}
+                      {!searchQuery && totalPages > 1 && (
+                        <div className="flex items-center justify-center gap-4 mt-6">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                            data-testid="btn-prev-page"
+                          >
+                            <ChevronLeft className="h-4 w-4 mr-1" />
+                            Previous
+                          </Button>
+                          <span className="text-sm text-muted-foreground">
+                            Page {currentPage} of {totalPages}
+                          </span>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                            disabled={currentPage === totalPages}
+                            data-testid="btn-next-page"
+                          >
+                            Next
+                            <ChevronRight className="h-4 w-4 ml-1" />
+                          </Button>
+                        </div>
+                      )}
+
+                      {/* Topic count info */}
+                      <p className="text-center text-sm text-muted-foreground mt-4">
+                        {searchQuery 
+                          ? `Found ${filteredTopics.length} topic${filteredTopics.length !== 1 ? 's' : ''}`
+                          : `Showing ${(currentPage - 1) * TOPICS_PER_PAGE + 1}-${Math.min(currentPage * TOPICS_PER_PAGE, filteredTopics.length)} of ${filteredTopics.length} topics`
+                        }
+                      </p>
+                    </>
+                  );
+                })()}
+              </>
             )}
           </motion.div>
         </div>
