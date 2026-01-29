@@ -2,6 +2,17 @@ import { motion } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { BookMarked, Trash2, ExternalLink, Search } from "lucide-react";
 import { useLocation } from "wouter";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { BottomNav, SideNav } from "@/components/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -136,15 +147,35 @@ export function SavedPage() {
                             {item.card.title}
                           </CardTitle>
                         </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
-                          onClick={() => removeMutation.mutate(item.card.id)}
-                          data-testid={`button-remove-saved-${item.card.id}`}
-                        >
-                          <Trash2 className="h-4 w-4 text-muted-foreground" />
-                        </Button>
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity"
+                              data-testid={`button-remove-saved-${item.card.id}`}
+                            >
+                              <Trash2 className="h-4 w-4 text-muted-foreground" />
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>Are you sure?</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                This will remove "{item.card.title}" from your saved cards. This action cannot be undone.
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                              <AlertDialogAction 
+                                onClick={() => removeMutation.mutate(item.card.id)}
+                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                              >
+                                Delete
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
                       </div>
                     </CardHeader>
                     <CardContent className="flex-1 flex flex-col">
