@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -24,6 +24,7 @@ import {
   TrendingUp,
   Puzzle,
   ExternalLink,
+  Heart,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +101,40 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [xpEarned, setXpEarned] = useState(0);
   const { toast } = useToast();
+
+  // Fetch saved cards to check if this topic's card is saved
+  const { data: savedTopics = [] } = useQuery<{ card: { id: number; topicId: number } }[]>({
+    queryKey: ["/api/saved"],
+  });
+
+  // Find the card for this topic (if it exists)
+  const { data: topicCards = [] } = useQuery<{ id: number }[]>({
+    queryKey: ["/api/topics", topic.id, "cards"],
+  });
+
+  const mainCardId = topicCards[0]?.id;
+  const isSaved = savedTopics.some(s => s.card.topicId === topic.id);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      if (!mainCardId) return;
+      if (isSaved) {
+        const savedItem = savedTopics.find(s => s.card.topicId === topic.id);
+        if (savedItem) {
+          await apiRequest("DELETE", `/api/saved/${savedItem.card.id}`);
+        }
+      } else {
+        await apiRequest("POST", "/api/saved", { cardId: mainCardId });
+      }
+    },
+    onSuccess: () => {
+      toast({
+        title: isSaved ? "Topic removed" : "Topic saved!",
+        description: isSaved ? "Removed from your collection" : "Find it in your saved collection",
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/saved"] });
+    },
+  });
 
   // Fetch lesson outline
   const { data: lessonData, isLoading } = useQuery<LessonOutlineResponse>({
@@ -258,6 +293,17 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               </Badge>
               <h1 className="text-lg font-semibold truncate">{selectedUnit.title}</h1>
             </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => saveMutation.mutate()}
+              className={cn("gap-2", isSaved && "text-red-500 border-red-500/50")}
+              disabled={!mainCardId || saveMutation.isPending}
+              data-testid="button-save-topic-lesson"
+            >
+              <Heart className={cn("h-4 w-4", isSaved && "fill-current")} />
+              {isSaved ? "Saved" : "Save"}
+            </Button>
             {userXp && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <Trophy className="h-4 w-4 text-primary" />
@@ -698,6 +744,17 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   {category.name}
                 </Badge>
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => saveMutation.mutate()}
+                className={cn("h-7 gap-1.5 px-2", isSaved && "text-red-500 border-red-500/50")}
+                disabled={!mainCardId || saveMutation.isPending}
+                data-testid="button-save-topic-header"
+              >
+                <Heart className={cn("h-3.5 w-3.5", isSaved && "fill-current")} />
+                <span className="text-xs">{isSaved ? "Saved" : "Save"}</span>
+              </Button>
             </div>
             <h1 className="text-lg font-semibold truncate">{topic.title}</h1>
           </div>
