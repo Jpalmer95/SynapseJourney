@@ -10,10 +10,8 @@ import {
   Clock,
   TrendingUp,
   LogOut,
-  Settings,
 } from "lucide-react";
-import { BottomNav, SideNav } from "@/components/navigation";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { AppLayout } from "@/components/app-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -93,23 +91,8 @@ export function ProfilePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <SideNav />
-
-      <div className="md:pl-16">
-        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-lg border-b border-border">
-          <div className="flex items-center justify-between gap-4 px-4 py-4 md:px-8">
-            <h1 className="text-xl font-semibold">Profile</h1>
-            <div className="flex items-center gap-2">
-              <ThemeToggle />
-              <Button variant="ghost" size="icon" data-testid="button-settings">
-                <Settings className="h-5 w-5" />
-              </Button>
-            </div>
-          </div>
-        </header>
-
-        <main className="px-4 py-6 md:px-8 pb-24 md:pb-8 max-w-4xl mx-auto">
+    <AppLayout mobileTitle="Profile">
+      <div className="px-4 py-6 md:px-8 pb-24 md:pb-8 max-w-4xl mx-auto pt-16 md:pt-6">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -288,10 +271,7 @@ export function ProfilePage() {
               </CardContent>
             </Card>
           </motion.div>
-        </main>
-
-        <BottomNav />
       </div>
-    </div>
+    </AppLayout>
   );
 }

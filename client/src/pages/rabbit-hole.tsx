@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useLocation, useSearch, Link } from "wouter";
 import { RabbitHole } from "@/components/rabbit-hole";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { Loader2, ArrowLeft, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -29,9 +29,8 @@ export function RabbitHolePage() {
 
   if (!topicId) {
     return (
-      <div className="min-h-screen bg-background">
-        <SideNav />
-        <div className="md:pl-16 flex items-center justify-center min-h-screen p-4 pb-20 md:pb-4">
+      <AppLayout>
+        <div className="flex items-center justify-center min-h-[calc(100vh-8rem)] p-4">
           <Card className="max-w-md w-full">
             <CardContent className="pt-6 text-center space-y-4">
               <AlertCircle className="h-12 w-12 mx-auto text-destructive" />
@@ -50,31 +49,27 @@ export function RabbitHolePage() {
             </CardContent>
           </Card>
         </div>
-        <BottomNav />
-      </div>
+      </AppLayout>
     );
   }
 
   if (topicLoading) {
     return (
-      <div className="min-h-screen bg-background">
-        <SideNav />
-        <div className="md:pl-16 flex items-center justify-center min-h-screen">
+      <AppLayout>
+        <div className="flex items-center justify-center min-h-[calc(100vh-8rem)]">
           <div className="flex flex-col items-center gap-4">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
             <p className="text-muted-foreground">Loading topic...</p>
           </div>
         </div>
-        <BottomNav />
-      </div>
+      </AppLayout>
     );
   }
 
   if (topicError || !topic) {
     return (
-      <div className="min-h-screen bg-background">
-        <SideNav />
-        <div className="md:pl-16 flex items-center justify-center min-h-screen p-4 pb-20 md:pb-4">
+      <AppLayout>
+        <div className="flex items-center justify-center min-h-[calc(100vh-8rem)] p-4">
           <Card className="max-w-md w-full">
             <CardContent className="pt-6 text-center space-y-4">
               <AlertCircle className="h-12 w-12 mx-auto text-destructive" />
@@ -93,23 +88,18 @@ export function RabbitHolePage() {
             </CardContent>
           </Card>
         </div>
-        <BottomNav />
-      </div>
+      </AppLayout>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <SideNav />
-      <div className="md:pl-16 pb-20 md:pb-0">
-        <RabbitHole 
-          topic={topic} 
-          category={category} 
-          onBack={handleBack} 
-        />
-      </div>
-      <BottomNav />
-    </div>
+    <AppLayout showMobileHeader={false}>
+      <RabbitHole 
+        topic={topic} 
+        category={category} 
+        onBack={handleBack} 
+      />
+    </AppLayout>
   );
 }
 

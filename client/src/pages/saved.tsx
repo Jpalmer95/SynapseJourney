@@ -13,8 +13,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
-import { BottomNav, SideNav } from "@/components/navigation";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { AppLayout } from "@/components/app-layout";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -62,35 +61,29 @@ export function SavedPage() {
   );
 
   return (
-    <div className="min-h-screen bg-background">
-      <SideNav />
-
-      <div className="md:pl-16">
-        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-lg border-b border-border">
-          <div className="flex items-center justify-between gap-4 px-4 py-4 md:px-8">
-            <div className="flex items-center gap-3">
-              <BookMarked className="h-6 w-6 text-primary" />
-              <h1 className="text-xl font-semibold">Saved</h1>
-            </div>
-            <div className="hidden md:block">
-              <ThemeToggle />
-            </div>
+    <AppLayout showMobileHeader={false}>
+      <header className="sticky top-0 z-30 bg-background/80 backdrop-blur-lg border-b border-border pt-16 md:pt-0">
+        <div className="flex items-center gap-4 px-4 py-4 md:px-8">
+          <div className="flex items-center gap-3">
+            <BookMarked className="h-6 w-6 text-primary" />
+            <h1 className="text-xl font-semibold">Saved</h1>
           </div>
-          <div className="px-4 pb-4 md:px-8">
-            <div className="relative max-w-md">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Search saved cards..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-10"
-                data-testid="input-search-saved"
-              />
-            </div>
+        </div>
+        <div className="px-4 pb-4 md:px-8">
+          <div className="relative max-w-md">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input
+              placeholder="Search saved cards..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="pl-10"
+              data-testid="input-search-saved"
+            />
           </div>
-        </header>
+        </div>
+      </header>
 
-        <main className="px-4 py-6 md:px-8 pb-24 md:pb-8">
+      <div className="px-4 py-6 md:px-8 pb-24 md:pb-8">
           {isLoading ? (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3, 4, 5, 6].map((i) => (
@@ -203,10 +196,7 @@ export function SavedPage() {
               ))}
             </div>
           )}
-        </main>
-
-        <BottomNav />
       </div>
-    </div>
+    </AppLayout>
   );
 }

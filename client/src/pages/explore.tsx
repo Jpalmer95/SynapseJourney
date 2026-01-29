@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -107,12 +107,8 @@ export default function ExplorePage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <BottomNav />
-      <SideNav />
-      
-      <main className="pb-20 md:pb-8 md:pl-20">
-        <div className="max-w-4xl mx-auto px-4 py-8">
+    <AppLayout mobileTitle="Explore">
+      <div className="max-w-4xl mx-auto px-4 py-8 pt-16 md:pt-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -405,8 +401,7 @@ export default function ExplorePage() {
               </>
             )}
           </motion.div>
-        </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }

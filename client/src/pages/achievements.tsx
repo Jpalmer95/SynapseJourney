@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { format } from "date-fns";
 
 interface Achievement {
@@ -106,12 +106,8 @@ export default function AchievementsPage() {
   const totalCount = allAchievements?.filter(a => !a.isSecret).length || 0;
 
   return (
-    <div className="min-h-screen bg-background">
-      <BottomNav />
-      <SideNav />
-      
-      <main className="pb-20 md:pb-8 md:pl-20">
-        <div className="max-w-4xl mx-auto px-4 py-8">
+    <AppLayout mobileTitle="Achievements">
+      <div className="max-w-4xl mx-auto px-4 py-8 pt-16 md:pt-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -276,8 +272,7 @@ export default function AchievementsPage() {
               ))}
             </div>
           )}
-        </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }

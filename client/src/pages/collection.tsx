@@ -7,7 +7,7 @@ import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Dialog, DialogContent, DialogTrigger } from "@/components/ui/dialog";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { useState } from "react";
 
 interface Infographic {
@@ -65,12 +65,8 @@ export default function CollectionPage() {
   };
 
   return (
-    <div className="min-h-screen bg-background">
-      <BottomNav />
-      <SideNav />
-
-      <main className="pb-20 md:pb-8 md:pl-20">
-        <div className="max-w-6xl mx-auto px-4 py-8">
+    <AppLayout mobileTitle="Collection">
+      <div className="max-w-6xl mx-auto px-4 py-8 pt-16 md:pt-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -310,8 +306,7 @@ export default function CollectionPage() {
               </Card>
             )}
           </motion.div>
-        </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }

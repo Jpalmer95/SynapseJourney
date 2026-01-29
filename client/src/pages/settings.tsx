@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -169,12 +169,8 @@ export default function SettingsPage() {
   const enabledCount = preferences?.filter((p) => p.enabled).length || 0;
 
   return (
-    <div className="min-h-screen bg-background">
-      <BottomNav />
-      <SideNav />
-      
-      <main className="pb-20 md:pb-8 md:pl-20">
-        <div className="max-w-2xl mx-auto px-4 py-8">
+    <AppLayout mobileTitle="Settings">
+      <div className="max-w-2xl mx-auto px-4 py-8 pt-16 md:pt-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -690,8 +686,7 @@ export default function SettingsPage() {
               </CardContent>
             </Card>
           </motion.div>
-        </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }

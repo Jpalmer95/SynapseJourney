@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
-import { BottomNav, SideNav } from "@/components/navigation";
+import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
@@ -127,12 +127,8 @@ export default function PathwaysPage() {
   const enrolledIds = new Set(userPathways?.map(up => up.pathway.id) || []);
 
   return (
-    <div className="min-h-screen bg-background">
-      <BottomNav />
-      <SideNav />
-      
-      <main className="pb-20 md:pb-8 md:pl-20">
-        <div className="max-w-4xl mx-auto px-4 py-8">
+    <AppLayout mobileTitle="Pathways">
+      <div className="max-w-4xl mx-auto px-4 py-8 pt-16 md:pt-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -278,8 +274,7 @@ export default function PathwaysPage() {
               </div>
             )}
           </motion.div>
-        </div>
-      </main>
-    </div>
+      </div>
+    </AppLayout>
   );
 }
