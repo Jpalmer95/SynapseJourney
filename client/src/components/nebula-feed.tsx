@@ -2,8 +2,10 @@ import { useState, useCallback, useEffect } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { KnowledgeCard, CardSkeleton } from "@/components/knowledge-card";
+import { Onboarding } from "@/components/onboarding";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import type { KnowledgeCard as CardType, Topic, Category } from "@shared/schema";
 
 interface FeedCard {
@@ -19,9 +21,13 @@ interface NebulaFeedProps {
 export function NebulaFeed({ onDive }: NebulaFeedProps) {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [savedCards, setSavedCards] = useState<Set<number>>(new Set());
+  const [onboardingComplete, setOnboardingComplete] = useState(() => {
+    return localStorage.getItem("synapse-onboarding-complete") === "true";
+  });
   const { toast } = useToast();
+  const { user } = useAuth();
 
-  const { data: feedData, isLoading, error } = useQuery<FeedCard[]>({
+  const { data: feedData, isLoading, error, refetch } = useQuery<FeedCard[]>({
     queryKey: ["/api/feed"],
   });
 
@@ -100,7 +106,17 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
     );
   }
 
+  const handleOnboardingComplete = () => {
+    localStorage.setItem("synapse-onboarding-complete", "true");
+    setOnboardingComplete(true);
+    refetch();
+  };
+
   if (error || !feedData || feedData.length === 0) {
+    if (user && !onboardingComplete) {
+      return <Onboarding onComplete={handleOnboardingComplete} />;
+    }
+    
     return (
       <div className="h-screen w-full flex items-center justify-center">
         <div className="text-center px-6">

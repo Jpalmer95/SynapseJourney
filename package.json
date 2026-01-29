@@ -54,6 +54,7 @@
     "express-session": "^1.18.2",
     "framer-motion": "^11.13.1",
     "input-otp": "^1.4.2",
+    "kokoro-js": "^1.2.1",
     "lucide-react": "^0.453.0",
     "memoizee": "^0.4.17",
     "memorystore": "^1.6.7",
