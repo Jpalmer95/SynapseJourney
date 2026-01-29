@@ -240,17 +240,17 @@ export default function SettingsPage() {
                     {/* Technical Level */}
                     <div className="space-y-2">
                       <Label>Technical Level</Label>
-                      <div className="grid grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                         {technicalLevels.map((level) => (
                           <Button
                             key={level.value}
                             variant={localProfile.technicalLevel === level.value ? "default" : "outline"}
-                            className="h-auto py-3 flex-col items-start"
+                            className="h-auto py-3 px-4 flex-col items-start text-left whitespace-normal break-words"
                             onClick={() => updateLocalProfile({ technicalLevel: level.value })}
                             data-testid={`btn-level-${level.value}`}
                           >
                             <span className="font-medium">{level.label}</span>
-                            <span className="text-xs opacity-70">{level.description}</span>
+                            <span className="text-xs opacity-70 leading-tight">{level.description}</span>
                           </Button>
                         ))}
                       </div>
