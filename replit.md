@@ -115,10 +115,23 @@ Preferred communication style: Simple, everyday language.
   - Shows only when user has empty feed and hasn't completed onboarding
   - Located in: `client/src/components/onboarding.tsx`
 
+### Navigation & Layout
+- **AppLayout Component**: Reusable layout wrapper providing consistent navigation across all pages
+  - Location: `client/src/components/app-layout.tsx`
+  - Includes SideNav (desktop), BottomNav (mobile), ThemeToggle, and UserProfileMenu
+  - Profile menu always accessible in top-right corner on both mobile and desktop
+- **Navigation Items** (7 items to prevent mobile horizontal scrolling):
+  - Home (/), Explore (/explore), Pathways (/pathways), Trophies (/achievements)
+  - Collection (/collection), Map (/map), Saved (/saved)
+- **UserProfileMenu**: Dropdown with Profile, Settings, and Logout options
+  - Location: `client/src/components/user-profile-menu.tsx`
+  - Displays user avatar with first letter of username
+
 ### Mobile Responsiveness
 - All lesson content cards use `overflow-hidden` and `break-words` to prevent cropping
 - Responsive padding with `p-4 sm:p-6` for proper spacing on mobile devices
 - Applied to: concept, analogy, example, quiz, cross-links, and all Next Gen content sections
+- Profile and theme controls always accessible via fixed positioning on mobile
 
 ### Streak Tracking
 - Daily streak updated on lesson completion
