@@ -1,6 +1,7 @@
 import { motion } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { BookMarked, Trash2, ExternalLink, Search } from "lucide-react";
+import { useLocation } from "wouter";
 import { BottomNav, SideNav } from "@/components/navigation";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Button } from "@/components/ui/button";
@@ -23,6 +24,7 @@ interface SavedItem {
 
 export function SavedPage() {
   const [searchQuery, setSearchQuery] = useState("");
+  const [, navigate] = useLocation();
   const { toast } = useToast();
 
   const { data: savedItems, isLoading } = useQuery<SavedItem[]>({
@@ -153,7 +155,13 @@ export function SavedPage() {
                         <span className="text-xs text-muted-foreground">
                           From: {item.topic.title}
                         </span>
-                        <Button variant="ghost" size="sm" className="gap-1" data-testid={`button-explore-${item.card.id}`}>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="gap-1" 
+                          onClick={() => navigate(`/rabbit-hole?topic=${item.topic.id}`)}
+                          data-testid={`button-explore-${item.card.id}`}
+                        >
                           Explore
                           <ExternalLink className="h-3 w-3" />
                         </Button>
