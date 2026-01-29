@@ -6,34 +6,75 @@ interface TTSState {
   isSupported: boolean;
   error: string | null;
   progress: number;
+  availableVoices: SpeechSynthesisVoice[];
 }
 
-interface UseTTSOptions {
-  voice?: string;
-  rate?: number;
+interface UseTTSReturn extends TTSState {
+  speak: (text: string) => Promise<void>;
+  stop: () => void;
+  pause: () => void;
+  resume: () => void;
+  setRate: (rate: number) => void;
+  setSelectedVoice: (voiceName: string) => void;
+  rate: number;
+  selectedVoiceName: string | null;
 }
 
-export function useTTS(options: UseTTSOptions = {}) {
-  const { voice = "af_bella", rate = 1.0 } = options;
+export function useTTS(): UseTTSReturn {
   const [state, setState] = useState<TTSState>({
     isLoading: false,
     isSpeaking: false,
     isSupported: true,
     error: null,
     progress: 0,
+    availableVoices: [],
   });
+
+  const [rate, setRateState] = useState(1.0);
+  const [selectedVoiceName, setSelectedVoiceState] = useState<string | null>(null);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
   const cancelledRef = useRef<boolean>(false);
+  const rateRef = useRef(rate);
+  const voiceRef = useRef<string | null>(selectedVoiceName);
 
   useEffect(() => {
-    if (typeof window !== "undefined" && !window.speechSynthesis) {
+    rateRef.current = rate;
+  }, [rate]);
+
+  useEffect(() => {
+    voiceRef.current = selectedVoiceName;
+  }, [selectedVoiceName]);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.speechSynthesis) {
       setState((prev) => ({ ...prev, isSupported: false }));
+      return;
     }
+
+    const loadVoices = () => {
+      const voices = window.speechSynthesis.getVoices();
+      if (voices.length > 0) {
+        setState((prev) => ({ ...prev, availableVoices: voices }));
+        if (!selectedVoiceName) {
+          const englishVoice = voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")
+          ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+          if (englishVoice) {
+            setSelectedVoiceState(englishVoice.name);
+          }
+        }
+      }
+    };
+
+    loadVoices();
+    window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
+
     return () => {
+      window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
       stop();
     };
   }, []);
@@ -69,17 +110,25 @@ export function useTTS(options: UseTTSOptions = {}) {
         }
 
         const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = rate;
+        utterance.rate = rateRef.current;
         utterance.pitch = 1;
         utterance.volume = 1;
 
         const voices = window.speechSynthesis.getVoices();
-        const englishVoice = voices.find(
-          (v) => v.lang.startsWith("en") && v.name.includes("Female")
-        ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+        let selectedVoice: SpeechSynthesisVoice | undefined;
+        
+        if (voiceRef.current) {
+          selectedVoice = voices.find((v) => v.name === voiceRef.current);
+        }
+        
+        if (!selectedVoice) {
+          selectedVoice = voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")
+          ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
+        }
 
-        if (englishVoice) {
-          utterance.voice = englishVoice;
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
         }
 
         utterance.onend = () => {
@@ -101,7 +150,7 @@ export function useTTS(options: UseTTSOptions = {}) {
         window.speechSynthesis.speak(utterance);
       });
     },
-    [rate]
+    []
   );
 
   const speak = useCallback(
@@ -181,11 +230,24 @@ export function useTTS(options: UseTTSOptions = {}) {
     setState((prev) => ({ ...prev, isSpeaking: true }));
   }, []);
 
+  const setRate = useCallback((newRate: number) => {
+    const clampedRate = Math.max(0.5, Math.min(3, newRate));
+    setRateState(clampedRate);
+  }, []);
+
+  const setSelectedVoice = useCallback((voiceName: string) => {
+    setSelectedVoiceState(voiceName);
+  }, []);
+
   return {
     ...state,
     speak,
     stop,
     pause,
     resume,
+    setRate,
+    setSelectedVoice,
+    rate,
+    selectedVoiceName,
   };
 }

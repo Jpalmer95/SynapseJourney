@@ -88,7 +88,7 @@ export function KnowledgeCard({
         )}
       />
       
-      <div className="relative flex flex-col h-full px-6 py-12 md:px-12 md:py-16">
+      <div className="relative flex flex-col h-full px-6 pt-12 pb-24 md:px-12 md:pt-16 md:pb-28">
         <div className="flex items-center gap-2 mb-6">
           {category && (
             <Badge variant="secondary" className="text-xs">
@@ -170,7 +170,7 @@ export function KnowledgeCard({
           </Button>
         </motion.div>
 
-        <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center text-muted-foreground/50">
+        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-col items-center text-muted-foreground/50">
           <ArrowDown className="h-5 w-5 animate-bounce" />
           <span className="text-xs mt-1">Swipe for next</span>
         </div>
