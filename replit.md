@@ -97,6 +97,29 @@ Preferred communication style: Simple, everyday language.
 - Hugging Face token option for free AI alternative to GPT-4o
 - Test Out setting to skip basic/intermediate courses via quiz
 
+### Accessibility Features
+- **Text-to-Speech (TTS)**: Browser-native Web Speech API for reading lesson content aloud
+  - Listen button available in lesson views (standard and Next Gen content)
+  - Play/pause/stop controls with progress indication
+  - Cancellation support for reliable stop functionality
+  - Useful for learners who prefer audio or are multitasking (e.g., driving)
+  - Located in: `client/src/hooks/use-tts.ts`, `client/src/components/tts-button.tsx`
+
+### Onboarding System
+- **First-time User Onboarding**: 3-step guided flow for new users
+  - Step 1: Welcome and introduction to Synapse features
+  - Step 2: Category selection (AI, Mathematics, Physics, etc.)
+  - Step 3: Learning pathway enrollment (optional)
+  - Skip option available that enables all categories by default
+  - Completion tracked in localStorage (`synapse-onboarding-complete`)
+  - Shows only when user has empty feed and hasn't completed onboarding
+  - Located in: `client/src/components/onboarding.tsx`
+
+### Mobile Responsiveness
+- All lesson content cards use `overflow-hidden` and `break-words` to prevent cropping
+- Responsive padding with `p-4 sm:p-6` for proper spacing on mobile devices
+- Applied to: concept, analogy, example, quiz, cross-links, and all Next Gen content sections
+
 ### Streak Tracking
 - Daily streak updated on lesson completion
 - Longest streak record maintained
