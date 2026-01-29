@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import {
   User,
   BookOpen,
@@ -47,6 +48,7 @@ interface UserXpData {
 
 export function ProfilePage() {
   const { user, logout, isLoading: authLoading } = useAuth();
+  const [, navigate] = useLocation();
 
   const { data: stats, isLoading: statsLoading } = useQuery<UserStats>({
     queryKey: ["/api/user/stats"],
@@ -259,6 +261,7 @@ export function ProfilePage() {
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.3 + index * 0.05 }}
                         className="flex items-center gap-4 p-3 rounded-lg bg-muted/50 hover-elevate cursor-pointer"
+                        onClick={() => navigate(`/rabbit-hole?topic=${topic.id}`)}
                         data-testid={`recent-topic-${topic.id}`}
                       >
                         <div className="flex-1 min-w-0">
