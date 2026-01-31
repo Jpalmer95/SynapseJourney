@@ -115,6 +115,19 @@ Preferred communication style: Simple, everyday language.
   - Shows only when user has empty feed and hasn't completed onboarding
   - Located in: `client/src/components/onboarding.tsx`
 
+### Default Content Auto-Enrollment
+- **New users are automatically enrolled in ALL available content by default**
+  - Server-side: `autoEnrollUserInDefaults()` runs after user login/registration
+  - Enrolls users in all 25 pathways automatically
+  - Enables all 7 categories automatically
+  - Located in: `server/replit_integrations/auth/replitAuth.ts`
+- **Fallback for existing users with empty content**
+  - Frontend checks if personalized feed is empty
+  - Triggers `/api/user/auto-enroll` endpoint to populate content
+  - Shows "Setting up your feed..." loading state during enrollment
+  - Located in: `client/src/components/nebula-feed.tsx`
+- **Design philosophy**: Built-in content is the default experience; users can customize later
+
 ### Navigation & Layout
 - **AppLayout Component**: Reusable layout wrapper providing consistent navigation across all pages
   - Location: `client/src/components/app-layout.tsx`
