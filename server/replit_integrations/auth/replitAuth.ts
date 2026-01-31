@@ -7,6 +7,7 @@ import type { Express, RequestHandler } from "express";
 import memoize from "memoizee";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "./storage";
+import { storage } from "../../storage";
 
 const getOidcConfig = memoize(
   async () => {
@@ -58,6 +59,39 @@ async function upsertUser(claims: any) {
     lastName: claims["last_name"],
     profileImageUrl: claims["profile_image_url"],
   });
+  
+  // Auto-enroll user in all default content
+  await autoEnrollUserInDefaults(claims["sub"]);
+}
+
+async function autoEnrollUserInDefaults(userId: string) {
+  try {
+    // Check if user already has pathway enrollments
+    const existingPathways = await storage.getUserPathways(userId);
+    
+    // If no pathways enrolled, enroll in all available pathways
+    if (existingPathways.length === 0) {
+      const allPathways = await storage.getPathways();
+      for (const pathway of allPathways) {
+        await storage.enrollInPathway(userId, pathway.id);
+      }
+      console.log(`Auto-enrolled user ${userId} in ${allPathways.length} pathways`);
+    }
+    
+    // Check if user has any category preferences
+    const existingPrefs = await storage.getCategoryPreferences(userId);
+    
+    // If no preferences, explicitly enable all categories
+    if (existingPrefs.length === 0) {
+      const allCategories = await storage.getCategories();
+      for (const category of allCategories) {
+        await storage.setCategoryPreference(userId, category.id, true);
+      }
+      console.log(`Auto-enabled ${allCategories.length} categories for user ${userId}`);
+    }
+  } catch (error) {
+    console.error("Error auto-enrolling user in defaults:", error);
+  }
 }
 
 export async function setupAuth(app: Express) {
