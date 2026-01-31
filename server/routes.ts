@@ -977,28 +977,48 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.post("/api/user/auto-enroll", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
+      console.log(`[API AutoEnroll] Starting auto-enrollment for user ${userId}`);
+      
       let enrolledPathways = 0;
       let enabledCategories = 0;
 
       // Enroll in all pathways if none enrolled
       const existingPathways = await storage.getUserPathways(userId);
+      console.log(`[API AutoEnroll] User ${userId} has ${existingPathways.length} existing pathways`);
+      
       if (existingPathways.length === 0) {
         const allPathways = await storage.getPathways();
+        console.log(`[API AutoEnroll] Enrolling user in ${allPathways.length} pathways`);
+        
         for (const pathway of allPathways) {
-          await storage.enrollInPathway(userId, pathway.id);
-          enrolledPathways++;
+          try {
+            await storage.enrollInPathway(userId, pathway.id);
+            enrolledPathways++;
+          } catch (e) {
+            console.error(`[API AutoEnroll] Failed to enroll in pathway ${pathway.id}:`, e);
+          }
         }
       }
 
       // Enable all categories if no preferences
       const existingPrefs = await storage.getCategoryPreferences(userId);
+      console.log(`[API AutoEnroll] User ${userId} has ${existingPrefs.length} existing preferences`);
+      
       if (existingPrefs.length === 0) {
         const allCategories = await storage.getCategories();
+        console.log(`[API AutoEnroll] Enabling ${allCategories.length} categories for user`);
+        
         for (const category of allCategories) {
-          await storage.setCategoryPreference(userId, category.id, true);
-          enabledCategories++;
+          try {
+            await storage.setCategoryPreference(userId, category.id, true);
+            enabledCategories++;
+          } catch (e) {
+            console.error(`[API AutoEnroll] Failed to enable category ${category.id}:`, e);
+          }
         }
       }
+
+      console.log(`[API AutoEnroll] Completed: ${enrolledPathways} pathways, ${enabledCategories} categories`);
 
       res.json({ 
         success: true, 
@@ -1009,7 +1029,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
           : "Already enrolled in default content"
       });
     } catch (error) {
-      console.error("Error auto-enrolling user:", error);
+      console.error("[API AutoEnroll] Error auto-enrolling user:", error);
       res.status(500).json({ error: "Failed to auto-enroll user" });
     }
   });

@@ -65,32 +65,52 @@ async function upsertUser(claims: any) {
 }
 
 async function autoEnrollUserInDefaults(userId: string) {
+  console.log(`[AutoEnroll] Starting auto-enrollment for user ${userId}`);
+  
   try {
     // Check if user already has pathway enrollments
     const existingPathways = await storage.getUserPathways(userId);
+    console.log(`[AutoEnroll] User ${userId} has ${existingPathways.length} existing pathways`);
     
     // If no pathways enrolled, enroll in all available pathways
     if (existingPathways.length === 0) {
       const allPathways = await storage.getPathways();
+      console.log(`[AutoEnroll] Found ${allPathways.length} pathways to enroll user in`);
+      
       for (const pathway of allPathways) {
-        await storage.enrollInPathway(userId, pathway.id);
+        try {
+          await storage.enrollInPathway(userId, pathway.id);
+          console.log(`[AutoEnroll] Enrolled user ${userId} in pathway ${pathway.id} (${pathway.name})`);
+        } catch (pathwayError) {
+          console.error(`[AutoEnroll] Failed to enroll in pathway ${pathway.id}:`, pathwayError);
+        }
       }
-      console.log(`Auto-enrolled user ${userId} in ${allPathways.length} pathways`);
+      console.log(`[AutoEnroll] Completed pathway enrollment for user ${userId}`);
     }
     
     // Check if user has any category preferences
     const existingPrefs = await storage.getCategoryPreferences(userId);
+    console.log(`[AutoEnroll] User ${userId} has ${existingPrefs.length} existing category preferences`);
     
     // If no preferences, explicitly enable all categories
     if (existingPrefs.length === 0) {
       const allCategories = await storage.getCategories();
+      console.log(`[AutoEnroll] Found ${allCategories.length} categories to enable for user`);
+      
       for (const category of allCategories) {
-        await storage.setCategoryPreference(userId, category.id, true);
+        try {
+          await storage.setCategoryPreference(userId, category.id, true);
+          console.log(`[AutoEnroll] Enabled category ${category.id} (${category.name}) for user ${userId}`);
+        } catch (categoryError) {
+          console.error(`[AutoEnroll] Failed to enable category ${category.id}:`, categoryError);
+        }
       }
-      console.log(`Auto-enabled ${allCategories.length} categories for user ${userId}`);
+      console.log(`[AutoEnroll] Completed category preference setup for user ${userId}`);
     }
+    
+    console.log(`[AutoEnroll] Auto-enrollment complete for user ${userId}`);
   } catch (error) {
-    console.error("Error auto-enrolling user in defaults:", error);
+    console.error(`[AutoEnroll] Critical error auto-enrolling user ${userId}:`, error);
   }
 }
 
