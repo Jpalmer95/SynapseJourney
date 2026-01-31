@@ -99,6 +99,7 @@ export interface IStorage {
   // Category Preferences
   getCategoryPreferences(userId: string): Promise<{ categoryId: number; enabled: boolean }[]>;
   setCategoryPreference(userId: string, categoryId: number, enabled: boolean): Promise<UserCategoryPreference>;
+  deleteAllCategoryPreferences(userId: string): Promise<number>;
   getEnabledCategories(userId: string): Promise<number[]>;
   getFeedCardsFiltered(userId: string, limit?: number): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]>;
 
@@ -541,27 +542,48 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async deleteAllCategoryPreferences(userId: string): Promise<number> {
+    const result = await db.delete(userCategoryPreferences)
+      .where(eq(userCategoryPreferences.userId, userId));
+    return result.rowCount || 0;
+  }
+
   async getEnabledCategories(userId: string): Promise<number[]> {
     const prefs = await this.getCategoryPreferences(userId);
     const allCategories = await this.getCategories();
     
+    console.log(`[Storage] getEnabledCategories for user ${userId}: ${prefs.length} prefs, ${allCategories.length} total categories`);
+    
     // If no preferences set, all categories are enabled by default
     if (prefs.length === 0) {
+      console.log(`[Storage] No preferences found for user ${userId}, returning all ${allCategories.length} categories`);
       return allCategories.map((c) => c.id);
     }
     
     const prefsMap = new Map(prefs.map((p) => [p.categoryId, p.enabled]));
     
     // Categories without explicit preference are enabled by default
-    return allCategories
+    const enabledIds = allCategories
       .filter((c) => prefsMap.get(c.id) !== false)
       .map((c) => c.id);
+    
+    console.log(`[Storage] User ${userId} has ${enabledIds.length} enabled categories: ${enabledIds.join(', ')}`);
+    return enabledIds;
   }
 
   async getFeedCardsFiltered(userId: string, limit = 20): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]> {
-    const enabledCategories = await this.getEnabledCategories(userId);
+    let enabledCategories = await this.getEnabledCategories(userId);
     
+    // Fallback: If somehow all categories are disabled, enable all to prevent empty feed
     if (enabledCategories.length === 0) {
+      console.log(`[Storage] WARN: No enabled categories for user ${userId}, falling back to all categories`);
+      const allCategories = await this.getCategories();
+      enabledCategories = allCategories.map((c) => c.id);
+    }
+    
+    // If still no categories exist, return empty
+    if (enabledCategories.length === 0) {
+      console.log(`[Storage] ERROR: No categories exist in database!`);
       return [];
     }
 
@@ -577,14 +599,19 @@ export class DatabaseStorage implements IStorage {
       .orderBy(sql`RANDOM()`)
       .limit(limit);
 
+    console.log(`[Storage] Retrieved ${cards.length} cards from database for user ${userId}`);
+
     // Filter by enabled categories
-    return cards
+    const filteredCards = cards
       .filter((row) => !row.topic.categoryId || enabledCategories.includes(row.topic.categoryId))
       .map((row) => ({
         card: row.card,
         topic: row.topic,
         category: row.category || undefined,
       }));
+    
+    console.log(`[Storage] Filtered to ${filteredCards.length} cards for user ${userId}`);
+    return filteredCards;
   }
 
   // Lesson Units

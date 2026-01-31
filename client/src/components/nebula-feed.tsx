@@ -37,29 +37,45 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
     queryKey: [feedEndpoint],
   });
 
+  // Track retry attempts
+  const retryCount = useRef(0);
+  const maxRetries = 3;
+
   // Auto-enroll user in default content if feed is empty
   const autoEnrollMutation = useMutation({
     mutationFn: async () => {
+      console.log("[NebulaFeed] Calling auto-enroll API...");
       const res = await apiRequest("POST", "/api/user/auto-enroll");
       return res.json();
     },
     onSuccess: (data) => {
-      if (data.enrolledPathways > 0 || data.enabledCategories > 0) {
-        queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/user/pathways"] });
-        queryClient.invalidateQueries({ queryKey: ["/api/user/preferences"] });
-        refetch();
-      }
+      console.log("[NebulaFeed] Auto-enroll success:", data);
+      // Always invalidate and refetch, even if counts are 0 (might mean already enrolled)
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/pathways"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/preferences"] });
+      refetch();
       setIsAutoEnrolling(false);
     },
     onError: (error) => {
-      setIsAutoEnrolling(false);
-      toast({
-        title: "Setup incomplete",
-        description: "We couldn't set up your default content. Please try refreshing the page.",
-        variant: "destructive",
-      });
+      console.error("[NebulaFeed] Auto-enroll failed:", error);
+      retryCount.current += 1;
+      
+      if (retryCount.current < maxRetries) {
+        // Retry after a short delay
+        console.log(`[NebulaFeed] Retrying auto-enroll (attempt ${retryCount.current + 1}/${maxRetries})...`);
+        setTimeout(() => {
+          autoEnrollMutation.mutate();
+        }, 1000 * retryCount.current); // Exponential backoff
+      } else {
+        setIsAutoEnrolling(false);
+        toast({
+          title: "Setup incomplete",
+          description: "We couldn't set up your default content. Try using 'Reset to Defaults' in Settings.",
+          variant: "destructive",
+        });
+      }
     },
   });
 
@@ -72,7 +88,9 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
       !autoEnrollAttempted.current &&
       !autoEnrollMutation.isPending
     ) {
+      console.log("[NebulaFeed] Feed empty, triggering auto-enroll for user");
       autoEnrollAttempted.current = true;
+      retryCount.current = 0;
       setIsAutoEnrolling(true);
       autoEnrollMutation.mutate();
     }

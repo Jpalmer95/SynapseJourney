@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -167,6 +167,30 @@ export default function SettingsPage() {
   };
 
   const enabledCount = preferences?.filter((p) => p.enabled).length || 0;
+
+  const resetDefaultsMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/user/reset-defaults");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/preferences"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/pathways"] });
+      toast({
+        title: "Settings Reset",
+        description: `All ${data.enabledCategories} categories have been enabled and you've been enrolled in ${data.enrolledPathways} pathways.`,
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to reset settings. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
 
   return (
     <AppLayout mobileTitle="Settings">
@@ -683,6 +707,46 @@ export default function SettingsPage() {
                 <p>
                   As we expand to more subjects and industries, you&apos;ll have finer control over what appears in your learning journey.
                 </p>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
+            className="mt-6"
+          >
+            <Card className="border-amber-500/30 bg-amber-500/5">
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <RotateCcw className="h-5 w-5 text-amber-600 dark:text-amber-400" />
+                  <CardTitle>Reset to Defaults</CardTitle>
+                </div>
+                <CardDescription>
+                  Having trouble seeing content? Reset your settings to enable all categories and enroll in all pathways.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Button
+                  onClick={() => resetDefaultsMutation.mutate()}
+                  disabled={resetDefaultsMutation.isPending}
+                  variant="outline"
+                  className="w-full border-amber-500/50 hover:bg-amber-500/10"
+                  data-testid="btn-reset-defaults"
+                >
+                  {resetDefaultsMutation.isPending ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Resetting...
+                    </>
+                  ) : (
+                    <>
+                      <RotateCcw className="mr-2 h-4 w-4" />
+                      Reset All Settings to Default
+                    </>
+                  )}
+                </Button>
               </CardContent>
             </Card>
           </motion.div>

@@ -1034,6 +1034,54 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Force reset all settings and re-enroll in default content
+  app.post("/api/user/reset-defaults", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      console.log(`[API ResetDefaults] Force resetting defaults for user ${userId}`);
+      
+      // Delete all existing category preferences
+      const deletedPrefs = await storage.deleteAllCategoryPreferences(userId);
+      console.log(`[API ResetDefaults] Deleted ${deletedPrefs} category preferences for user ${userId}`);
+      
+      // Re-enable all categories
+      const allCategories = await storage.getCategories();
+      let enabledCategories = 0;
+      for (const category of allCategories) {
+        try {
+          await storage.setCategoryPreference(userId, category.id, true);
+          enabledCategories++;
+        } catch (e) {
+          console.error(`[API ResetDefaults] Failed to enable category ${category.id}:`, e);
+        }
+      }
+      
+      // Enroll in all pathways (won't duplicate if already enrolled)
+      const allPathways = await storage.getPathways();
+      let enrolledPathways = 0;
+      for (const pathway of allPathways) {
+        try {
+          await storage.enrollInPathway(userId, pathway.id);
+          enrolledPathways++;
+        } catch (e) {
+          // Ignore duplicate enrollment errors
+        }
+      }
+      
+      console.log(`[API ResetDefaults] Completed: ${enabledCategories} categories enabled, ${enrolledPathways} pathways enrolled`);
+
+      res.json({ 
+        success: true, 
+        enabledCategories,
+        enrolledPathways,
+        message: "Successfully reset to default settings"
+      });
+    } catch (error) {
+      console.error("[API ResetDefaults] Error resetting defaults:", error);
+      res.status(500).json({ error: "Failed to reset defaults" });
+    }
+  });
+
   // Enroll in pathway
   app.post("/api/pathways/:id/enroll", isAuthenticated, async (req: any, res: Response) => {
     try {
