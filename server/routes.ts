@@ -973,6 +973,47 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Auto-enroll user in all default content (pathways and categories)
+  app.post("/api/user/auto-enroll", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      let enrolledPathways = 0;
+      let enabledCategories = 0;
+
+      // Enroll in all pathways if none enrolled
+      const existingPathways = await storage.getUserPathways(userId);
+      if (existingPathways.length === 0) {
+        const allPathways = await storage.getPathways();
+        for (const pathway of allPathways) {
+          await storage.enrollInPathway(userId, pathway.id);
+          enrolledPathways++;
+        }
+      }
+
+      // Enable all categories if no preferences
+      const existingPrefs = await storage.getCategoryPreferences(userId);
+      if (existingPrefs.length === 0) {
+        const allCategories = await storage.getCategories();
+        for (const category of allCategories) {
+          await storage.setCategoryPreference(userId, category.id, true);
+          enabledCategories++;
+        }
+      }
+
+      res.json({ 
+        success: true, 
+        enrolledPathways, 
+        enabledCategories,
+        message: enrolledPathways > 0 || enabledCategories > 0 
+          ? "Successfully enrolled in default content" 
+          : "Already enrolled in default content"
+      });
+    } catch (error) {
+      console.error("Error auto-enrolling user:", error);
+      res.status(500).json({ error: "Failed to auto-enroll user" });
+    }
+  });
+
   // Enroll in pathway
   app.post("/api/pathways/:id/enroll", isAuthenticated, async (req: any, res: Response) => {
     try {

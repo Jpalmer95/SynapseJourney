@@ -103,6 +103,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
         await enrollMutation.mutateAsync(selectedPathway);
       }
       queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
       onComplete();
     }
   };
@@ -123,6 +124,7 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       }
     }
     queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
+    queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
     onComplete();
   };
 

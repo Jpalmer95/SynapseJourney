@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { KnowledgeCard, CardSkeleton } from "@/components/knowledge-card";
@@ -6,6 +6,7 @@ import { Onboarding } from "@/components/onboarding";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
+import { Loader2 } from "lucide-react";
 import type { KnowledgeCard as CardType, Topic, Category } from "@shared/schema";
 
 interface FeedCard {
@@ -24,12 +25,58 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
   const [onboardingComplete, setOnboardingComplete] = useState(() => {
     return localStorage.getItem("synapse-onboarding-complete") === "true";
   });
+  const [isAutoEnrolling, setIsAutoEnrolling] = useState(false);
+  const autoEnrollAttempted = useRef(false);
   const { toast } = useToast();
   const { user } = useAuth();
 
+  // Use personalized feed for logged-in users, public feed for guests
+  const feedEndpoint = user ? "/api/feed/personalized" : "/api/feed";
+  
   const { data: feedData, isLoading, error, refetch } = useQuery<FeedCard[]>({
-    queryKey: ["/api/feed"],
+    queryKey: [feedEndpoint],
   });
+
+  // Auto-enroll user in default content if feed is empty
+  const autoEnrollMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/user/auto-enroll");
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.enrolledPathways > 0 || data.enabledCategories > 0) {
+        queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/user/pathways"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/user/preferences"] });
+        refetch();
+      }
+      setIsAutoEnrolling(false);
+    },
+    onError: (error) => {
+      setIsAutoEnrolling(false);
+      toast({
+        title: "Setup incomplete",
+        description: "We couldn't set up your default content. Please try refreshing the page.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Auto-enroll when feed is empty and user is logged in (regardless of onboarding status)
+  useEffect(() => {
+    if (
+      user &&
+      !isLoading &&
+      (!feedData || feedData.length === 0) &&
+      !autoEnrollAttempted.current &&
+      !autoEnrollMutation.isPending
+    ) {
+      autoEnrollAttempted.current = true;
+      setIsAutoEnrolling(true);
+      autoEnrollMutation.mutate();
+    }
+  }, [user, isLoading, feedData, autoEnrollMutation]);
 
   const saveMutation = useMutation({
     mutationFn: async (cardId: number) => {
@@ -115,6 +162,30 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
   if (error || !feedData || feedData.length === 0) {
     if (user && !onboardingComplete) {
       return <Onboarding onComplete={handleOnboardingComplete} />;
+    }
+    
+    // Show loading state while auto-enrolling
+    if (isAutoEnrolling || autoEnrollMutation.isPending) {
+      return (
+        <div className="h-screen w-full flex items-center justify-center">
+          <div className="text-center px-6">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              className="text-6xl mb-6"
+            >
+              <span className="text-primary">Synapse</span>
+            </motion.div>
+            <div className="flex items-center justify-center gap-2 mb-2">
+              <Loader2 className="h-5 w-5 animate-spin text-primary" />
+              <h2 className="text-2xl font-semibold">Setting up your feed...</h2>
+            </div>
+            <p className="text-muted-foreground max-w-md">
+              We're enrolling you in our curated learning pathways. This will only take a moment.
+            </p>
+          </div>
+        </div>
+      );
     }
     
     return (
