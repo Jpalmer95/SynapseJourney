@@ -51,6 +51,7 @@ export interface IStorage {
   createTopic(topic: InsertTopic): Promise<Topic>;
 
   // Knowledge Cards
+  getAllCards(): Promise<KnowledgeCard[]>;
   getCardsByTopic(topicId: number): Promise<KnowledgeCard[]>;
   getCardById(id: number): Promise<KnowledgeCard | undefined>;
   createCard(card: InsertKnowledgeCard): Promise<KnowledgeCard>;
@@ -221,6 +222,10 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Knowledge Cards
+  async getAllCards(): Promise<KnowledgeCard[]> {
+    return db.select().from(knowledgeCards);
+  }
+
   async getCardsByTopic(topicId: number): Promise<KnowledgeCard[]> {
     return db.select().from(knowledgeCards).where(eq(knowledgeCards.topicId, topicId)).orderBy(knowledgeCards.order);
   }

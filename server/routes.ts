@@ -6,6 +6,7 @@ import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
 import { getAIProvider, type ProviderConfig } from "./ai-providers";
+import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS } from "./seed-data";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -1079,6 +1080,103 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("[API ResetDefaults] Error resetting defaults:", error);
       res.status(500).json({ error: "Failed to reset defaults" });
+    }
+  });
+
+  // Seed default content if database is empty (admin endpoint)
+  app.post("/api/admin/seed-defaults", async (req: Request, res: Response) => {
+    try {
+      console.log("[API SeedDefaults] Checking if seeding is needed...");
+      
+      // Check if categories exist
+      const existingCategories = await storage.getCategories();
+      let categoriesSeeded = 0;
+      let topicsSeeded = 0;
+      let cardsSeeded = 0;
+      let pathwaysSeeded = 0;
+      
+      if (existingCategories.length === 0) {
+        console.log("[API SeedDefaults] No categories found, seeding default categories...");
+        for (const cat of DEFAULT_CATEGORIES) {
+          try {
+            await storage.createCategory({ name: cat.name, color: cat.color, icon: cat.icon });
+            categoriesSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create category ${cat.name}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${categoriesSeeded} categories`);
+      } else {
+        console.log(`[API SeedDefaults] Categories already exist (${existingCategories.length} found)`);
+      }
+      
+      // Check if topics exist
+      const existingTopics = await storage.getTopics();
+      if (existingTopics.length === 0) {
+        console.log("[API SeedDefaults] No topics found, seeding default topics...");
+        for (const topic of DEFAULT_TOPICS) {
+          try {
+            await storage.createTopic({ title: topic.title, description: topic.description, categoryId: topic.categoryId, difficulty: topic.difficulty });
+            topicsSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create topic ${topic.title}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${topicsSeeded} topics`);
+      } else {
+        console.log(`[API SeedDefaults] Topics already exist (${existingTopics.length} found)`);
+      }
+      
+      // Check if knowledge cards exist
+      const existingCards = await storage.getAllCards();
+      if (existingCards.length === 0) {
+        console.log("[API SeedDefaults] No knowledge cards found, seeding default cards...");
+        for (const card of DEFAULT_KNOWLEDGE_CARDS) {
+          try {
+            await storage.createCard({ topicId: card.topicId, title: card.title, content: card.content, cardType: card.cardType, tags: card.tags, order: card.order });
+            cardsSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create card ${card.title}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${cardsSeeded} knowledge cards`);
+      } else {
+        console.log(`[API SeedDefaults] Knowledge cards already exist (${existingCards.length} found)`);
+      }
+      
+      // Check if pathways exist
+      const existingPathways = await storage.getPathways();
+      if (existingPathways.length === 0) {
+        console.log("[API SeedDefaults] No pathways found, seeding default pathways...");
+        for (const pw of DEFAULT_PATHWAYS) {
+          try {
+            await storage.createPathway({ name: pw.name, description: pw.description, icon: pw.icon, color: pw.color, difficulty: pw.difficulty, estimatedHours: pw.estimatedHours, isActive: pw.isActive });
+            pathwaysSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create pathway ${pw.name}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${pathwaysSeeded} pathways`);
+      } else {
+        console.log(`[API SeedDefaults] Pathways already exist (${existingPathways.length} found)`);
+      }
+      
+      const totalSeeded = categoriesSeeded + topicsSeeded + cardsSeeded + pathwaysSeeded;
+      console.log(`[API SeedDefaults] Completed seeding: ${categoriesSeeded} categories, ${topicsSeeded} topics, ${cardsSeeded} cards, ${pathwaysSeeded} pathways`);
+      
+      res.json({
+        success: true,
+        seeded: {
+          categories: categoriesSeeded,
+          topics: topicsSeeded,
+          knowledgeCards: cardsSeeded,
+          pathways: pathwaysSeeded,
+        },
+        message: totalSeeded > 0 ? "Default content seeded successfully" : "Database already has content, no seeding needed"
+      });
+    } catch (error) {
+      console.error("[API SeedDefaults] Error seeding defaults:", error);
+      res.status(500).json({ error: "Failed to seed default content" });
     }
   });
 
