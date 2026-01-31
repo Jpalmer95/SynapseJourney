@@ -37,6 +37,13 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
     queryKey: [feedEndpoint],
   });
 
+  // Reset currentIndex when feed data changes to prevent out-of-bounds access
+  useEffect(() => {
+    if (feedData && currentIndex >= feedData.length) {
+      setCurrentIndex(Math.max(0, feedData.length - 1));
+    }
+  }, [feedData, currentIndex]);
+
   // Track retry attempts
   const retryCount = useRef(0);
   const maxRetries = 3;
@@ -177,13 +184,16 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
     refetch();
   };
 
+  // Check if we should trigger auto-enrollment (empty feed for logged-in user)
+  const shouldAutoEnroll = user && !isLoading && (!feedData || feedData.length === 0) && !autoEnrollAttempted.current;
+
   if (error || !feedData || feedData.length === 0) {
     if (user && !onboardingComplete) {
       return <Onboarding onComplete={handleOnboardingComplete} />;
     }
     
-    // Show loading state while auto-enrolling
-    if (isAutoEnrolling || autoEnrollMutation.isPending) {
+    // Show loading state while auto-enrolling or about to auto-enroll
+    if (isAutoEnrolling || autoEnrollMutation.isPending || shouldAutoEnroll) {
       return (
         <div className="h-screen w-full flex items-center justify-center">
           <div className="text-center px-6">
@@ -226,6 +236,15 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
   }
 
   const currentCard = feedData[currentIndex];
+
+  // Guard against undefined currentCard (can happen during data transitions)
+  if (!currentCard || !currentCard.card || !currentCard.topic) {
+    return (
+      <div className="h-screen w-full relative overflow-hidden">
+        <CardSkeleton />
+      </div>
+    );
+  }
 
   return (
     <div className="h-screen w-full relative overflow-hidden">

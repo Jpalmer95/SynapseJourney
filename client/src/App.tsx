@@ -13,6 +13,7 @@ import { SavedPage } from "@/pages/saved";
 import { ProfilePage } from "@/pages/profile";
 import SettingsPage from "@/pages/settings";
 import PathwaysPage from "@/pages/pathways";
+import PathwayDetailPage from "@/pages/pathway-detail";
 import AchievementsPage from "@/pages/achievements";
 import ExplorePage from "@/pages/explore";
 import RabbitHolePage from "@/pages/rabbit-hole";
@@ -45,6 +46,7 @@ function AppContent() {
       <Route path="/profile" component={ProfilePage} />
       <Route path="/settings" component={SettingsPage} />
       <Route path="/pathways" component={PathwaysPage} />
+      <Route path="/pathway/:id" component={PathwayDetailPage} />
       <Route path="/achievements" component={AchievementsPage} />
       <Route path="/explore" component={ExplorePage} />
       <Route path="/rabbit-hole" component={RabbitHolePage} />
