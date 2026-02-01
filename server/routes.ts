@@ -1719,6 +1719,29 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Auto-seed pathway topics on startup if missing
+  try {
+    const pathways = await storage.getPathways();
+    if (pathways.length > 0) {
+      const firstPathwayTopics = await storage.getPathwayTopics(pathways[0].id);
+      if (firstPathwayTopics.length === 0) {
+        console.log("[Startup] No pathway topics found, auto-seeding pathway-topic mappings...");
+        let seeded = 0;
+        for (const pt of DEFAULT_PATHWAY_TOPICS) {
+          try {
+            await storage.addTopicToPathway(pt.pathwayId, pt.topicId, pt.order, pt.isRequired);
+            seeded++;
+          } catch (e) {
+            // Ignore duplicates or invalid references
+          }
+        }
+        console.log(`[Startup] Auto-seeded ${seeded} pathway-topic mappings`);
+      }
+    }
+  } catch (e) {
+    console.error("[Startup] Error auto-seeding pathway topics:", e);
+  }
+
   return httpServer;
 }
 
