@@ -2681,12 +2681,14 @@ function getDefaultTimeLimit(testType: string): number | null {
 }
 
 function getTestCategories(testType: string): string[] {
+  // Only include categories that can be assessed via multiple-choice questions
+  // Essay/writing categories are excluded since we only support MCQ format
   const categories: Record<string, string[]> = {
     MCAT: ["Biology", "Chemistry", "Physics", "Psychology", "Critical Analysis"],
-    GRE: ["Verbal Reasoning", "Quantitative Reasoning", "Analytical Writing"],
-    SAT: ["Reading", "Writing", "Math (No Calculator)", "Math (Calculator)"],
+    GRE: ["Verbal Reasoning", "Quantitative Reasoning", "Reading Comprehension"],
+    SAT: ["Reading", "Writing and Language", "Math (No Calculator)", "Math (Calculator)"],
     LSAT: ["Logical Reasoning", "Analytical Reasoning", "Reading Comprehension"],
-    GMAT: ["Quantitative", "Verbal", "Integrated Reasoning", "Analytical Writing"],
+    GMAT: ["Quantitative", "Verbal", "Integrated Reasoning", "Data Sufficiency"],
     ACT: ["English", "Math", "Reading", "Science"],
     IQ: ["Pattern Recognition", "Logical Reasoning", "Spatial Reasoning", "Verbal Ability", "Numerical Ability"],
     BAR: ["Constitutional Law", "Contracts", "Criminal Law", "Evidence", "Torts", "Civil Procedure"],
@@ -2725,12 +2727,15 @@ Return a JSON object with this exact structure:
 }
 
 Guidelines:
+- ALL questions MUST be multiple-choice format with exactly 4 options
+- EVERY question MUST have a valid correctIndex (0, 1, 2, or 3) indicating the correct answer
 - Questions should be ${testType.toUpperCase()}-appropriate in difficulty and style
 - Include a mix of easy, medium, and hard questions
 - For passage-based questions, include a relevant passage in the "passage" field
 - Explanations should be educational and thorough
 - Options should be plausible but only one clearly correct
-- Distribute questions evenly across categories`;
+- Distribute questions evenly across categories
+- Do NOT generate essay questions or any format without a definitive correct answer`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
@@ -2746,19 +2751,31 @@ Guidelines:
       throw new Error("Invalid AI response format");
     }
 
-    // Save questions to database
-    const questionsToInsert = parsed.questions.map((q: any, index: number) => ({
-      testId,
-      questionIndex: index,
-      category: q.category || categories[0],
-      questionType: q.questionType || "multiple_choice",
-      passage: q.passage || null,
-      question: q.question,
-      options: q.options,
-      correctIndex: q.correctIndex,
-      explanation: q.explanation,
-      difficulty: q.difficulty || "medium",
-    }));
+    // Validate and save questions to database
+    const questionsToInsert = parsed.questions
+      .filter((q: any) => {
+        // Validate required fields for multiple choice
+        const hasValidCorrectIndex = typeof q.correctIndex === 'number' && q.correctIndex >= 0 && q.correctIndex <= 3;
+        const hasValidOptions = Array.isArray(q.options) && q.options.length === 4;
+        const hasQuestion = typeof q.question === 'string' && q.question.trim().length > 0;
+        return hasValidCorrectIndex && hasValidOptions && hasQuestion;
+      })
+      .map((q: any, index: number) => ({
+        testId,
+        questionIndex: index,
+        category: q.category || categories[0],
+        questionType: "multiple_choice",
+        passage: q.passage || null,
+        question: q.question,
+        options: q.options,
+        correctIndex: q.correctIndex,
+        explanation: q.explanation || "No explanation provided.",
+        difficulty: q.difficulty || "medium",
+      }));
+    
+    if (questionsToInsert.length === 0) {
+      throw new Error("No valid questions generated");
+    }
 
     await storage.createPracticeTestQuestions(questionsToInsert);
     await storage.updatePracticeTestStatus(testId, "ready", questionsToInsert.length);
