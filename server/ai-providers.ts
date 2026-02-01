@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { GoogleGenAI } from "@google/genai";
 
 export interface AIProvider {
   name: string;
@@ -14,7 +15,7 @@ export interface ChatOptions {
 }
 
 export interface ProviderConfig {
-  provider: "openai" | "huggingface" | "ollama" | "openrouter";
+  provider: "openai" | "huggingface" | "ollama" | "openrouter" | "gemini";
   huggingFaceToken?: string;
   ollamaUrl?: string;
   openRouterKey?: string;
@@ -22,11 +23,55 @@ export interface ProviderConfig {
 }
 
 const DEFAULT_MODELS: Record<string, string> = {
-  openai: "gpt-4o",
+  openai: "gemini-3-pro-preview", // Switched default for Replit OpenAI wrapper
+  gemini: "gemini-3-pro-preview",
   huggingface: "meta-llama/Llama-3.3-70B-Instruct",
   ollama: "llama3.2",
   openrouter: "anthropic/claude-3.5-sonnet",
 };
+
+class GeminiProvider implements AIProvider {
+  name = "gemini";
+  private client: GoogleGenAI;
+
+  constructor() {
+    this.client = new GoogleGenAI({
+      apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+      httpOptions: {
+        apiVersion: "",
+        baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
+      },
+    });
+  }
+
+  isConfigured(): boolean {
+    return !!process.env.AI_INTEGRATIONS_GEMINI_API_KEY;
+  }
+
+  async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
+    const modelName = options?.model || DEFAULT_MODELS.gemini;
+    const model = this.client.getGenerativeModel({ 
+      model: modelName,
+      generationConfig: {
+        temperature: options?.temperature ?? 0.7,
+        maxOutputTokens: options?.maxTokens,
+        responseMimeType: options?.responseFormat === "json" ? "application/json" : "text/plain",
+      }
+    });
+
+    const chatHistory = messages.slice(0, -1).map(m => ({
+      role: m.role === "assistant" ? "model" : "user",
+      parts: [{ text: m.content }],
+    }));
+
+    const lastMessage = messages[messages.length - 1].content;
+    const result = await model.generateContent({
+      contents: [...chatHistory, { role: "user", parts: [{ text: lastMessage }] }]
+    });
+
+    return result.response.text();
+  }
+}
 
 class OpenAIProvider implements AIProvider {
   name = "openai";
@@ -181,38 +226,42 @@ class OpenRouterProvider implements AIProvider {
 }
 
 const defaultOpenAIProvider = new OpenAIProvider();
+const defaultGeminiProvider = new GeminiProvider();
 
 export function getAIProvider(config: ProviderConfig): AIProvider {
   switch (config.provider) {
+    case "gemini":
+      return defaultGeminiProvider;
+
     case "huggingface":
       if (!config.huggingFaceToken) {
-        console.warn("HuggingFace token not configured, falling back to OpenAI");
-        return defaultOpenAIProvider;
+        console.warn("HuggingFace token not configured, falling back to Gemini");
+        return defaultGeminiProvider;
       }
       return new HuggingFaceProvider(config.huggingFaceToken, config.preferredModel);
 
     case "ollama":
       if (!config.ollamaUrl) {
-        console.warn("Ollama URL not configured, falling back to OpenAI");
-        return defaultOpenAIProvider;
+        console.warn("Ollama URL not configured, falling back to Gemini");
+        return defaultGeminiProvider;
       }
       return new OllamaProvider(config.ollamaUrl, config.preferredModel);
 
     case "openrouter":
       if (!config.openRouterKey) {
-        console.warn("OpenRouter key not configured, falling back to OpenAI");
-        return defaultOpenAIProvider;
+        console.warn("OpenRouter key not configured, falling back to Gemini");
+        return defaultGeminiProvider;
       }
       return new OpenRouterProvider(config.openRouterKey, config.preferredModel);
 
     case "openai":
     default:
-      return defaultOpenAIProvider;
+      return defaultGeminiProvider;
   }
 }
 
 export function getDefaultProvider(): AIProvider {
-  return defaultOpenAIProvider;
+  return defaultGeminiProvider;
 }
 
 export { DEFAULT_MODELS };

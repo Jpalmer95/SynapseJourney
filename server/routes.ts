@@ -143,7 +143,7 @@ export async function registerRoutes(
 
         try {
           const response = await openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gemini-3-pro-preview",
             messages: [
               {
                 role: "system",
@@ -391,10 +391,10 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       ];
 
       try {
-        // Use streaming for OpenAI, non-streaming for other providers
-        if (providerConfig.provider === "openai" || !userProfile?.preferredAiProvider) {
+        // Use streaming for OpenAI (now Gemini via wrapper), non-streaming for other providers
+        if (providerConfig.provider === "openai" || providerConfig.provider === "gemini" || !userProfile?.preferredAiProvider) {
           const stream = await openai.chat.completions.create({
-            model: "gpt-4o",
+            model: "gemini-3-pro-preview",
             messages,
             stream: true,
             max_completion_tokens: 1024,
