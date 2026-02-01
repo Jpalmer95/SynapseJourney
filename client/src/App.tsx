@@ -18,6 +18,8 @@ import AchievementsPage from "@/pages/achievements";
 import ExplorePage from "@/pages/explore";
 import RabbitHolePage from "@/pages/rabbit-hole";
 import CollectionPage from "@/pages/collection";
+import PracticeTestPage from "@/pages/practice-test";
+import PracticeTestResultsPage from "@/pages/practice-test-results";
 import { Loader2 } from "lucide-react";
 
 function AppContent() {
@@ -51,6 +53,8 @@ function AppContent() {
       <Route path="/explore" component={ExplorePage} />
       <Route path="/rabbit-hole" component={RabbitHolePage} />
       <Route path="/collection" component={CollectionPage} />
+      <Route path="/practice-test/:id" component={PracticeTestPage} />
+      <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
       <Route component={NotFound} />
     </Switch>
   );

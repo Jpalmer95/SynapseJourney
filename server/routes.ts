@@ -1891,6 +1891,342 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
     }
   });
 
+  // ==================== PRACTICE TESTS ====================
+
+  // AI chat for discussing practice test questions
+  const practiceTestChatSchema = z.object({
+    question: z.string().min(1),
+    userAnswer: z.string(),
+    correctAnswer: z.string(),
+    explanation: z.string(),
+    userMessage: z.string().min(1).max(2000),
+    history: z.array(z.object({
+      role: z.enum(["user", "assistant"]),
+      content: z.string(),
+    })).optional().default([]),
+  });
+
+  app.post("/api/practice-tests/chat", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = practiceTestChatSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request body", details: parsed.error.issues });
+      }
+      
+      const { question, userAnswer, correctAnswer, explanation, userMessage, history } = parsed.data;
+      
+      const systemPrompt = `You are a helpful tutor helping a student understand a practice test question they got wrong.
+
+Question: ${question}
+User's Answer: ${userAnswer}
+Correct Answer: ${correctAnswer}
+Explanation: ${explanation}
+
+Help the student understand why their answer was wrong and why the correct answer is right. Be encouraging and educational. If they ask follow-up questions, provide clear explanations.`;
+
+      const messages = [
+        { role: "system" as const, content: systemPrompt },
+        ...(history || []),
+        { role: "user" as const, content: userMessage }
+      ];
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages,
+        max_tokens: 1024,
+      });
+
+      const content = response.choices[0].message.content || "I couldn't generate a response. Please try again.";
+      res.json({ response: content });
+    } catch (error) {
+      console.error("Error in practice test chat:", error);
+      res.status(500).json({ error: "Failed to get AI response" });
+    }
+  });
+
+  // Create practice test
+  app.post("/api/practice-tests", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { testType, title, description } = req.body;
+      if (!testType || !title) {
+        return res.status(400).json({ error: "Test type and title are required" });
+      }
+      
+      const practiceTest = await storage.createPracticeTest({
+        userId: req.user.claims.sub,
+        testType: testType.toUpperCase(),
+        title,
+        description: description || null,
+        totalQuestions: 0,
+        timeLimit: getDefaultTimeLimit(testType),
+        categories: getTestCategories(testType),
+        status: "generating",
+      });
+      
+      // Start generating questions in the background
+      generatePracticeTestQuestions(practiceTest.id, testType, description).catch(console.error);
+      
+      res.json(practiceTest);
+    } catch (error) {
+      console.error("Error creating practice test:", error);
+      res.status(500).json({ error: "Failed to create practice test" });
+    }
+  });
+
+  // Get user's practice tests
+  app.get("/api/user/practice-tests", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const tests = await storage.getUserPracticeTests(req.user.claims.sub);
+      res.json(tests);
+    } catch (error) {
+      console.error("Error fetching practice tests:", error);
+      res.status(500).json({ error: "Failed to fetch practice tests" });
+    }
+  });
+
+  // Get practice test by ID
+  app.get("/api/practice-tests/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const testId = parseInt(req.params.id);
+      if (isNaN(testId)) {
+        return res.status(400).json({ error: "Invalid test ID" });
+      }
+      
+      const test = await storage.getPracticeTest(testId);
+      if (!test) {
+        return res.status(404).json({ error: "Practice test not found" });
+      }
+      
+      // Only allow owner to view
+      if (test.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      res.json(test);
+    } catch (error) {
+      console.error("Error fetching practice test:", error);
+      res.status(500).json({ error: "Failed to fetch practice test" });
+    }
+  });
+
+  // Get practice test questions
+  app.get("/api/practice-tests/:id/questions", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const testId = parseInt(req.params.id);
+      if (isNaN(testId)) {
+        return res.status(400).json({ error: "Invalid test ID" });
+      }
+      
+      const test = await storage.getPracticeTest(testId);
+      if (!test) {
+        return res.status(404).json({ error: "Practice test not found" });
+      }
+      
+      if (test.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const questions = await storage.getPracticeTestQuestions(testId);
+      res.json(questions);
+    } catch (error) {
+      console.error("Error fetching questions:", error);
+      res.status(500).json({ error: "Failed to fetch questions" });
+    }
+  });
+
+  // Start or resume a test attempt
+  app.post("/api/practice-tests/:id/attempt", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const testId = parseInt(req.params.id);
+      const userId = req.user.claims.sub;
+      
+      const test = await storage.getPracticeTest(testId);
+      if (!test) {
+        return res.status(404).json({ error: "Practice test not found" });
+      }
+      
+      if (test.userId !== userId) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      if (test.status !== "ready") {
+        return res.status(400).json({ error: "Test is not ready yet" });
+      }
+      
+      // Check for existing active attempt
+      let attempt = await storage.getActiveAttempt(userId, testId);
+      
+      if (!attempt) {
+        // Create new attempt
+        attempt = await storage.createPracticeTestAttempt({
+          userId,
+          testId,
+          status: "in_progress",
+          answers: {},
+          flaggedQuestions: [],
+          timeSpent: 0,
+        });
+      }
+      
+      res.json(attempt);
+    } catch (error) {
+      console.error("Error starting attempt:", error);
+      res.status(500).json({ error: "Failed to start test attempt" });
+    }
+  });
+
+  // Update attempt answers (auto-save)
+  app.patch("/api/practice-tests/attempts/:attemptId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const attemptId = parseInt(req.params.attemptId);
+      const { answers, flaggedQuestions, timeSpent } = req.body;
+      
+      const attempt = await storage.getPracticeTestAttempt(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: "Attempt not found" });
+      }
+      
+      if (attempt.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      if (attempt.status !== "in_progress") {
+        return res.status(400).json({ error: "Attempt already completed" });
+      }
+      
+      // Update answers if provided
+      if (answers !== undefined) {
+        await storage.updateAttemptAnswers(attemptId, answers, flaggedQuestions);
+      }
+      
+      // Update time if provided
+      if (timeSpent !== undefined) {
+        await storage.updateAttemptTime(attemptId, timeSpent);
+      }
+      
+      const updated = await storage.getPracticeTestAttempt(attemptId);
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating attempt:", error);
+      res.status(500).json({ error: "Failed to update attempt" });
+    }
+  });
+
+  // Submit test attempt for scoring
+  app.post("/api/practice-tests/attempts/:attemptId/submit", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const attemptId = parseInt(req.params.attemptId);
+      
+      const attempt = await storage.getPracticeTestAttempt(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: "Attempt not found" });
+      }
+      
+      if (attempt.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      if (attempt.status !== "in_progress") {
+        return res.status(400).json({ error: "Attempt already submitted" });
+      }
+      
+      // Get questions and calculate score
+      const questions = await storage.getPracticeTestQuestions(attempt.testId);
+      const answers = attempt.answers as Record<string, number>;
+      
+      let totalCorrect = 0;
+      const categoryScores: Record<string, { correct: number; total: number }> = {};
+      
+      for (const question of questions) {
+        const category = question.category;
+        if (!categoryScores[category]) {
+          categoryScores[category] = { correct: 0, total: 0 };
+        }
+        categoryScores[category].total++;
+        
+        const userAnswer = answers[question.id.toString()];
+        if (userAnswer === question.correctIndex) {
+          totalCorrect++;
+          categoryScores[category].correct++;
+        }
+      }
+      
+      const score = questions.length > 0 ? Math.round((totalCorrect / questions.length) * 100) : 0;
+      
+      // Complete the attempt
+      const completedAttempt = await storage.completeAttempt(attemptId, score, categoryScores);
+      
+      // Generate gap recommendations
+      const gapRecommendations = [];
+      for (const [category, scores] of Object.entries(categoryScores)) {
+        const categoryScore = scores.total > 0 ? Math.round((scores.correct / scores.total) * 100) : 0;
+        if (categoryScore < 70) {
+          gapRecommendations.push({
+            attemptId,
+            category,
+            gapScore: 100 - categoryScore,
+            suggestedTopicTitle: `${category} Deep Dive`,
+            suggestedTopicDescription: `Strengthen your understanding of ${category} concepts based on your practice test results.`,
+          });
+        }
+      }
+      
+      if (gapRecommendations.length > 0) {
+        await storage.createTestGapRecommendations(gapRecommendations);
+      }
+      
+      res.json({
+        attempt: completedAttempt,
+        categoryScores,
+        recommendations: gapRecommendations,
+      });
+    } catch (error) {
+      console.error("Error submitting attempt:", error);
+      res.status(500).json({ error: "Failed to submit attempt" });
+    }
+  });
+
+  // Get attempt results
+  app.get("/api/practice-tests/attempts/:attemptId/results", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const attemptId = parseInt(req.params.attemptId);
+      
+      const attempt = await storage.getPracticeTestAttempt(attemptId);
+      if (!attempt) {
+        return res.status(404).json({ error: "Attempt not found" });
+      }
+      
+      if (attempt.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "Not authorized" });
+      }
+      
+      const test = await storage.getPracticeTest(attempt.testId);
+      const questions = await storage.getPracticeTestQuestions(attempt.testId);
+      const recommendations = await storage.getTestGapRecommendations(attemptId);
+      
+      res.json({
+        attempt,
+        test,
+        questions,
+        recommendations,
+      });
+    } catch (error) {
+      console.error("Error fetching results:", error);
+      res.status(500).json({ error: "Failed to fetch results" });
+    }
+  });
+
+  // Get user's completed test attempts
+  app.get("/api/user/practice-test-attempts", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const attempts = await storage.getUserPracticeTestAttempts(req.user.claims.sub);
+      res.json(attempts);
+    } catch (error) {
+      console.error("Error fetching attempts:", error);
+      res.status(500).json({ error: "Failed to fetch attempts" });
+    }
+  });
+
   // Auto-seed pathway topics on startup if missing
   try {
     const pathways = await storage.getPathways();
@@ -2326,4 +2662,109 @@ function getDefaultLevels(topicTitle: string) {
       content: `Connect with the latest research and innovations in ${topicTitle}.`,
     },
   ];
+}
+
+// ==================== PRACTICE TEST HELPERS ====================
+
+function getDefaultTimeLimit(testType: string): number | null {
+  const timeLimits: Record<string, number> = {
+    MCAT: 90,
+    GRE: 60,
+    SAT: 65,
+    LSAT: 75,
+    GMAT: 62,
+    ACT: 60,
+    IQ: 45,
+    BAR: 90,
+  };
+  return timeLimits[testType.toUpperCase()] || 60;
+}
+
+function getTestCategories(testType: string): string[] {
+  const categories: Record<string, string[]> = {
+    MCAT: ["Biology", "Chemistry", "Physics", "Psychology", "Critical Analysis"],
+    GRE: ["Verbal Reasoning", "Quantitative Reasoning", "Analytical Writing"],
+    SAT: ["Reading", "Writing", "Math (No Calculator)", "Math (Calculator)"],
+    LSAT: ["Logical Reasoning", "Analytical Reasoning", "Reading Comprehension"],
+    GMAT: ["Quantitative", "Verbal", "Integrated Reasoning", "Analytical Writing"],
+    ACT: ["English", "Math", "Reading", "Science"],
+    IQ: ["Pattern Recognition", "Logical Reasoning", "Spatial Reasoning", "Verbal Ability", "Numerical Ability"],
+    BAR: ["Constitutional Law", "Contracts", "Criminal Law", "Evidence", "Torts", "Civil Procedure"],
+  };
+  return categories[testType.toUpperCase()] || ["General Knowledge"];
+}
+
+async function generatePracticeTestQuestions(testId: number, testType: string, focusAreas?: string) {
+  try {
+    const categories = getTestCategories(testType);
+    const questionsPerCategory = 5;
+    const totalQuestions = categories.length * questionsPerCategory;
+
+    const prompt = `You are an expert test prep instructor. Generate ${totalQuestions} practice questions for a ${testType.toUpperCase()} exam.
+
+${focusAreas ? `Focus areas requested: ${focusAreas}` : ""}
+
+Categories to cover: ${categories.join(", ")}
+
+Generate ${questionsPerCategory} questions per category. Each question should be challenging but fair, similar to actual ${testType.toUpperCase()} exam questions.
+
+Return a JSON object with this exact structure:
+{
+  "questions": [
+    {
+      "category": "Category Name",
+      "questionType": "multiple_choice",
+      "passage": null,
+      "question": "Question text here?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 0,
+      "explanation": "Detailed explanation of why this answer is correct",
+      "difficulty": "medium"
+    }
+  ]
+}
+
+Guidelines:
+- Questions should be ${testType.toUpperCase()}-appropriate in difficulty and style
+- Include a mix of easy, medium, and hard questions
+- For passage-based questions, include a relevant passage in the "passage" field
+- Explanations should be educational and thorough
+- Options should be plausible but only one clearly correct
+- Distribute questions evenly across categories`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: prompt }],
+      response_format: { type: "json_object" },
+      temperature: 0.7,
+    });
+
+    const content = response.choices[0].message.content || "{}";
+    const parsed = JSON.parse(content);
+
+    if (!parsed.questions || !Array.isArray(parsed.questions)) {
+      throw new Error("Invalid AI response format");
+    }
+
+    // Save questions to database
+    const questionsToInsert = parsed.questions.map((q: any, index: number) => ({
+      testId,
+      questionIndex: index,
+      category: q.category || categories[0],
+      questionType: q.questionType || "multiple_choice",
+      passage: q.passage || null,
+      question: q.question,
+      options: q.options,
+      correctIndex: q.correctIndex,
+      explanation: q.explanation,
+      difficulty: q.difficulty || "medium",
+    }));
+
+    await storage.createPracticeTestQuestions(questionsToInsert);
+    await storage.updatePracticeTestStatus(testId, "ready", questionsToInsert.length);
+
+  } catch (error) {
+    console.error("Error generating practice test questions:", error);
+    await storage.updatePracticeTestStatus(testId, "failed");
+  }
 }

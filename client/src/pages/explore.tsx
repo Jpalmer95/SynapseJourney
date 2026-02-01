@@ -1,17 +1,19 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle, ChevronLeft } from "lucide-react";
+import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle, ChevronLeft, ClipboardList, GraduationCap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import { Link } from "wouter";
+import { Link, useLocation } from "wouter";
 
 interface Topic {
   id: number;
@@ -31,15 +33,30 @@ interface CustomTopic {
   createdAt: string;
 }
 
+interface PracticeTest {
+  id: number;
+  userId: string;
+  testType: string;
+  title: string;
+  description: string | null;
+  totalQuestions: number;
+  timeLimit: number | null;
+  categories: string[] | null;
+  status: string;
+  createdAt: string;
+}
+
 const TOPICS_PER_PAGE = 10;
 
 export default function ExplorePage() {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [searchQuery, setSearchQuery] = useState("");
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [newTopicTitle, setNewTopicTitle] = useState("");
   const [newTopicDescription, setNewTopicDescription] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [isPracticeTestMode, setIsPracticeTestMode] = useState(false);
 
   const { data: topics, isLoading: topicsLoading } = useQuery<Topic[]>({
     queryKey: ["/api/topics"],
@@ -47,6 +64,10 @@ export default function ExplorePage() {
 
   const { data: customTopics, isLoading: customLoading } = useQuery<CustomTopic[]>({
     queryKey: ["/api/user/custom-topics"],
+  });
+
+  const { data: practiceTests, isLoading: testsLoading } = useQuery<PracticeTest[]>({
+    queryKey: ["/api/user/practice-tests"],
   });
 
   const createMutation = useMutation({
@@ -72,6 +93,30 @@ export default function ExplorePage() {
     },
   });
 
+  const createTestMutation = useMutation({
+    mutationFn: async (data: { testType: string; title: string; description?: string }) => {
+      return apiRequest("POST", "/api/practice-tests", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/practice-tests"] });
+      setShowCreateForm(false);
+      setNewTopicTitle("");
+      setNewTopicDescription("");
+      setIsPracticeTestMode(false);
+      toast({
+        title: "Practice Test Created!",
+        description: "We're generating your practice test questions. This may take a minute.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create practice test. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
   const filteredTopics = topics?.filter(topic =>
     topic.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     topic.description.toLowerCase().includes(searchQuery.toLowerCase())
@@ -80,16 +125,25 @@ export default function ExplorePage() {
   const handleCreate = () => {
     if (!newTopicTitle.trim()) {
       toast({
-        title: "Title Required",
-        description: "Please enter a topic title.",
+        title: isPracticeTestMode ? "Test Type Required" : "Title Required",
+        description: isPracticeTestMode ? "Please enter a test type (e.g., MCAT, GRE, SAT)." : "Please enter a topic title.",
         variant: "destructive",
       });
       return;
     }
-    createMutation.mutate({
-      title: newTopicTitle,
-      description: newTopicDescription || `Learn about ${newTopicTitle}`,
-    });
+
+    if (isPracticeTestMode) {
+      createTestMutation.mutate({
+        testType: newTopicTitle.toUpperCase(),
+        title: `${newTopicTitle.toUpperCase()} Practice Test`,
+        description: newTopicDescription || undefined,
+      });
+    } else {
+      createMutation.mutate({
+        title: newTopicTitle,
+        description: newTopicDescription || `Learn about ${newTopicTitle}`,
+      });
+    }
   };
 
   const statusIcons: Record<string, typeof Loader2> = {
@@ -168,7 +222,7 @@ export default function ExplorePage() {
                     data-testid="btn-show-create-form"
                   >
                     <Plus className="h-4 w-4 mr-2" />
-                    Create Custom Learning Journey
+                    Create Custom Learning Journey or Practice Test
                   </Button>
                 )}
 
@@ -180,46 +234,99 @@ export default function ExplorePage() {
                       exit={{ opacity: 0, height: 0 }}
                       className="mt-4 space-y-4"
                     >
+                      <div className="flex items-center justify-between p-3 rounded-md bg-muted/50">
+                        <div className="flex items-center gap-3">
+                          {isPracticeTestMode ? (
+                            <ClipboardList className="h-5 w-5 text-primary" />
+                          ) : (
+                            <GraduationCap className="h-5 w-5 text-primary" />
+                          )}
+                          <div>
+                            <p className="font-medium text-sm">
+                              {isPracticeTestMode ? "Practice Test Mode" : "Learning Journey Mode"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              {isPracticeTestMode 
+                                ? "Generate a timed practice exam with scoring" 
+                                : "Create a personalized learning path"}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="practice-test-mode" className="text-xs text-muted-foreground">
+                            Practice Test
+                          </Label>
+                          <Switch
+                            id="practice-test-mode"
+                            checked={isPracticeTestMode}
+                            onCheckedChange={setIsPracticeTestMode}
+                            data-testid="switch-practice-test-mode"
+                          />
+                        </div>
+                      </div>
+
                       <div>
-                        <label className="text-sm font-medium mb-1 block">Topic Title</label>
+                        <label className="text-sm font-medium mb-1 block">
+                          {isPracticeTestMode ? "Test Type" : "Topic Title"}
+                        </label>
                         <Input
-                          placeholder="e.g., Music Theory, Electrical Engineering, Open Source Contributing"
+                          placeholder={isPracticeTestMode 
+                            ? "e.g., MCAT, GRE, SAT, IQ Test, Bar Exam"
+                            : "e.g., Music Theory, Electrical Engineering, Open Source Contributing"
+                          }
                           value={newTopicTitle}
                           onChange={(e) => setNewTopicTitle(e.target.value)}
                           data-testid="input-new-topic-title"
                         />
                       </div>
                       <div>
-                        <label className="text-sm font-medium mb-1 block">Description (optional)</label>
+                        <label className="text-sm font-medium mb-1 block">
+                          {isPracticeTestMode ? "Focus Areas (optional)" : "Description (optional)"}
+                        </label>
                         <Textarea
-                          placeholder="What would you like to learn? Any specific focus areas?"
+                          placeholder={isPracticeTestMode
+                            ? "Any specific sections or topics to focus on?"
+                            : "What would you like to learn? Any specific focus areas?"
+                          }
                           value={newTopicDescription}
                           onChange={(e) => setNewTopicDescription(e.target.value)}
                           rows={3}
                           data-testid="input-new-topic-description"
                         />
                       </div>
-                      <div className="flex gap-2">
+                      <div className="flex gap-2 flex-wrap">
                         <Button
                           onClick={handleCreate}
-                          disabled={createMutation.isPending}
+                          disabled={createMutation.isPending || createTestMutation.isPending}
                           data-testid="btn-create-topic"
                         >
-                          {createMutation.isPending ? (
+                          {(createMutation.isPending || createTestMutation.isPending) ? (
                             <>
                               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                               Creating...
                             </>
                           ) : (
                             <>
-                              <Sparkles className="h-4 w-4 mr-2" />
-                              Generate Learning Journey
+                              {isPracticeTestMode ? (
+                                <>
+                                  <ClipboardList className="h-4 w-4 mr-2" />
+                                  Generate Practice Test
+                                </>
+                              ) : (
+                                <>
+                                  <Sparkles className="h-4 w-4 mr-2" />
+                                  Generate Learning Journey
+                                </>
+                              )}
                             </>
                           )}
                         </Button>
                         <Button
                           variant="outline"
-                          onClick={() => setShowCreateForm(false)}
+                          onClick={() => {
+                            setShowCreateForm(false);
+                            setIsPracticeTestMode(false);
+                          }}
                           data-testid="btn-cancel-create"
                         >
                           Cancel
@@ -291,6 +398,80 @@ export default function ExplorePage() {
                               </div>
                               <Badge variant="secondary" className={statusColor}>
                                 {ct.status}
+                              </Badge>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      )}
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+
+          {/* Practice Tests */}
+          {practiceTests && practiceTests.length > 0 && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.12 }}
+              className="mb-8"
+            >
+              <h2 className="text-lg font-semibold mb-4">Your Practice Tests</h2>
+              <div className="grid gap-4">
+                {practiceTests.map((test, index) => {
+                  const StatusIcon = statusIcons[test.status] || Clock;
+                  const statusColor = statusColors[test.status] || "text-gray-500";
+
+                  return (
+                    <motion.div
+                      key={test.id}
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ delay: index * 0.05 }}
+                    >
+                      {test.status === "ready" ? (
+                        <Link href={`/practice-test/${test.id}`}>
+                          <Card className="hover-elevate cursor-pointer">
+                            <CardContent className="p-4">
+                              <div className="flex items-center gap-4">
+                                <div className="p-3 rounded-md bg-orange-500/10">
+                                  <ClipboardList className="h-5 w-5 text-orange-500" />
+                                </div>
+                                <div className="flex-1">
+                                  <h3 className="font-medium">{test.title}</h3>
+                                  <p className="text-sm text-muted-foreground">
+                                    {test.totalQuestions} questions
+                                    {test.timeLimit && ` • ${test.timeLimit} min`}
+                                  </p>
+                                </div>
+                                <Badge variant="secondary" className="text-green-600">
+                                  <CheckCircle className="h-3 w-3 mr-1" />
+                                  Ready
+                                </Badge>
+                                <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                              </div>
+                            </CardContent>
+                          </Card>
+                        </Link>
+                      ) : (
+                        <Card>
+                          <CardContent className="p-4">
+                            <div className="flex items-center gap-4">
+                              <div className="p-3 rounded-md bg-muted">
+                                <StatusIcon className={`h-5 w-5 ${statusColor} ${test.status === "generating" ? "animate-spin" : ""}`} />
+                              </div>
+                              <div className="flex-1">
+                                <h3 className="font-medium">{test.title}</h3>
+                                <p className="text-sm text-muted-foreground">
+                                  {test.status === "generating" && "Generating practice questions..."}
+                                  {test.status === "pending" && "Waiting to start generation..."}
+                                  {test.status === "failed" && "Generation failed. Please try again."}
+                                </p>
+                              </div>
+                              <Badge variant="secondary" className={statusColor}>
+                                {test.status}
                               </Badge>
                             </div>
                           </CardContent>

@@ -5,6 +5,7 @@ import {
   userProfiles, pathways, pathwayTopics, userPathways, achievements, userAchievements,
   monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
   userInfographics, user3DRewards, customFeeds,
+  practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -33,6 +34,10 @@ import {
   type UserInfographic, type InsertUserInfographic,
   type User3DReward, type InsertUser3DReward,
   type CustomFeed, type InsertCustomFeed,
+  type PracticeTest, type InsertPracticeTest,
+  type PracticeTestQuestion, type InsertPracticeTestQuestion,
+  type PracticeTestAttempt, type InsertPracticeTestAttempt,
+  type TestGapRecommendation, type InsertTestGapRecommendation,
   type LessonContent,
   type NextGenContent,
 } from "@shared/schema";
@@ -196,6 +201,31 @@ export interface IStorage {
   setDefaultFeed(userId: string, feedId: number | null): Promise<void>;
   getDefaultFeed(userId: string): Promise<CustomFeed | undefined>;
   getFeedCardsByTopics(topicIds: number[], limit?: number): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]>;
+
+  // Practice Tests
+  createPracticeTest(test: InsertPracticeTest): Promise<PracticeTest>;
+  getPracticeTest(id: number): Promise<PracticeTest | undefined>;
+  getUserPracticeTests(userId: string): Promise<PracticeTest[]>;
+  updatePracticeTestStatus(id: number, status: string, totalQuestions?: number): Promise<PracticeTest>;
+  
+  // Practice Test Questions
+  createPracticeTestQuestion(question: InsertPracticeTestQuestion): Promise<PracticeTestQuestion>;
+  createPracticeTestQuestions(questions: InsertPracticeTestQuestion[]): Promise<PracticeTestQuestion[]>;
+  getPracticeTestQuestions(testId: number): Promise<PracticeTestQuestion[]>;
+  getPracticeTestQuestion(id: number): Promise<PracticeTestQuestion | undefined>;
+  
+  // Practice Test Attempts
+  createPracticeTestAttempt(attempt: InsertPracticeTestAttempt): Promise<PracticeTestAttempt>;
+  getPracticeTestAttempt(id: number): Promise<PracticeTestAttempt | undefined>;
+  getUserPracticeTestAttempts(userId: string): Promise<{ attempt: PracticeTestAttempt; test: PracticeTest }[]>;
+  getActiveAttempt(userId: string, testId: number): Promise<PracticeTestAttempt | undefined>;
+  updateAttemptAnswers(attemptId: number, answers: Record<string, number>, flaggedQuestions?: number[]): Promise<PracticeTestAttempt>;
+  updateAttemptTime(attemptId: number, timeSpent: number): Promise<PracticeTestAttempt>;
+  completeAttempt(attemptId: number, score: number, categoryScores: Record<string, { correct: number; total: number }>): Promise<PracticeTestAttempt>;
+  
+  // Test Gap Recommendations
+  createTestGapRecommendations(recommendations: InsertTestGapRecommendation[]): Promise<TestGapRecommendation[]>;
+  getTestGapRecommendations(attemptId: number): Promise<TestGapRecommendation[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1313,6 +1343,140 @@ export class DatabaseStorage implements IStorage {
       topic: row.topic,
       category: row.category || undefined,
     }));
+  }
+
+  // Practice Tests
+  async createPracticeTest(test: InsertPracticeTest): Promise<PracticeTest> {
+    const [created] = await db.insert(practiceTests).values(test).returning();
+    return created;
+  }
+
+  async getPracticeTest(id: number): Promise<PracticeTest | undefined> {
+    const [test] = await db.select().from(practiceTests).where(eq(practiceTests.id, id));
+    return test;
+  }
+
+  async getUserPracticeTests(userId: string): Promise<PracticeTest[]> {
+    return db.select().from(practiceTests)
+      .where(eq(practiceTests.userId, userId))
+      .orderBy(desc(practiceTests.createdAt));
+  }
+
+  async updatePracticeTestStatus(id: number, status: string, totalQuestions?: number): Promise<PracticeTest> {
+    const updates: any = { status };
+    if (totalQuestions !== undefined) {
+      updates.totalQuestions = totalQuestions;
+    }
+    const [updated] = await db.update(practiceTests)
+      .set(updates)
+      .where(eq(practiceTests.id, id))
+      .returning();
+    return updated;
+  }
+
+  // Practice Test Questions
+  async createPracticeTestQuestion(question: InsertPracticeTestQuestion): Promise<PracticeTestQuestion> {
+    const [created] = await db.insert(practiceTestQuestions).values(question).returning();
+    return created;
+  }
+
+  async createPracticeTestQuestions(questions: InsertPracticeTestQuestion[]): Promise<PracticeTestQuestion[]> {
+    if (questions.length === 0) return [];
+    const created = await db.insert(practiceTestQuestions).values(questions).returning();
+    return created;
+  }
+
+  async getPracticeTestQuestions(testId: number): Promise<PracticeTestQuestion[]> {
+    return db.select().from(practiceTestQuestions)
+      .where(eq(practiceTestQuestions.testId, testId))
+      .orderBy(practiceTestQuestions.questionIndex);
+  }
+
+  async getPracticeTestQuestion(id: number): Promise<PracticeTestQuestion | undefined> {
+    const [question] = await db.select().from(practiceTestQuestions)
+      .where(eq(practiceTestQuestions.id, id));
+    return question;
+  }
+
+  // Practice Test Attempts
+  async createPracticeTestAttempt(attempt: InsertPracticeTestAttempt): Promise<PracticeTestAttempt> {
+    const [created] = await db.insert(practiceTestAttempts).values(attempt).returning();
+    return created;
+  }
+
+  async getPracticeTestAttempt(id: number): Promise<PracticeTestAttempt | undefined> {
+    const [attempt] = await db.select().from(practiceTestAttempts)
+      .where(eq(practiceTestAttempts.id, id));
+    return attempt;
+  }
+
+  async getUserPracticeTestAttempts(userId: string): Promise<{ attempt: PracticeTestAttempt; test: PracticeTest }[]> {
+    const results = await db.select({
+      attempt: practiceTestAttempts,
+      test: practiceTests,
+    })
+      .from(practiceTestAttempts)
+      .innerJoin(practiceTests, eq(practiceTestAttempts.testId, practiceTests.id))
+      .where(eq(practiceTestAttempts.userId, userId))
+      .orderBy(desc(practiceTestAttempts.startedAt));
+    
+    return results;
+  }
+
+  async getActiveAttempt(userId: string, testId: number): Promise<PracticeTestAttempt | undefined> {
+    const [attempt] = await db.select().from(practiceTestAttempts)
+      .where(and(
+        eq(practiceTestAttempts.userId, userId),
+        eq(practiceTestAttempts.testId, testId),
+        eq(practiceTestAttempts.status, "in_progress")
+      ));
+    return attempt;
+  }
+
+  async updateAttemptAnswers(attemptId: number, answers: Record<string, number>, flaggedQuestions?: number[]): Promise<PracticeTestAttempt> {
+    const updates: any = { answers };
+    if (flaggedQuestions !== undefined) {
+      updates.flaggedQuestions = flaggedQuestions;
+    }
+    const [updated] = await db.update(practiceTestAttempts)
+      .set(updates)
+      .where(eq(practiceTestAttempts.id, attemptId))
+      .returning();
+    return updated;
+  }
+
+  async updateAttemptTime(attemptId: number, timeSpent: number): Promise<PracticeTestAttempt> {
+    const [updated] = await db.update(practiceTestAttempts)
+      .set({ timeSpent })
+      .where(eq(practiceTestAttempts.id, attemptId))
+      .returning();
+    return updated;
+  }
+
+  async completeAttempt(attemptId: number, score: number, categoryScores: Record<string, { correct: number; total: number }>): Promise<PracticeTestAttempt> {
+    const [updated] = await db.update(practiceTestAttempts)
+      .set({
+        status: "completed",
+        score,
+        categoryScores,
+        completedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(practiceTestAttempts.id, attemptId))
+      .returning();
+    return updated;
+  }
+
+  // Test Gap Recommendations
+  async createTestGapRecommendations(recommendations: InsertTestGapRecommendation[]): Promise<TestGapRecommendation[]> {
+    if (recommendations.length === 0) return [];
+    const created = await db.insert(testGapRecommendations).values(recommendations).returning();
+    return created;
+  }
+
+  async getTestGapRecommendations(attemptId: number): Promise<TestGapRecommendation[]> {
+    return db.select().from(testGapRecommendations)
+      .where(eq(testGapRecommendations.attemptId, attemptId))
+      .orderBy(desc(testGapRecommendations.gapScore));
   }
 }
 

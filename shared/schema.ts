@@ -319,6 +319,62 @@ export const customFeeds = pgTable("custom_feeds", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Practice Tests (standardized test prep like MCAT, GRE, SAT)
+export const practiceTests = pgTable("practice_tests", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  testType: text("test_type").notNull(), // MCAT, GRE, SAT, IQ, custom
+  title: text("title").notNull(),
+  description: text("description"),
+  totalQuestions: integer("total_questions").default(0).notNull(),
+  timeLimit: integer("time_limit"), // in minutes, null = untimed
+  categories: text("categories").array(), // question categories/sections
+  status: text("status").default("generating").notNull(), // generating, ready, failed
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Practice Test Questions
+export const practiceTestQuestions = pgTable("practice_test_questions", {
+  id: serial("id").primaryKey(),
+  testId: integer("test_id").references(() => practiceTests.id).notNull(),
+  questionIndex: integer("question_index").notNull(),
+  category: text("category").notNull(), // e.g., Biology, Chemistry for MCAT
+  questionType: text("question_type").default("multiple_choice").notNull(), // multiple_choice, passage_based
+  passage: text("passage"), // for passage-based questions
+  question: text("question").notNull(),
+  options: jsonb("options").notNull(), // string array of options
+  correctIndex: integer("correct_index").notNull(),
+  explanation: text("explanation").notNull(),
+  difficulty: text("difficulty").default("medium"), // easy, medium, hard
+});
+
+// Practice Test Attempts (user's test sessions)
+export const practiceTestAttempts = pgTable("practice_test_attempts", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  testId: integer("test_id").references(() => practiceTests.id).notNull(),
+  status: text("status").default("in_progress").notNull(), // in_progress, completed, abandoned
+  answers: jsonb("answers").default('{}').notNull(), // { questionId: selectedIndex }
+  flaggedQuestions: integer("flagged_questions").array(), // question IDs flagged for review
+  score: integer("score"), // percentage 0-100
+  categoryScores: jsonb("category_scores"), // { category: { correct: n, total: n } }
+  timeSpent: integer("time_spent").default(0), // seconds
+  startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
+// Recommended Learning from Test Gaps
+export const testGapRecommendations = pgTable("test_gap_recommendations", {
+  id: serial("id").primaryKey(),
+  attemptId: integer("attempt_id").references(() => practiceTestAttempts.id).notNull(),
+  category: text("category").notNull(),
+  gapScore: integer("gap_score").notNull(), // how weak in this area (0-100, higher = weaker)
+  suggestedTopicTitle: text("suggested_topic_title").notNull(),
+  suggestedTopicDescription: text("suggested_topic_description"),
+  customTopicId: integer("custom_topic_id").references(() => customTopics.id), // if user created the journey
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -391,6 +447,10 @@ export const insertCustomTopicSchema = createInsertSchema(customTopics).omit({ i
 export const insertUserInfographicSchema = createInsertSchema(userInfographics).omit({ id: true, generatedAt: true });
 export const insertUser3DRewardSchema = createInsertSchema(user3DRewards).omit({ id: true, createdAt: true, completedAt: true });
 export const insertCustomFeedSchema = createInsertSchema(customFeeds).omit({ id: true, createdAt: true });
+export const insertPracticeTestSchema = createInsertSchema(practiceTests).omit({ id: true, createdAt: true });
+export const insertPracticeTestQuestionSchema = createInsertSchema(practiceTestQuestions).omit({ id: true });
+export const insertPracticeTestAttemptSchema = createInsertSchema(practiceTestAttempts).omit({ id: true, startedAt: true, completedAt: true });
+export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecommendations).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -449,6 +509,14 @@ export type User3DReward = typeof user3DRewards.$inferSelect;
 export type InsertUser3DReward = z.infer<typeof insertUser3DRewardSchema>;
 export type CustomFeed = typeof customFeeds.$inferSelect;
 export type InsertCustomFeed = z.infer<typeof insertCustomFeedSchema>;
+export type PracticeTest = typeof practiceTests.$inferSelect;
+export type InsertPracticeTest = z.infer<typeof insertPracticeTestSchema>;
+export type PracticeTestQuestion = typeof practiceTestQuestions.$inferSelect;
+export type InsertPracticeTestQuestion = z.infer<typeof insertPracticeTestQuestionSchema>;
+export type PracticeTestAttempt = typeof practiceTestAttempts.$inferSelect;
+export type InsertPracticeTestAttempt = z.infer<typeof insertPracticeTestAttemptSchema>;
+export type TestGapRecommendation = typeof testGapRecommendations.$inferSelect;
+export type InsertTestGapRecommendation = z.infer<typeof insertTestGapRecommendationSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
