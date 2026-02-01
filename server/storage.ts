@@ -4,7 +4,7 @@ import {
   userXp, userCategoryPreferences, lessonUnits, lessonProgress, topicMastery,
   userProfiles, pathways, pathwayTopics, userPathways, achievements, userAchievements,
   monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
-  userInfographics, user3DRewards,
+  userInfographics, user3DRewards, customFeeds,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -32,11 +32,12 @@ import {
   type CustomTopic, type InsertCustomTopic,
   type UserInfographic, type InsertUserInfographic,
   type User3DReward, type InsertUser3DReward,
+  type CustomFeed, type InsertCustomFeed,
   type LessonContent,
   type NextGenContent,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql } from "drizzle-orm";
+import { eq, desc, and, sql, inArray } from "drizzle-orm";
 
 export interface IStorage {
   // Categories
@@ -184,6 +185,16 @@ export interface IStorage {
 
   // XP by difficulty
   getXpForDifficulty(difficulty: string): number;
+
+  // Custom Feeds
+  getCustomFeeds(userId: string): Promise<CustomFeed[]>;
+  getCustomFeedById(id: number): Promise<CustomFeed | undefined>;
+  createCustomFeed(feed: InsertCustomFeed): Promise<CustomFeed>;
+  updateCustomFeed(id: number, updates: Partial<InsertCustomFeed>): Promise<CustomFeed>;
+  deleteCustomFeed(id: number): Promise<void>;
+  setDefaultFeed(userId: string, feedId: number | null): Promise<void>;
+  getDefaultFeed(userId: string): Promise<CustomFeed | undefined>;
+  getFeedCardsByTopics(topicIds: number[], limit?: number): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1218,6 +1229,84 @@ export class DatabaseStorage implements IStorage {
   async getPending3DRewards(): Promise<User3DReward[]> {
     return db.select().from(user3DRewards)
       .where(eq(user3DRewards.status, "pending"));
+  }
+
+  // Custom Feeds
+  async getCustomFeeds(userId: string): Promise<CustomFeed[]> {
+    return db.select().from(customFeeds)
+      .where(eq(customFeeds.userId, userId))
+      .orderBy(desc(customFeeds.createdAt));
+  }
+
+  async getCustomFeedById(id: number): Promise<CustomFeed | undefined> {
+    const [feed] = await db.select().from(customFeeds)
+      .where(eq(customFeeds.id, id));
+    return feed;
+  }
+
+  async createCustomFeed(feed: InsertCustomFeed): Promise<CustomFeed> {
+    const [created] = await db.insert(customFeeds).values(feed).returning();
+    return created;
+  }
+
+  async updateCustomFeed(id: number, updates: Partial<InsertCustomFeed>): Promise<CustomFeed> {
+    const [updated] = await db.update(customFeeds)
+      .set(updates)
+      .where(eq(customFeeds.id, id))
+      .returning();
+    return updated;
+  }
+
+  async deleteCustomFeed(id: number): Promise<void> {
+    await db.delete(customFeeds).where(eq(customFeeds.id, id));
+  }
+
+  async setDefaultFeed(userId: string, feedId: number | null): Promise<void> {
+    // First, unset all defaults for this user
+    await db.update(customFeeds)
+      .set({ isDefault: false })
+      .where(eq(customFeeds.userId, userId));
+    
+    // Then set the new default if provided
+    if (feedId !== null) {
+      await db.update(customFeeds)
+        .set({ isDefault: true })
+        .where(and(
+          eq(customFeeds.id, feedId),
+          eq(customFeeds.userId, userId)
+        ));
+    }
+  }
+
+  async getDefaultFeed(userId: string): Promise<CustomFeed | undefined> {
+    const [feed] = await db.select().from(customFeeds)
+      .where(and(
+        eq(customFeeds.userId, userId),
+        eq(customFeeds.isDefault, true)
+      ));
+    return feed;
+  }
+
+  async getFeedCardsByTopics(topicIds: number[], limit: number = 50): Promise<{ card: KnowledgeCard; topic: Topic; category?: Category }[]> {
+    if (topicIds.length === 0) return [];
+    
+    const cards = await db.select({
+      card: knowledgeCards,
+      topic: topics,
+      category: categories,
+    })
+      .from(knowledgeCards)
+      .innerJoin(topics, eq(knowledgeCards.topicId, topics.id))
+      .leftJoin(categories, eq(topics.categoryId, categories.id))
+      .where(inArray(knowledgeCards.topicId, topicIds))
+      .orderBy(sql`RANDOM()`)
+      .limit(limit);
+    
+    return cards.map(row => ({
+      card: row.card,
+      topic: row.topic,
+      category: row.category || undefined,
+    }));
   }
 }
 

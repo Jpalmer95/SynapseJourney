@@ -92,6 +92,19 @@ Preferred communication style: Simple, everyday language.
 - AI generates category, topic, and lesson units for any subject
 - Status tracking: pending → generating → ready/failed
 
+### Custom Feeds System
+- **Purpose**: Allows generalists to focus learning by day (e.g., physics one day, game dev the next)
+- **Database**: `customFeeds` table stores user-defined topic filters with name, topicIds array, and isDefault flag
+- **API Endpoints**:
+  - GET/POST /api/custom-feeds - List and create feeds
+  - PATCH/DELETE /api/custom-feeds/:id - Update and delete feeds
+  - POST /api/custom-feeds/:id/set-default - Set active feed
+  - POST /api/custom-feeds/clear-default - Show all topics
+- **Settings UI**: Create/edit feeds with topic multi-select in Settings page
+- **Feed Selector**: Dropdown in home feed for quick switching between feeds
+- **Security**: All routes verify feed ownership via userId check
+- **Filtering**: When default feed is set, /api/feed/personalized returns only cards matching feed's topicIds
+
 ### User Profiles
 - Age range, technical level, prior experience areas
 - Hugging Face token option for free AI alternative to GPT-4o

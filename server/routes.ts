@@ -6,7 +6,7 @@ import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
 import { getAIProvider, type ProviderConfig } from "./ai-providers";
-import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS } from "./seed-data";
+import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS } from "./seed-data";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
@@ -582,7 +582,19 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.get("/api/feed/personalized", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const feedCards = await storage.getFeedCardsFiltered(userId, 20);
+      
+      // Check if user has a default custom feed
+      const defaultFeed = await storage.getDefaultFeed(userId);
+      
+      let feedCards;
+      if (defaultFeed && defaultFeed.topicIds.length > 0) {
+        // Use custom feed topics
+        feedCards = await storage.getFeedCardsByTopics(defaultFeed.topicIds, 20);
+      } else {
+        // Use category-filtered feed
+        feedCards = await storage.getFeedCardsFiltered(userId, 20);
+      }
+      
       res.json(feedCards);
     } catch (error) {
       console.error("Error fetching personalized feed:", error);
@@ -1161,7 +1173,28 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         console.log(`[API SeedDefaults] Pathways already exist (${existingPathways.length} found)`);
       }
       
-      const totalSeeded = categoriesSeeded + topicsSeeded + cardsSeeded + pathwaysSeeded;
+      // Check if pathway topics exist - seed mappings if missing
+      let pathwayTopicsSeeded = 0;
+      const firstPathway = (await storage.getPathways())[0];
+      if (firstPathway) {
+        const existingPathwayTopics = await storage.getPathwayTopics(firstPathway.id);
+        if (existingPathwayTopics.length === 0) {
+          console.log("[API SeedDefaults] No pathway topics found, seeding pathway-topic mappings...");
+          for (const pt of DEFAULT_PATHWAY_TOPICS) {
+            try {
+              await storage.addTopicToPathway(pt.pathwayId, pt.topicId, pt.order, pt.isRequired);
+              pathwayTopicsSeeded++;
+            } catch (e) {
+              console.error(`[API SeedDefaults] Failed to add topic ${pt.topicId} to pathway ${pt.pathwayId}:`, e);
+            }
+          }
+          console.log(`[API SeedDefaults] Seeded ${pathwayTopicsSeeded} pathway-topic mappings`);
+        } else {
+          console.log(`[API SeedDefaults] Pathway topics already exist (${existingPathwayTopics.length} found for pathway ${firstPathway.id})`);
+        }
+      }
+      
+      const totalSeeded = categoriesSeeded + topicsSeeded + cardsSeeded + pathwaysSeeded + pathwayTopicsSeeded;
       console.log(`[API SeedDefaults] Completed seeding: ${categoriesSeeded} categories, ${topicsSeeded} topics, ${cardsSeeded} cards, ${pathwaysSeeded} pathways`);
       
       res.json({
@@ -1354,6 +1387,183 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("Error updating streak:", error);
       res.status(500).json({ error: "Failed to update streak" });
+    }
+  });
+
+  // ============ CUSTOM FEEDS ROUTES ============
+
+  // Get all custom feeds for user
+  app.get("/api/custom-feeds", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feeds = await storage.getCustomFeeds(req.user.claims.sub);
+      res.json(feeds);
+    } catch (error) {
+      console.error("Error fetching custom feeds:", error);
+      res.status(500).json({ error: "Failed to fetch custom feeds" });
+    }
+  });
+
+  // Get a specific custom feed
+  app.get("/api/custom-feeds/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feedId = parseInt(req.params.id);
+      if (isNaN(feedId)) {
+        return res.status(400).json({ error: "Invalid feed ID" });
+      }
+      const feed = await storage.getCustomFeedById(feedId);
+      if (!feed || feed.userId !== req.user.claims.sub) {
+        return res.status(404).json({ error: "Feed not found" });
+      }
+      res.json(feed);
+    } catch (error) {
+      console.error("Error fetching custom feed:", error);
+      res.status(500).json({ error: "Failed to fetch custom feed" });
+    }
+  });
+
+  // Create a new custom feed
+  app.post("/api/custom-feeds", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const { name, topicIds, isDefault } = req.body;
+      if (!name || !Array.isArray(topicIds) || topicIds.length === 0) {
+        return res.status(400).json({ error: "Name and at least one topic are required" });
+      }
+      
+      const feed = await storage.createCustomFeed({
+        userId: req.user.claims.sub,
+        name,
+        topicIds,
+        isDefault: isDefault || false,
+      });
+      
+      // If this is set as default, update other feeds
+      if (isDefault) {
+        await storage.setDefaultFeed(req.user.claims.sub, feed.id);
+      }
+      
+      res.json(feed);
+    } catch (error) {
+      console.error("Error creating custom feed:", error);
+      res.status(500).json({ error: "Failed to create custom feed" });
+    }
+  });
+
+  // Update a custom feed
+  app.patch("/api/custom-feeds/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feedId = parseInt(req.params.id);
+      if (isNaN(feedId)) {
+        return res.status(400).json({ error: "Invalid feed ID" });
+      }
+      
+      const existingFeed = await storage.getCustomFeedById(feedId);
+      if (!existingFeed || existingFeed.userId !== req.user.claims.sub) {
+        return res.status(404).json({ error: "Feed not found" });
+      }
+      
+      const { name, topicIds, isDefault } = req.body;
+      const updates: any = {};
+      if (name) updates.name = name;
+      if (Array.isArray(topicIds)) updates.topicIds = topicIds;
+      if (typeof isDefault === 'boolean') updates.isDefault = isDefault;
+      
+      const feed = await storage.updateCustomFeed(feedId, updates);
+      
+      // If setting as default, update other feeds
+      if (isDefault) {
+        await storage.setDefaultFeed(req.user.claims.sub, feedId);
+      }
+      
+      res.json(feed);
+    } catch (error) {
+      console.error("Error updating custom feed:", error);
+      res.status(500).json({ error: "Failed to update custom feed" });
+    }
+  });
+
+  // Delete a custom feed
+  app.delete("/api/custom-feeds/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feedId = parseInt(req.params.id);
+      if (isNaN(feedId)) {
+        return res.status(400).json({ error: "Invalid feed ID" });
+      }
+      
+      const existingFeed = await storage.getCustomFeedById(feedId);
+      if (!existingFeed || existingFeed.userId !== req.user.claims.sub) {
+        return res.status(404).json({ error: "Feed not found" });
+      }
+      
+      await storage.deleteCustomFeed(feedId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error deleting custom feed:", error);
+      res.status(500).json({ error: "Failed to delete custom feed" });
+    }
+  });
+
+  // Get user's default feed
+  app.get("/api/custom-feeds/default", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feed = await storage.getDefaultFeed(req.user.claims.sub);
+      res.json(feed || null);
+    } catch (error) {
+      console.error("Error fetching default feed:", error);
+      res.status(500).json({ error: "Failed to fetch default feed" });
+    }
+  });
+
+  // Set default feed
+  app.post("/api/custom-feeds/:id/set-default", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feedId = parseInt(req.params.id);
+      if (isNaN(feedId)) {
+        return res.status(400).json({ error: "Invalid feed ID" });
+      }
+      
+      const existingFeed = await storage.getCustomFeedById(feedId);
+      if (!existingFeed || existingFeed.userId !== req.user.claims.sub) {
+        return res.status(404).json({ error: "Feed not found" });
+      }
+      
+      await storage.setDefaultFeed(req.user.claims.sub, feedId);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error setting default feed:", error);
+      res.status(500).json({ error: "Failed to set default feed" });
+    }
+  });
+
+  // Clear default feed (use all topics)
+  app.post("/api/custom-feeds/clear-default", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      await storage.setDefaultFeed(req.user.claims.sub, null);
+      res.json({ success: true });
+    } catch (error) {
+      console.error("Error clearing default feed:", error);
+      res.status(500).json({ error: "Failed to clear default feed" });
+    }
+  });
+
+  // Get feed cards for a custom feed
+  app.get("/api/custom-feeds/:id/cards", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const feedId = parseInt(req.params.id);
+      if (isNaN(feedId)) {
+        return res.status(400).json({ error: "Invalid feed ID" });
+      }
+      
+      const feed = await storage.getCustomFeedById(feedId);
+      if (!feed || feed.userId !== req.user.claims.sub) {
+        return res.status(404).json({ error: "Feed not found" });
+      }
+      
+      const limit = parseInt(req.query.limit as string) || 50;
+      const cards = await storage.getFeedCardsByTopics(feed.topicIds, limit);
+      res.json(cards);
+    } catch (error) {
+      console.error("Error fetching feed cards:", error);
+      res.status(500).json({ error: "Failed to fetch feed cards" });
     }
   });
 

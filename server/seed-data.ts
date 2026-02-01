@@ -44,6 +44,67 @@ export const DEFAULT_TOPICS = [
   { id: 20, title: "Music Theory", description: "The language of music - scales, chords, rhythm, and harmony. Understand why some combinations sound beautiful and others don't.", categoryId: 7, difficulty: "beginner" },
 ];
 
+// Pathway-Topic mappings (linking topics to pathways they belong to)
+// Pathways: 1=Physics, 2=Engineering, 3=Astrophysics, 4=CS, 5=AI, 6=Math, 7=Chemistry, 8=Biology, 9=Music Theory, 10=Open Source
+export const DEFAULT_PATHWAY_TOPICS = [
+  // Physics Pathway (id: 1) - physics topics
+  { pathwayId: 1, topicId: 12, order: 1, isRequired: true }, // Classical Mechanics
+  { pathwayId: 1, topicId: 17, order: 2, isRequired: true }, // Waves & Frequencies
+  { pathwayId: 1, topicId: 14, order: 3, isRequired: true }, // Optics & Light
+  { pathwayId: 1, topicId: 16, order: 4, isRequired: true }, // Electromagnetism
+  { pathwayId: 1, topicId: 15, order: 5, isRequired: true }, // Fluid Dynamics
+  { pathwayId: 1, topicId: 4, order: 6, isRequired: false }, // Quantum Mechanics (advanced)
+  
+  // Engineering Pathway (id: 2) - applied physics + CS
+  { pathwayId: 2, topicId: 12, order: 1, isRequired: true }, // Classical Mechanics
+  { pathwayId: 2, topicId: 15, order: 2, isRequired: true }, // Fluid Dynamics
+  { pathwayId: 2, topicId: 16, order: 3, isRequired: true }, // Electromagnetism
+  { pathwayId: 2, topicId: 3, order: 4, isRequired: true }, // Data Structures
+  { pathwayId: 2, topicId: 7, order: 5, isRequired: true }, // Algorithms
+  
+  // Astrophysics Pathway (id: 3) - space-related physics
+  { pathwayId: 3, topicId: 12, order: 1, isRequired: true }, // Classical Mechanics
+  { pathwayId: 3, topicId: 13, order: 2, isRequired: true }, // Orbital Mechanics
+  { pathwayId: 3, topicId: 14, order: 3, isRequired: true }, // Optics & Light
+  { pathwayId: 3, topicId: 4, order: 4, isRequired: true }, // Quantum Mechanics
+  
+  // Computer Science Pathway (id: 4)
+  { pathwayId: 4, topicId: 3, order: 1, isRequired: true }, // Data Structures
+  { pathwayId: 4, topicId: 7, order: 2, isRequired: true }, // Algorithms
+  { pathwayId: 4, topicId: 6, order: 3, isRequired: true }, // Graph Theory
+  { pathwayId: 4, topicId: 11, order: 4, isRequired: false }, // Benefits of Open Source
+  
+  // Artificial Intelligence Pathway (id: 5)
+  { pathwayId: 5, topicId: 1, order: 1, isRequired: true }, // Machine Learning
+  { pathwayId: 5, topicId: 8, order: 2, isRequired: true }, // Neural Networks
+  { pathwayId: 5, topicId: 2, order: 3, isRequired: true }, // Linear Algebra
+  { pathwayId: 5, topicId: 9, order: 4, isRequired: true }, // Hugging Face
+  { pathwayId: 5, topicId: 10, order: 5, isRequired: false }, // Gradio
+  
+  // Mathematics Pathway (id: 6)
+  { pathwayId: 6, topicId: 2, order: 1, isRequired: true }, // Linear Algebra
+  { pathwayId: 6, topicId: 5, order: 2, isRequired: true }, // Calculus
+  { pathwayId: 6, topicId: 6, order: 3, isRequired: true }, // Graph Theory
+  
+  // Chemistry Pathway (id: 7)
+  { pathwayId: 7, topicId: 18, order: 1, isRequired: true }, // General Chemistry
+  { pathwayId: 7, topicId: 19, order: 2, isRequired: true }, // Organic Chemistry
+  
+  // Biology Pathway (id: 8) - chemistry foundation
+  { pathwayId: 8, topicId: 18, order: 1, isRequired: true }, // General Chemistry
+  { pathwayId: 8, topicId: 19, order: 2, isRequired: true }, // Organic Chemistry
+  
+  // Music Theory Pathway (id: 9)
+  { pathwayId: 9, topicId: 20, order: 1, isRequired: true }, // Music Theory
+  { pathwayId: 9, topicId: 17, order: 2, isRequired: false }, // Waves & Frequencies (physics of sound)
+  
+  // Open Source Contributing Pathway (id: 10)
+  { pathwayId: 10, topicId: 11, order: 1, isRequired: true }, // Benefits of Open Source
+  { pathwayId: 10, topicId: 9, order: 2, isRequired: true }, // Hugging Face
+  { pathwayId: 10, topicId: 10, order: 3, isRequired: true }, // Gradio
+  { pathwayId: 10, topicId: 3, order: 4, isRequired: false }, // Data Structures
+];
+
 export const DEFAULT_KNOWLEDGE_CARDS = [
   { id: 1, topicId: 8, title: "What are Neural Networks?", content: "Neural networks are computing systems inspired by biological neural networks. They consist of interconnected nodes (neurons) that process information using connections (synapses) that can be adjusted through learning.", cardType: "text", tags: ["neural", "AI", "deep-learning"], order: 0 },
   { id: 2, topicId: 5, title: "The Derivative", content: "The derivative measures how a function changes as its input changes. It's the instantaneous rate of change, or the slope of the tangent line at any point on a curve.", cardType: "text", tags: ["calculus", "derivatives", "rates"], order: 0 },

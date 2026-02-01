@@ -6,13 +6,30 @@ import { Onboarding } from "@/components/onboarding";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
-import { Loader2 } from "lucide-react";
+import { Loader2, ChevronDown, Rss, Check } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
 import type { KnowledgeCard as CardType, Topic, Category } from "@shared/schema";
 
 interface FeedCard {
   card: CardType;
   topic: Topic;
   category?: Category;
+}
+
+interface CustomFeed {
+  id: number;
+  userId: string;
+  name: string;
+  topicIds: number[];
+  isDefault: boolean;
+  createdAt: string;
 }
 
 interface NebulaFeedProps {
@@ -36,6 +53,36 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
   const { data: feedData, isLoading, error, refetch } = useQuery<FeedCard[]>({
     queryKey: [feedEndpoint],
   });
+
+  // Fetch custom feeds for logged-in users
+  const { data: customFeeds } = useQuery<CustomFeed[]>({
+    queryKey: ["/api/custom-feeds"],
+    enabled: !!user,
+  });
+
+  // Mutation to set default feed
+  const setDefaultFeedMutation = useMutation({
+    mutationFn: async (feedId: number | null) => {
+      if (feedId === null) {
+        const res = await apiRequest("POST", "/api/custom-feeds/clear-default");
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", `/api/custom-feeds/${feedId}/set-default`);
+        return res.json();
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-feeds"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
+      refetch();
+      toast({
+        title: "Feed switched",
+        description: "Your feed has been updated.",
+      });
+    },
+  });
+
+  const currentFeedName = customFeeds?.find(f => f.isDefault)?.name || "All Topics";
 
   // Reset currentIndex when feed data changes to prevent out-of-bounds access
   useEffect(() => {
@@ -248,20 +295,67 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
 
   return (
     <div className="h-screen w-full relative overflow-hidden">
-      <div className="absolute top-4 left-4 z-20 flex items-center gap-2">
-        <div className="flex items-center gap-1">
-          {feedData.map((_, index) => (
-            <div
-              key={index}
-              className={`h-1 w-6 rounded-full transition-colors ${
-                index === currentIndex ? "bg-primary" : "bg-muted"
-              }`}
-            />
-          ))}
+      <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
+            {feedData.slice(0, 10).map((_, index) => (
+              <div
+                key={index}
+                className={`h-1 w-4 sm:w-6 rounded-full transition-colors ${
+                  index === currentIndex ? "bg-primary" : "bg-muted"
+                }`}
+              />
+            ))}
+          </div>
+          <span className="text-sm text-muted-foreground ml-2">
+            {currentIndex + 1} / {feedData.length}
+          </span>
         </div>
-        <span className="text-sm text-muted-foreground ml-2">
-          {currentIndex + 1} / {feedData.length}
-        </span>
+        
+        {user && customFeeds && customFeeds.length > 0 && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button 
+                variant="outline" 
+                size="sm" 
+                className="bg-background/80 backdrop-blur-sm"
+                data-testid="feed-selector-dropdown"
+              >
+                <Rss className="h-4 w-4 mr-2" />
+                <span className="hidden sm:inline">{currentFeedName}</span>
+                <ChevronDown className="h-3 w-3 ml-1" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuItem
+                onClick={() => setDefaultFeedMutation.mutate(null)}
+                data-testid="feed-option-all"
+              >
+                <div className="flex items-center w-full">
+                  <span className="flex-1">All Topics</span>
+                  {!customFeeds.some(f => f.isDefault) && (
+                    <Check className="h-4 w-4 text-primary" />
+                  )}
+                </div>
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              {customFeeds.map((feed) => (
+                <DropdownMenuItem
+                  key={feed.id}
+                  onClick={() => setDefaultFeedMutation.mutate(feed.id)}
+                  data-testid={`feed-option-${feed.id}`}
+                >
+                  <div className="flex items-center w-full">
+                    <span className="flex-1">{feed.name}</span>
+                    {feed.isDefault && (
+                      <Check className="h-4 w-4 text-primary" />
+                    )}
+                  </div>
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
       </div>
 
       <AnimatePresence mode="wait" initial={false}>

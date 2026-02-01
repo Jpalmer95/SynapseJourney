@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2 } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -9,6 +9,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect } from "react";
@@ -33,6 +35,23 @@ interface UserProfile {
   openRouterKey?: string;
   preferredAiProvider?: string;
   preferredModel?: string;
+}
+
+interface CustomFeed {
+  id: number;
+  userId: string;
+  name: string;
+  topicIds: number[];
+  isDefault: boolean;
+  createdAt: string;
+}
+
+interface Topic {
+  id: number;
+  title: string;
+  description: string;
+  categoryId: number | null;
+  difficulty: string;
 }
 
 const iconMap: Record<string, typeof Brain> = {
@@ -93,8 +112,21 @@ export default function SettingsPage() {
     queryKey: ["/api/user/profile"],
   });
 
+  const { data: customFeeds, isLoading: feedsLoading } = useQuery<CustomFeed[]>({
+    queryKey: ["/api/custom-feeds"],
+  });
+
+  const { data: allTopics } = useQuery<Topic[]>({
+    queryKey: ["/api/topics"],
+  });
+
   const [localProfile, setLocalProfile] = useState<UserProfile>({});
   const [hasChanges, setHasChanges] = useState(false);
+  
+  const [showFeedDialog, setShowFeedDialog] = useState(false);
+  const [editingFeed, setEditingFeed] = useState<CustomFeed | null>(null);
+  const [feedName, setFeedName] = useState("");
+  const [selectedTopicIds, setSelectedTopicIds] = useState<number[]>([]);
 
   useEffect(() => {
     if (profile) {
@@ -191,6 +223,143 @@ export default function SettingsPage() {
       });
     },
   });
+
+  const createFeedMutation = useMutation({
+    mutationFn: async (data: { name: string; topicIds: number[]; isDefault?: boolean }) => {
+      const res = await apiRequest("POST", "/api/custom-feeds", data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-feeds"] });
+      setShowFeedDialog(false);
+      resetFeedForm();
+      toast({
+        title: "Feed Created",
+        description: "Your custom feed has been created.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to create feed. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const updateFeedMutation = useMutation({
+    mutationFn: async ({ id, ...data }: { id: number; name?: string; topicIds?: number[]; isDefault?: boolean }) => {
+      const res = await apiRequest("PATCH", `/api/custom-feeds/${id}`, data);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-feeds"] });
+      setShowFeedDialog(false);
+      resetFeedForm();
+      toast({
+        title: "Feed Updated",
+        description: "Your custom feed has been updated.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update feed. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteFeedMutation = useMutation({
+    mutationFn: async (feedId: number) => {
+      const res = await apiRequest("DELETE", `/api/custom-feeds/${feedId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-feeds"] });
+      toast({
+        title: "Feed Deleted",
+        description: "Your custom feed has been deleted.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to delete feed. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const setDefaultFeedMutation = useMutation({
+    mutationFn: async (feedId: number | null) => {
+      if (feedId === null) {
+        const res = await apiRequest("POST", "/api/custom-feeds/clear-default");
+        return res.json();
+      } else {
+        const res = await apiRequest("POST", `/api/custom-feeds/${feedId}/set-default`);
+        return res.json();
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/custom-feeds"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
+      toast({
+        title: "Default Feed Updated",
+        description: "Your home feed has been updated.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to update default feed. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const resetFeedForm = () => {
+    setEditingFeed(null);
+    setFeedName("");
+    setSelectedTopicIds([]);
+  };
+
+  const openCreateDialog = () => {
+    resetFeedForm();
+    setShowFeedDialog(true);
+  };
+
+  const openEditDialog = (feed: CustomFeed) => {
+    setEditingFeed(feed);
+    setFeedName(feed.name);
+    setSelectedTopicIds(feed.topicIds);
+    setShowFeedDialog(true);
+  };
+
+  const handleSaveFeed = () => {
+    if (!feedName.trim() || selectedTopicIds.length === 0) return;
+    
+    if (editingFeed) {
+      updateFeedMutation.mutate({
+        id: editingFeed.id,
+        name: feedName,
+        topicIds: selectedTopicIds,
+      });
+    } else {
+      createFeedMutation.mutate({
+        name: feedName,
+        topicIds: selectedTopicIds,
+      });
+    }
+  };
+
+  const toggleTopicSelection = (topicId: number) => {
+    setSelectedTopicIds(prev =>
+      prev.includes(topicId)
+        ? prev.filter(id => id !== topicId)
+        : [...prev, topicId]
+    );
+  };
 
   return (
     <AppLayout mobileTitle="Settings">
@@ -684,10 +853,216 @@ export default function SettingsPage() {
             </Card>
           </motion.div>
 
+          {/* Custom Feeds Section */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.25 }}
+            className="mt-6"
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between gap-4 flex-wrap">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <Rss className="h-5 w-5 text-primary" />
+                      <CardTitle>Custom Feeds</CardTitle>
+                    </div>
+                    <CardDescription>
+                      Create topic-filtered feeds for focused learning sessions
+                    </CardDescription>
+                  </div>
+                  <Dialog open={showFeedDialog} onOpenChange={(open) => {
+                    setShowFeedDialog(open);
+                    if (!open) resetFeedForm();
+                  }}>
+                    <DialogTrigger asChild>
+                      <Button size="sm" onClick={openCreateDialog} data-testid="btn-create-feed">
+                        <Plus className="h-4 w-4 mr-1" />
+                        New Feed
+                      </Button>
+                    </DialogTrigger>
+                    <DialogContent className="max-w-md max-h-[80vh] overflow-y-auto">
+                      <DialogHeader>
+                        <DialogTitle>{editingFeed ? "Edit Feed" : "Create Custom Feed"}</DialogTitle>
+                      </DialogHeader>
+                      <div className="space-y-4 py-4">
+                        <div className="space-y-2">
+                          <Label htmlFor="feed-name">Feed Name</Label>
+                          <Input
+                            id="feed-name"
+                            placeholder="e.g., Physics & Math, Open Source Focus"
+                            value={feedName}
+                            onChange={(e) => setFeedName(e.target.value)}
+                            data-testid="input-feed-name"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Select Topics ({selectedTopicIds.length} selected)</Label>
+                          <div className="max-h-60 overflow-y-auto border rounded-md p-3 space-y-2">
+                            {allTopics?.map((topic) => (
+                              <div
+                                key={topic.id}
+                                className="flex items-center gap-2"
+                              >
+                                <Checkbox
+                                  id={`topic-${topic.id}`}
+                                  checked={selectedTopicIds.includes(topic.id)}
+                                  onCheckedChange={() => toggleTopicSelection(topic.id)}
+                                  data-testid={`checkbox-topic-${topic.id}`}
+                                />
+                                <label
+                                  htmlFor={`topic-${topic.id}`}
+                                  className="text-sm cursor-pointer flex-1"
+                                >
+                                  {topic.title}
+                                  <span className="text-xs text-muted-foreground ml-2 capitalize">
+                                    ({topic.difficulty})
+                                  </span>
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <DialogClose asChild>
+                          <Button variant="outline" data-testid="btn-cancel-feed">Cancel</Button>
+                        </DialogClose>
+                        <Button
+                          onClick={handleSaveFeed}
+                          disabled={!feedName.trim() || selectedTopicIds.length === 0 || createFeedMutation.isPending || updateFeedMutation.isPending}
+                          data-testid="btn-save-feed"
+                        >
+                          {createFeedMutation.isPending || updateFeedMutation.isPending ? (
+                            <Loader2 className="h-4 w-4 animate-spin mr-1" />
+                          ) : null}
+                          {editingFeed ? "Update Feed" : "Create Feed"}
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {feedsLoading ? (
+                  <div className="space-y-3">
+                    {[1, 2].map((i) => (
+                      <Skeleton key={i} className="h-16 w-full" />
+                    ))}
+                  </div>
+                ) : customFeeds && customFeeds.length > 0 ? (
+                  <div className="space-y-3">
+                    {/* All Topics option */}
+                    <div
+                      className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
+                        !customFeeds.some(f => f.isDefault)
+                          ? "border-primary/30 bg-primary/5"
+                          : "border-border bg-muted/30"
+                      }`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="p-2 rounded-md bg-muted">
+                          <Rss className="h-4 w-4" />
+                        </div>
+                        <div>
+                          <p className="font-medium">All Topics</p>
+                          <p className="text-sm text-muted-foreground">Default feed with all enabled categories</p>
+                        </div>
+                      </div>
+                      <Button
+                        variant={!customFeeds.some(f => f.isDefault) ? "default" : "outline"}
+                        size="sm"
+                        onClick={() => setDefaultFeedMutation.mutate(null)}
+                        disabled={setDefaultFeedMutation.isPending}
+                        data-testid="btn-set-default-all"
+                      >
+                        {!customFeeds.some(f => f.isDefault) ? (
+                          <>
+                            <Star className="h-3 w-3 mr-1 fill-current" />
+                            Active
+                          </>
+                        ) : (
+                          "Use"
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Custom feeds */}
+                    {customFeeds.map((feed) => (
+                      <div
+                        key={feed.id}
+                        className={`flex items-center justify-between p-4 rounded-lg border transition-all ${
+                          feed.isDefault
+                            ? "border-primary/30 bg-primary/5"
+                            : "border-border bg-muted/30"
+                        }`}
+                        data-testid={`feed-item-${feed.id}`}
+                      >
+                        <div className="flex items-center gap-3 min-w-0 flex-1">
+                          <div className="p-2 rounded-md bg-muted shrink-0">
+                            <Rss className="h-4 w-4" />
+                          </div>
+                          <div className="min-w-0">
+                            <p className="font-medium truncate">{feed.name}</p>
+                            <p className="text-sm text-muted-foreground">
+                              {feed.topicIds.length} topic{feed.topicIds.length !== 1 ? "s" : ""}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => openEditDialog(feed)}
+                            data-testid={`btn-edit-feed-${feed.id}`}
+                          >
+                            <Edit2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            onClick={() => deleteFeedMutation.mutate(feed.id)}
+                            disabled={deleteFeedMutation.isPending}
+                            data-testid={`btn-delete-feed-${feed.id}`}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant={feed.isDefault ? "default" : "outline"}
+                            size="sm"
+                            onClick={() => setDefaultFeedMutation.mutate(feed.id)}
+                            disabled={setDefaultFeedMutation.isPending}
+                            data-testid={`btn-set-default-${feed.id}`}
+                          >
+                            {feed.isDefault ? (
+                              <>
+                                <Star className="h-3 w-3 mr-1 fill-current" />
+                                Active
+                              </>
+                            ) : (
+                              "Use"
+                            )}
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <Rss className="h-8 w-8 mx-auto mb-3 opacity-50" />
+                    <p>No custom feeds yet</p>
+                    <p className="text-sm">Create a feed to focus on specific topics</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.3 }}
             className="mt-6"
           >
             <Card>

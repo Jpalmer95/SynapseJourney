@@ -308,6 +308,16 @@ export const user3DRewards = pgTable("user_3d_rewards", {
   completedAt: timestamp("completed_at"),
 });
 
+// Custom Feeds (user-defined topic filters for personalized feed experience)
+export const customFeeds = pgTable("custom_feeds", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull(),
+  topicIds: integer("topic_ids").array().notNull(),
+  isDefault: boolean("is_default").default(false).notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -379,6 +389,7 @@ export const insertUserStreakSchema = createInsertSchema(userStreaks).omit({ id:
 export const insertCustomTopicSchema = createInsertSchema(customTopics).omit({ id: true, createdAt: true });
 export const insertUserInfographicSchema = createInsertSchema(userInfographics).omit({ id: true, generatedAt: true });
 export const insertUser3DRewardSchema = createInsertSchema(user3DRewards).omit({ id: true, createdAt: true, completedAt: true });
+export const insertCustomFeedSchema = createInsertSchema(customFeeds).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -435,6 +446,8 @@ export type UserInfographic = typeof userInfographics.$inferSelect;
 export type InsertUserInfographic = z.infer<typeof insertUserInfographicSchema>;
 export type User3DReward = typeof user3DRewards.$inferSelect;
 export type InsertUser3DReward = z.infer<typeof insertUser3DRewardSchema>;
+export type CustomFeed = typeof customFeeds.$inferSelect;
+export type InsertCustomFeed = z.infer<typeof insertCustomFeedSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
