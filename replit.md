@@ -83,9 +83,16 @@ Preferred communication style: Simple, everyday language.
 - Achievements checked automatically on lesson completion and other triggers
 
 ### Learning Pathways
-- **10 Default Pathways**: Physics, Engineering, Astrophysics, Computer Science, AI, Mathematics, Chemistry, Biology, Music Theory, Open Source Contributing
+- **25 Default Pathways**: Physics, Engineering, Astrophysics, Computer Science, AI, Mathematics, Chemistry, Biology, Music Theory, Open Source Contributing, and more
 - Curated groupings of related topics for comprehensive learning
 - Progress tracking per pathway with enrollment system
+- **Custom Pathway Creation**: Users can create their own personalized learning pathways
+  - AI analyzes available topics and suggests relevant groupings based on pathway name, description, and learning goals
+  - Multi-step dialog flow: form input → AI suggestions → topic selection (required/optional toggles)
+  - Custom pathways marked with `createdByUserId` field and display "Custom" badge with Sparkles icon
+  - Auto-enrollment on creation
+  - API endpoints: GET /api/user/custom-pathways, POST /api/pathways/suggest-topics, POST /api/pathways/create
+  - Component: `client/src/components/create-custom-pathway.tsx`
 
 ### Custom Topics (Explore Feature)
 - Users can search existing topics or create AI-generated custom learning journeys
