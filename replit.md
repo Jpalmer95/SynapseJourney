@@ -34,7 +34,7 @@ Preferred communication style: Simple, everyday language.
 - **Content Generation**: AI dynamically generates lesson units across difficulty levels (Beginner, Intermediate, Advanced, Next Gen). "Next Gen" content focuses on frontier research and thought exercises.
 - **Progression**: Gated difficulty tiers, requiring completion to unlock the next level.
 - **Custom Pathways & Topics**: Users can create personalized learning pathways and custom topics, with AI assistance for topic suggestions and content generation.
-- **Practice Test System**: AI generates standardized test questions (e.g., MCAT, GRE, SAT) with features for timed attempts, scoring, detailed results, and gap-based learning recommendations.
+- **Practice Test System**: Hybrid question sourcing - uses a reusable question bank of 54+ public domain questions by default (no API cost), with AI-generated unique questions as an optional fallback. Supports MCAT, GRE, SAT, LSAT, GMAT, ACT, IQ, and Bar Exam. Features include timed attempts, auto-save, detailed scoring, and gap-based learning recommendations.
 
 ### Gamification & Rewards
 - **XP & Leveling**: Users earn XP for completing lessons and quizzes, contributing to a total user level.
