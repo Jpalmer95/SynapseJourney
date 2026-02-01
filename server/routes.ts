@@ -1947,10 +1947,17 @@ Help the student understand why their answer was wrong and why the correct answe
   // Create practice test
   app.post("/api/practice-tests", isAuthenticated, async (req: any, res: Response) => {
     try {
-      const { testType, title, description } = req.body;
+      const { testType, title, description, generateNew } = req.body;
       if (!testType || !title) {
         return res.status(400).json({ error: "Test type and title are required" });
       }
+      
+      const categories = getTestCategories(testType);
+      
+      // Check if we have enough questions in the bank (unless user wants new questions)
+      const bankCount = generateNew ? 0 : await storage.getQuestionBankCount(testType);
+      const minQuestionsNeeded = 5; // Use question bank if at least 5 questions available
+      const useQuestionBank = bankCount >= minQuestionsNeeded && !generateNew;
       
       const practiceTest = await storage.createPracticeTest({
         userId: req.user.claims.sub,
@@ -1959,14 +1966,36 @@ Help the student understand why their answer was wrong and why the correct answe
         description: description || null,
         totalQuestions: 0,
         timeLimit: getDefaultTimeLimit(testType),
-        categories: getTestCategories(testType),
-        status: "generating",
+        categories,
+        status: useQuestionBank ? "ready" : "generating",
       });
       
-      // Start generating questions in the background
-      generatePracticeTestQuestions(practiceTest.id, testType, description).catch(console.error);
-      
-      res.json(practiceTest);
+      if (useQuestionBank) {
+        // Pull questions from the question bank
+        const bankQuestions = await storage.getQuestionBankQuestions(testType, categories, minQuestionsNeeded);
+        const questionsToInsert = bankQuestions.map((q, index) => ({
+          testId: practiceTest.id,
+          questionIndex: index,
+          category: q.category,
+          questionType: q.questionType || "multiple_choice",
+          passage: q.passage || null,
+          question: q.question,
+          options: q.options as string[],
+          correctIndex: q.correctIndex,
+          explanation: q.explanation,
+          difficulty: q.difficulty || "medium",
+        }));
+        
+        await storage.createPracticeTestQuestions(questionsToInsert);
+        await storage.updatePracticeTestStatus(practiceTest.id, "ready", questionsToInsert.length);
+        
+        const updatedTest = await storage.getPracticeTest(practiceTest.id);
+        res.json(updatedTest);
+      } else {
+        // Generate questions with AI in the background
+        generatePracticeTestQuestions(practiceTest.id, testType, description).catch(console.error);
+        res.json(practiceTest);
+      }
     } catch (error) {
       console.error("Error creating practice test:", error);
       res.status(500).json({ error: "Failed to create practice test" });

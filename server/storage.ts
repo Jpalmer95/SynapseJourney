@@ -5,7 +5,7 @@ import {
   userProfiles, pathways, pathwayTopics, userPathways, achievements, userAchievements,
   monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
   userInfographics, user3DRewards, customFeeds,
-  practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations,
+  practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -35,6 +35,7 @@ import {
   type User3DReward, type InsertUser3DReward,
   type CustomFeed, type InsertCustomFeed,
   type PracticeTest, type InsertPracticeTest,
+  type PracticeQuestionBank, type InsertPracticeQuestionBank,
   type PracticeTestQuestion, type InsertPracticeTestQuestion,
   type PracticeTestAttempt, type InsertPracticeTestAttempt,
   type TestGapRecommendation, type InsertTestGapRecommendation,
@@ -226,6 +227,12 @@ export interface IStorage {
   // Test Gap Recommendations
   createTestGapRecommendations(recommendations: InsertTestGapRecommendation[]): Promise<TestGapRecommendation[]>;
   getTestGapRecommendations(attemptId: number): Promise<TestGapRecommendation[]>;
+  
+  // Question Bank
+  getQuestionBankQuestions(testType: string, categories: string[], limit?: number): Promise<PracticeQuestionBank[]>;
+  getQuestionBankCount(testType: string): Promise<number>;
+  addQuestionToBank(question: InsertPracticeQuestionBank): Promise<PracticeQuestionBank>;
+  addQuestionsToBank(questions: InsertPracticeQuestionBank[]): Promise<PracticeQuestionBank[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1477,6 +1484,35 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(testGapRecommendations)
       .where(eq(testGapRecommendations.attemptId, attemptId))
       .orderBy(desc(testGapRecommendations.gapScore));
+  }
+
+  // Question Bank
+  async getQuestionBankQuestions(testType: string, categories: string[], limit: number = 20): Promise<PracticeQuestionBank[]> {
+    return db.select().from(practiceQuestionBank)
+      .where(and(
+        eq(practiceQuestionBank.testType, testType.toUpperCase()),
+        inArray(practiceQuestionBank.category, categories)
+      ))
+      .orderBy(sql`RANDOM()`)
+      .limit(limit);
+  }
+
+  async getQuestionBankCount(testType: string): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
+      .from(practiceQuestionBank)
+      .where(eq(practiceQuestionBank.testType, testType.toUpperCase()));
+    return Number(result[0]?.count || 0);
+  }
+
+  async addQuestionToBank(question: InsertPracticeQuestionBank): Promise<PracticeQuestionBank> {
+    const [created] = await db.insert(practiceQuestionBank).values(question).returning();
+    return created;
+  }
+
+  async addQuestionsToBank(questions: InsertPracticeQuestionBank[]): Promise<PracticeQuestionBank[]> {
+    if (questions.length === 0) return [];
+    const created = await db.insert(practiceQuestionBank).values(questions).returning();
+    return created;
   }
 }
 

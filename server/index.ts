@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { seedQuestionBank } from "./seedQuestionBank";
 
 const app = express();
 const httpServer = createServer(app);
@@ -69,6 +70,9 @@ app.use((req, res, next) => {
     res.status(status).json({ message });
     throw err;
   });
+
+  // Seed question bank with sample questions
+  await seedQuestionBank();
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route

@@ -57,6 +57,7 @@ export default function ExplorePage() {
   const [newTopicDescription, setNewTopicDescription] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
   const [isPracticeTestMode, setIsPracticeTestMode] = useState(false);
+  const [generateNewQuestions, setGenerateNewQuestions] = useState(false);
 
   const { data: topics, isLoading: topicsLoading } = useQuery<Topic[]>({
     queryKey: ["/api/topics"],
@@ -94,18 +95,21 @@ export default function ExplorePage() {
   });
 
   const createTestMutation = useMutation({
-    mutationFn: async (data: { testType: string; title: string; description?: string }) => {
+    mutationFn: async (data: { testType: string; title: string; description?: string; generateNew?: boolean }) => {
       return apiRequest("POST", "/api/practice-tests", data);
     },
-    onSuccess: () => {
+    onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: ["/api/user/practice-tests"] });
       setShowCreateForm(false);
       setNewTopicTitle("");
       setNewTopicDescription("");
       setIsPracticeTestMode(false);
+      setGenerateNewQuestions(false);
       toast({
         title: "Practice Test Created!",
-        description: "We're generating your practice test questions. This may take a minute.",
+        description: variables.generateNew 
+          ? "We're generating unique questions with AI. This may take a minute."
+          : "Your practice test is ready! Questions loaded from our question bank.",
       });
     },
     onError: () => {
@@ -137,6 +141,7 @@ export default function ExplorePage() {
         testType: newTopicTitle.toUpperCase(),
         title: `${newTopicTitle.toUpperCase()} Practice Test`,
         description: newTopicDescription || undefined,
+        generateNew: generateNewQuestions,
       });
     } else {
       createMutation.mutate({
@@ -294,6 +299,23 @@ export default function ExplorePage() {
                           data-testid="input-new-topic-description"
                         />
                       </div>
+                      
+                      {isPracticeTestMode && (
+                        <div className="flex items-center justify-between p-3 rounded-lg bg-muted/50 border">
+                          <div className="flex-1">
+                            <p className="text-sm font-medium">Generate New Questions (AI)</p>
+                            <p className="text-xs text-muted-foreground">
+                              Use AI to create unique questions instead of our question bank
+                            </p>
+                          </div>
+                          <Switch
+                            checked={generateNewQuestions}
+                            onCheckedChange={setGenerateNewQuestions}
+                            data-testid="toggle-generate-new-questions"
+                          />
+                        </div>
+                      )}
+                      
                       <div className="flex gap-2 flex-wrap">
                         <Button
                           onClick={handleCreate}

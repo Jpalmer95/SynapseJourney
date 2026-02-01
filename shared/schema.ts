@@ -333,6 +333,23 @@ export const practiceTests = pgTable("practice_tests", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Question Bank - Reusable pool of practice questions to reduce AI generation costs
+export const practiceQuestionBank = pgTable("practice_question_bank", {
+  id: serial("id").primaryKey(),
+  testType: text("test_type").notNull(), // MCAT, GRE, SAT, etc.
+  category: text("category").notNull(), // e.g., Biology, Chemistry for MCAT
+  questionType: text("question_type").default("multiple_choice").notNull(),
+  passage: text("passage"), // for passage-based questions
+  question: text("question").notNull(),
+  options: jsonb("options").notNull(), // string array of options
+  correctIndex: integer("correct_index").notNull(),
+  explanation: text("explanation").notNull(),
+  difficulty: text("difficulty").default("medium"), // easy, medium, hard
+  isPublic: boolean("is_public").default(true), // publicly available question
+  source: text("source"), // source attribution if any
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Practice Test Questions
 export const practiceTestQuestions = pgTable("practice_test_questions", {
   id: serial("id").primaryKey(),
@@ -448,6 +465,7 @@ export const insertUserInfographicSchema = createInsertSchema(userInfographics).
 export const insertUser3DRewardSchema = createInsertSchema(user3DRewards).omit({ id: true, createdAt: true, completedAt: true });
 export const insertCustomFeedSchema = createInsertSchema(customFeeds).omit({ id: true, createdAt: true });
 export const insertPracticeTestSchema = createInsertSchema(practiceTests).omit({ id: true, createdAt: true });
+export const insertPracticeQuestionBankSchema = createInsertSchema(practiceQuestionBank).omit({ id: true, createdAt: true });
 export const insertPracticeTestQuestionSchema = createInsertSchema(practiceTestQuestions).omit({ id: true });
 export const insertPracticeTestAttemptSchema = createInsertSchema(practiceTestAttempts).omit({ id: true, startedAt: true, completedAt: true });
 export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecommendations).omit({ id: true, createdAt: true });
@@ -511,6 +529,8 @@ export type CustomFeed = typeof customFeeds.$inferSelect;
 export type InsertCustomFeed = z.infer<typeof insertCustomFeedSchema>;
 export type PracticeTest = typeof practiceTests.$inferSelect;
 export type InsertPracticeTest = z.infer<typeof insertPracticeTestSchema>;
+export type PracticeQuestionBank = typeof practiceQuestionBank.$inferSelect;
+export type InsertPracticeQuestionBank = z.infer<typeof insertPracticeQuestionBankSchema>;
 export type PracticeTestQuestion = typeof practiceTestQuestions.$inferSelect;
 export type InsertPracticeTestQuestion = z.infer<typeof insertPracticeTestQuestionSchema>;
 export type PracticeTestAttempt = typeof practiceTestAttempts.$inferSelect;
