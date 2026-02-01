@@ -2,7 +2,7 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { 
   Compass, Clock, ChevronRight, Check, Plus, Atom, Wrench, Rocket, Code, Brain, Calculator, Beaker, Leaf, Music, GitBranch, FlaskConical,
-  Zap, AudioWaveform, Lightbulb, Cog, Cpu, Boxes, Flower2, Dna, BrainCircuit, Globe2, Network, Lock, Layers
+  Zap, AudioWaveform, Lightbulb, Cog, Cpu, Boxes, Flower2, Dna, BrainCircuit, Globe2, Network, Lock, Layers, Sparkles
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Link } from "wouter";
+import { CreateCustomPathwayDialog } from "@/components/create-custom-pathway";
 
 interface Pathway {
   id: number;
@@ -23,6 +24,7 @@ interface Pathway {
   difficulty: string;
   estimatedHours: number | null;
   isActive: boolean;
+  createdByUserId: string | null;
 }
 
 interface UserPathway {
@@ -134,11 +136,14 @@ export default function PathwaysPage() {
             animate={{ opacity: 1, y: 0 }}
             className="mb-8"
           >
-            <div className="flex items-center gap-3 mb-2">
-              <div className="p-2 rounded-md bg-primary/10">
-                <Compass className="h-6 w-6 text-primary" />
+            <div className="flex items-center justify-between gap-3 mb-2 flex-wrap">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-md bg-primary/10">
+                  <Compass className="h-6 w-6 text-primary" />
+                </div>
+                <h1 className="text-2xl md:text-3xl font-bold">Learning Pathways</h1>
               </div>
-              <h1 className="text-2xl md:text-3xl font-bold">Learning Pathways</h1>
+              <CreateCustomPathwayDialog />
             </div>
             <p className="text-muted-foreground">
               Curated learning journeys to help you master entire fields. Each pathway contains recommended topics that build upon each other.
@@ -174,8 +179,16 @@ export default function PathwaysPage() {
                                 <Icon className="h-6 w-6 text-white" />
                               </div>
                               <div className="flex-1">
-                                <div className="flex items-center justify-between mb-1">
-                                  <h3 className="font-medium" data-testid={`text-pathway-name-${up.pathway.id}`}>{up.pathway.name}</h3>
+                                <div className="flex items-center justify-between mb-1 gap-2">
+                                  <div className="flex items-center gap-2">
+                                    <h3 className="font-medium" data-testid={`text-pathway-name-${up.pathway.id}`}>{up.pathway.name}</h3>
+                                    {up.pathway.createdByUserId && (
+                                      <Badge variant="outline" className="text-xs" data-testid={`badge-custom-${up.pathway.id}`}>
+                                        <Sparkles className="h-3 w-3 mr-1" />
+                                        Custom
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <Badge variant="secondary" data-testid={`badge-progress-${up.pathway.id}`}>{up.enrollment.progress}%</Badge>
                                 </div>
                                 <Progress value={up.enrollment.progress} className="h-2" />
@@ -240,7 +253,15 @@ export default function PathwaysPage() {
                               <Icon className="h-6 w-6 text-white" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <h3 className="font-semibold mb-1" data-testid={`text-pathway-title-${pathway.id}`}>{pathway.name}</h3>
+                              <div className="flex items-center gap-2 mb-1">
+                                <h3 className="font-semibold" data-testid={`text-pathway-title-${pathway.id}`}>{pathway.name}</h3>
+                                {pathway.createdByUserId && (
+                                  <Badge variant="outline" className="text-xs">
+                                    <Sparkles className="h-3 w-3 mr-1" />
+                                    Custom
+                                  </Badge>
+                                )}
+                              </div>
                               <p className="text-sm text-muted-foreground mb-3 line-clamp-2" data-testid={`text-pathway-desc-${pathway.id}`}>
                                 {pathway.description}
                               </p>

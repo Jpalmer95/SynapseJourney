@@ -170,13 +170,14 @@ export const userProfiles = pgTable("user_profiles", {
 // Learning Pathways (curated groupings like Physics, Engineering, etc.)
 export const pathways = pgTable("pathways", {
   id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
+  name: text("name").notNull(),
   description: text("description").notNull(),
   icon: text("icon").notNull(),
   color: text("color").notNull(),
   difficulty: text("difficulty").default("mixed"), // beginner, intermediate, advanced, mixed
   estimatedHours: integer("estimated_hours"),
   isActive: boolean("is_active").default(true).notNull(),
+  createdByUserId: varchar("created_by_user_id"), // null = system pathway, set = user-created custom pathway
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

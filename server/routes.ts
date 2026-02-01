@@ -1228,6 +1228,178 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Get user's custom pathways
+  app.get("/api/user/custom-pathways", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const customPathways = await storage.getCustomPathways(req.user.claims.sub);
+      res.json(customPathways);
+    } catch (error) {
+      console.error("Error fetching custom pathways:", error);
+      res.status(500).json({ error: "Failed to fetch custom pathways" });
+    }
+  });
+
+  // AI suggest topics for a custom pathway
+  const suggestPathwaySchema = z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().min(10).max(500),
+    learningGoals: z.string().min(10).max(1000).optional(),
+  });
+
+  app.post("/api/pathways/suggest-topics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = suggestPathwaySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request body", details: parsed.error.format() });
+      }
+
+      const { name, description, learningGoals } = parsed.data;
+
+      // Get all available topics
+      const allTopics = await storage.getTopics();
+      const topicList = allTopics.map(t => ({
+        id: t.id,
+        title: t.title,
+        description: t.description,
+        difficulty: t.difficulty,
+      }));
+
+      const prompt = `You are an expert curriculum designer. A user wants to create a custom learning pathway.
+
+Pathway Name: ${name}
+Pathway Description: ${description}
+${learningGoals ? `Learning Goals: ${learningGoals}` : ''}
+
+Available Topics:
+${JSON.stringify(topicList, null, 2)}
+
+Analyze the available topics and suggest which ones should be included in this pathway. Consider:
+1. Relevance to the pathway's goals
+2. Logical learning order (foundations before advanced)
+3. Prerequisites and dependencies between topics
+4. A mix of required and optional topics
+
+Return a JSON object with:
+{
+  "suggestedTopics": [
+    { "topicId": number, "order": number, "isRequired": boolean, "reason": "brief explanation" }
+  ],
+  "estimatedHours": number (total study time),
+  "difficulty": "beginner" | "intermediate" | "advanced" | "mixed",
+  "icon": "Brain" | "Code" | "Calculator" | "Beaker" | "Atom" | "Book" | "Music" | "Wrench" | "Rocket" | "Leaf" | "Flask" | "Lightbulb",
+  "color": "purple" | "blue" | "green" | "orange" | "pink" | "teal" | "indigo" | "lime" | "rose" | "gray"
+}
+
+Only suggest topics that are genuinely relevant. If few topics match, suggest those few rather than padding with irrelevant ones.`;
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
+          { role: "user", content: prompt },
+        ],
+        response_format: { type: "json_object" },
+        max_completion_tokens: 2048,
+      });
+
+      const content = response.choices[0]?.message?.content || '{}';
+      let suggestions;
+      try {
+        suggestions = JSON.parse(content);
+      } catch {
+        return res.status(500).json({ error: "Failed to parse AI response" });
+      }
+
+      // Enrich suggestions with full topic details
+      const enrichedTopics = (suggestions.suggestedTopics || []).map((s: any) => {
+        const topic = allTopics.find(t => t.id === s.topicId);
+        return {
+          ...s,
+          topic: topic || null,
+        };
+      }).filter((s: any) => s.topic !== null);
+
+      // Validate and normalize AI response values
+      const validDifficulties = ["beginner", "intermediate", "advanced", "mixed"];
+      const validIcons = ["Brain", "Code", "Calculator", "Beaker", "Atom", "Book", "Music", "Wrench", "Rocket", "Leaf", "Flask", "Lightbulb"];
+      const validColors = ["purple", "blue", "green", "orange", "pink", "teal", "indigo", "lime", "rose", "gray"];
+
+      const estimatedHours = Math.min(1000, Math.max(1, Math.round(Number(suggestions.estimatedHours) || 30)));
+      const difficulty = validDifficulties.includes(suggestions.difficulty) ? suggestions.difficulty : "mixed";
+      const icon = validIcons.includes(suggestions.icon) ? suggestions.icon : "Book";
+      const color = validColors.includes(suggestions.color) ? suggestions.color : "blue";
+
+      res.json({
+        suggestedTopics: enrichedTopics,
+        estimatedHours,
+        difficulty,
+        icon,
+        color,
+      });
+    } catch (error) {
+      console.error("Error suggesting pathway topics:", error);
+      res.status(500).json({ error: "Failed to suggest pathway topics" });
+    }
+  });
+
+  // Create a custom pathway with topics
+  const createCustomPathwaySchema = z.object({
+    name: z.string().min(1).max(100),
+    description: z.string().min(10).max(500),
+    icon: z.string(),
+    color: z.string(),
+    difficulty: z.enum(["beginner", "intermediate", "advanced", "mixed"]),
+    estimatedHours: z.number().int().min(1).max(1000),
+    topics: z.array(z.object({
+      topicId: z.number().int().positive(),
+      order: z.number().int().min(0),
+      isRequired: z.boolean(),
+    })),
+  });
+
+  app.post("/api/pathways/create", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const parsed = createCustomPathwaySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request body", details: parsed.error.format() });
+      }
+
+      const { name, description, icon, color, difficulty, estimatedHours, topics } = parsed.data;
+      const userId = req.user.claims.sub;
+
+      // Create the pathway
+      const pathway = await storage.createPathway({
+        name,
+        description,
+        icon,
+        color,
+        difficulty,
+        estimatedHours,
+        isActive: true,
+        createdByUserId: userId,
+      });
+
+      // Add topics to the pathway
+      for (const t of topics) {
+        await storage.addTopicToPathway(pathway.id, t.topicId, t.order, t.isRequired);
+      }
+
+      // Auto-enroll the user in their custom pathway
+      await storage.enrollInPathway(userId, pathway.id);
+
+      // Fetch the topics for the response
+      const pathwayTopics = await storage.getPathwayTopics(pathway.id);
+
+      res.json({
+        pathway,
+        topics: pathwayTopics,
+      });
+    } catch (error) {
+      console.error("Error creating custom pathway:", error);
+      res.status(500).json({ error: "Failed to create custom pathway" });
+    }
+  });
+
   // ============ ACHIEVEMENT ROUTES ============
 
   // Get all achievements

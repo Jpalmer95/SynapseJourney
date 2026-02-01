@@ -136,6 +136,7 @@ export interface IStorage {
   getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean }[]>;
   addTopicToPathway(pathwayId: number, topicId: number, order: number, isRequired: boolean): Promise<PathwayTopic>;
   getUserPathways(userId: string): Promise<{ pathway: Pathway; enrollment: UserPathway }[]>;
+  getCustomPathways(userId: string): Promise<Pathway[]>;
   enrollInPathway(userId: string, pathwayId: number): Promise<UserPathway>;
   updatePathwayProgress(userId: string, pathwayId: number, progress: number): Promise<UserPathway>;
 
@@ -866,6 +867,11 @@ export class DatabaseStorage implements IStorage {
       .values({ pathwayId, topicId, order, isRequired })
       .returning();
     return created;
+  }
+
+  async getCustomPathways(userId: string): Promise<Pathway[]> {
+    return db.select().from(pathways)
+      .where(eq(pathways.createdByUserId, userId));
   }
 
   async getUserPathways(userId: string): Promise<{ pathway: Pathway; enrollment: UserPathway }[]> {
