@@ -65,8 +65,8 @@ Preferred communication style: Simple, everyday language.
 - Replit OAuth/OpenID Connect
 
 ### AI Services
-- OpenAI API (via Replit AI Integrations)
-- Multi-provider support for OpenAI, HuggingFace, Ollama, OpenRouter
+- **Default Model**: Gemini 3 Pro (gemini-3-pro-preview) via Replit AI Integrations
+- Multi-provider support for Gemini, OpenAI, HuggingFace, Ollama, OpenRouter
 - Gemini API (for infographic generation)
 
 ### Key NPM Packages
