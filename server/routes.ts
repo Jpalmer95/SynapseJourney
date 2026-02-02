@@ -5,13 +5,15 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
-import { getAIProvider, type ProviderConfig } from "./ai-providers";
+import { getAIProvider, getDefaultProvider, type ProviderConfig } from "./ai-providers";
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS } from "./seed-data";
 
 const openai = new OpenAI({
   apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
 });
+
+const geminiProvider = getDefaultProvider();
 
 // Validation schemas
 const saveCardSchema = z.object({
@@ -142,9 +144,8 @@ export async function registerRoutes(
         }
 
         try {
-          const response = await openai.chat.completions.create({
-            model: "gemini-3-pro-preview",
-            messages: [
+          const content = await geminiProvider.chat(
+            [
               {
                 role: "system",
                 content: `You are an expert educator. Generate a learning roadmap for the topic. Return a JSON object with a "levels" array containing exactly 5 levels. Each level must have:
@@ -162,11 +163,8 @@ Make the progression natural from fundamentals to advanced concepts.`,
                 content: `Create a learning roadmap for: ${topic.title}\n\nDescription: ${topic.description}`,
               },
             ],
-            response_format: { type: "json_object" },
-            max_completion_tokens: 2048,
-          });
-
-          const content = response.choices[0]?.message?.content || '{"levels":[]}';
+            { responseFormat: "json", maxTokens: 2048 }
+          ) || '{"levels":[]}';
           
           // Parse and validate the AI response
           let parsedContent;
@@ -391,32 +389,15 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       ];
 
       try {
-        // Use streaming for OpenAI (now Gemini via wrapper), non-streaming for other providers
-        if (providerConfig.provider === "openai" || providerConfig.provider === "gemini" || !userProfile?.preferredAiProvider) {
-          const stream = await openai.chat.completions.create({
-            model: "gemini-3-pro-preview",
-            messages,
-            stream: true,
-            max_completion_tokens: 1024,
-          });
-
-          for await (const chunk of stream) {
-            const content = chunk.choices[0]?.delta?.content || "";
-            if (content) {
-              res.write(`data: ${JSON.stringify({ content })}\n\n`);
-            }
-          }
-        } else {
-          // Use the AI provider abstraction for other providers (non-streaming)
-          const provider = getAIProvider(providerConfig);
-          const response = await provider.chat(
-            messages.map(m => ({ role: m.role, content: m.content })),
-            { maxTokens: 1024 }
-          );
-          
-          // Send the full response at once
-          res.write(`data: ${JSON.stringify({ content: response })}\n\n`);
-        }
+        // Use the AI provider abstraction for all providers
+        const provider = getAIProvider(providerConfig);
+        const response = await provider.chat(
+          messages.map(m => ({ role: m.role, content: m.content })),
+          { maxTokens: 1024 }
+        );
+        
+        // Send the full response at once (streaming not supported by Gemini AI Integrations)
+        res.write(`data: ${JSON.stringify({ content: response })}\n\n`);
 
         res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
         res.end();
@@ -1299,17 +1280,13 @@ Return a JSON object with:
 
 Only suggest topics that are genuinely relevant. If few topics match, suggest those few rather than padding with irrelevant ones.`;
 
-      const response = await openai.chat.completions.create({
-        model: "gemini-3-pro-preview",
-        messages: [
+      const content = await geminiProvider.chat(
+        [
           { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
           { role: "user", content: prompt },
         ],
-        response_format: { type: "json_object" },
-        max_completion_tokens: 2048,
-      });
-
-      const content = response.choices[0]?.message?.content || '{}';
+        { responseFormat: "json", maxTokens: 2048 }
+      ) || '{}';
       let suggestions;
       try {
         suggestions = JSON.parse(content);
@@ -1937,13 +1914,10 @@ Help the student understand why their answer was wrong and why the correct answe
         { role: "user" as const, content: userMessage }
       ];
 
-      const response = await openai.chat.completions.create({
-        model: "gemini-3-pro-preview",
-        messages,
-        max_tokens: 1024,
-      });
-
-      const content = response.choices[0].message.content || "I couldn't generate a response. Please try again.";
+      const content = await geminiProvider.chat(
+        messages.map(m => ({ role: m.role, content: m.content })),
+        { maxTokens: 1024 }
+      ) || "I couldn't generate a response. Please try again.";
       res.json({ response: content });
     } catch (error) {
       console.error("Error in practice test chat:", error);
@@ -2297,13 +2271,12 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
     // Generate a category for this topic
     const categoryPrompt = `Given the learning topic "${title}" (${description}), suggest the best category name, color (purple, blue, green, orange, pink, or teal), and icon (Brain, Code, Calculator, Beaker, Atom, Book, Music, Wrench, Rocket, Leaf, Flask, or Lightbulb) for this topic. Return JSON: { "name": "Category Name", "color": "blue", "icon": "Code" }`;
     
-    const categoryResponse = await openai.chat.completions.create({
-      model: "gemini-3-pro-preview",
-      messages: [{ role: "user", content: categoryPrompt }],
-      response_format: { type: "json_object" },
-    });
+    const categoryContent = await geminiProvider.chat(
+      [{ role: "user", content: categoryPrompt }],
+      { responseFormat: "json" }
+    ) || "{}";
     
-    const categoryData = JSON.parse(categoryResponse.choices[0].message.content || "{}");
+    const categoryData = JSON.parse(categoryContent);
     
     // Create or find category
     let category;
@@ -2389,14 +2362,11 @@ Guidelines:
 - Outlines should be specific to the content covered`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gemini-3-pro-preview",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-    });
+    const content = await geminiProvider.chat(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "{}";
 
-    const content = response.choices[0].message.content || "{}";
     const parsed = JSON.parse(content);
     
     if (!parsed.units || !Array.isArray(parsed.units)) {
@@ -2481,14 +2451,11 @@ Include 3 quiz questions.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gemini-3-pro-preview",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-    });
+    const content = await geminiProvider.chat(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "{}";
 
-    const content = response.choices[0].message.content || "{}";
     return JSON.parse(content);
   } catch (error) {
     console.error("Error generating lesson content:", error);
@@ -2593,14 +2560,11 @@ Guidelines:
 - This is about exploration and creativity, not right/wrong answers`;
 
   try {
-    const response = await openai.chat.completions.create({
-      model: "gemini-3-pro-preview",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.8, // Higher creativity for frontier content
-    });
+    const content = await geminiProvider.chat(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.8 }
+    ) || "{}";
 
-    const content = response.choices[0].message.content || "{}";
     return JSON.parse(content);
   } catch (error) {
     console.error("Error generating Next Gen content:", error);
@@ -2757,14 +2721,11 @@ Guidelines:
 - Distribute questions evenly across categories
 - Do NOT generate essay questions or any format without a definitive correct answer`;
 
-    const response = await openai.chat.completions.create({
-      model: "gemini-3-pro-preview",
-      messages: [{ role: "user", content: prompt }],
-      response_format: { type: "json_object" },
-      temperature: 0.7,
-    });
+    const content = await geminiProvider.chat(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "{}";
 
-    const content = response.choices[0].message.content || "{}";
     const parsed = JSON.parse(content);
 
     if (!parsed.questions || !Array.isArray(parsed.questions)) {

@@ -8,6 +8,12 @@ Synapse is an open-source learning platform designed to transform passive conten
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes (February 2026)
+
+- **Fixed AI Content Generation**: Migrated from OpenAI SDK (chat.completions.create) to native @google/genai SDK (generateContent) for Gemini AI Integrations. The Replit AI Integrations only support the generateContent endpoint, not OpenAI-compatible chat.completions.
+- **AI Provider Architecture**: All AI requests now go through the `GeminiProvider` class in `server/ai-providers.ts`, which properly uses the @google/genai SDK with `AI_INTEGRATIONS_GEMINI_BASE_URL` and `AI_INTEGRATIONS_GEMINI_API_KEY`.
+- **Lesson Content Generation**: Lessons now successfully generate educational content using Gemini 3 Pro, with placeholder content only shown temporarily when generation fails (not saved to database to allow retry).
+
 ## System Architecture
 
 ### Frontend
