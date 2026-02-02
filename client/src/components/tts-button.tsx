@@ -25,6 +25,43 @@ import { Label } from "@/components/ui/label";
 import { useTTS } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 
+const CURATED_VOICES = [
+  { name: "Samantha", gender: "female", priority: 1 },
+  { name: "Karen", gender: "female", priority: 2 },
+  { name: "Victoria", gender: "female", priority: 3 },
+  { name: "Daniel", gender: "male", priority: 1 },
+  { name: "Alex", gender: "male", priority: 2 },
+  { name: "Tom", gender: "male", priority: 3 },
+  { name: "Ava", gender: "female", priority: 4 },
+  { name: "Moira", gender: "female", priority: 5 },
+  { name: "Oliver", gender: "male", priority: 4 },
+  { name: "David", gender: "male", priority: 5 },
+  { name: "Zira", gender: "female", priority: 6 },
+  { name: "Mark", gender: "male", priority: 6 },
+];
+
+function getCuratedVoices(availableVoices: SpeechSynthesisVoice[]) {
+  const matched: { voice: SpeechSynthesisVoice; gender: string; priority: number }[] = [];
+  
+  for (const voice of availableVoices) {
+    if (!voice.lang.startsWith("en")) continue;
+    
+    for (const curated of CURATED_VOICES) {
+      if (voice.name.toLowerCase().includes(curated.name.toLowerCase())) {
+        matched.push({ voice, gender: curated.gender, priority: curated.priority });
+        break;
+      }
+    }
+  }
+  
+  matched.sort((a, b) => a.priority - b.priority);
+  
+  const femaleVoices = matched.filter(v => v.gender === "female").slice(0, 3);
+  const maleVoices = matched.filter(v => v.gender === "male").slice(0, 3);
+  
+  return { femaleVoices, maleVoices };
+}
+
 interface TTSButtonProps {
   text: string;
   className?: string;
@@ -104,13 +141,11 @@ export function TTSButton({
     return "Read aloud";
   };
 
-  const englishVoices = availableVoices.filter((v) => v.lang.startsWith("en"));
-  const otherVoices = availableVoices.filter((v) => !v.lang.startsWith("en"));
+  const { femaleVoices, maleVoices } = getCuratedVoices(availableVoices);
 
   const formatVoiceName = (voice: SpeechSynthesisVoice) => {
     const name = voice.name.replace(/Microsoft |Google |Apple /, "");
-    const lang = voice.lang.split("-")[1] || voice.lang;
-    return `${name} (${lang})`;
+    return name;
   };
 
   return (
@@ -213,31 +248,36 @@ export function TTSButton({
                 <SelectTrigger id="voice" data-testid="select-tts-voice">
                   <SelectValue placeholder="Select a voice" />
                 </SelectTrigger>
-                <SelectContent className="max-h-[300px]">
-                  {englishVoices.length > 0 && (
+                <SelectContent>
+                  {femaleVoices.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>English Voices</SelectLabel>
-                      {englishVoices.map((voice) => (
+                      <SelectLabel>Female</SelectLabel>
+                      {femaleVoices.map(({ voice }) => (
                         <SelectItem key={voice.name} value={voice.name}>
                           {formatVoiceName(voice)}
                         </SelectItem>
                       ))}
                     </SelectGroup>
                   )}
-                  {otherVoices.length > 0 && (
+                  {maleVoices.length > 0 && (
                     <SelectGroup>
-                      <SelectLabel>Other Languages</SelectLabel>
-                      {otherVoices.map((voice) => (
+                      <SelectLabel>Male</SelectLabel>
+                      {maleVoices.map(({ voice }) => (
                         <SelectItem key={voice.name} value={voice.name}>
                           {formatVoiceName(voice)}
                         </SelectItem>
                       ))}
+                    </SelectGroup>
+                  )}
+                  {femaleVoices.length === 0 && maleVoices.length === 0 && (
+                    <SelectGroup>
+                      <SelectLabel>No voices available</SelectLabel>
                     </SelectGroup>
                   )}
                 </SelectContent>
               </Select>
               <p className="text-xs text-muted-foreground">
-                Available voices depend on your browser and device.
+                6 human-like voices selected for natural speech.
               </p>
             </div>
           </div>

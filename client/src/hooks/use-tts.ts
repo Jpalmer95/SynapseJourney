@@ -60,11 +60,18 @@ export function useTTS(): UseTTSReturn {
       if (voices.length > 0) {
         setState((prev) => ({ ...prev, availableVoices: voices }));
         if (!selectedVoiceName) {
-          const englishVoice = voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")
+          const samantha = voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")
+          );
+          const fallbackVoice = voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen")
+          ) || voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria")
           ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
-          if (englishVoice) {
-            setSelectedVoiceState(englishVoice.name);
+          
+          const defaultVoice = samantha || fallbackVoice;
+          if (defaultVoice) {
+            setSelectedVoiceState(defaultVoice.name);
           }
         }
       }
@@ -123,7 +130,9 @@ export function useTTS(): UseTTSReturn {
         
         if (!selectedVoice) {
           selectedVoice = voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("female")
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")
+          ) || voices.find(
+            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen")
           ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
         }
 
