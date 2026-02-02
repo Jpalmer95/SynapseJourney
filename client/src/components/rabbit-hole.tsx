@@ -25,6 +25,7 @@ import {
   Puzzle,
   ExternalLink,
   Heart,
+  RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -154,6 +155,40 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   // Fetch user XP
   const { data: userXp } = useQuery<{ totalXp: number; level: number; progress: number }>({
     queryKey: ["/api/user/xp"],
+  });
+
+  // Check if user is admin (only fetch when viewing lesson content)
+  const { data: adminData } = useQuery<{ isAdmin: boolean }>({
+    queryKey: ["/api/admin/check"],
+    enabled: !!selectedUnit,
+  });
+  const isAdmin = adminData?.isAdmin ?? false;
+
+  // Regenerate lesson content mutation (admin only)
+  const regenerateMutation = useMutation({
+    mutationFn: async (unitId: number) => {
+      const res = await apiRequest("POST", `/api/admin/lessons/${unitId}/regenerate`);
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Content Cleared",
+        description: data.message || "The lesson will be regenerated on next access.",
+      });
+      // Invalidate the lesson content cache so it regenerates
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit", selectedUnit?.id, "content"] });
+      // Close the current lesson view so user can reopen to regenerate
+      setSelectedUnit(null);
+      setQuizAnswers({});
+      setQuizSubmitted(false);
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Regeneration Failed",
+        description: error.message || "Failed to regenerate lesson content.",
+        variant: "destructive",
+      });
+    },
   });
 
   // Start lesson mutation
@@ -304,6 +339,19 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               <Heart className={cn("h-4 w-4", isSaved && "fill-current")} />
               {isSaved ? "Saved" : "Save"}
             </Button>
+            {isAdmin && selectedUnit && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => regenerateMutation.mutate(selectedUnit.id)}
+                className="gap-2 text-orange-600 border-orange-500/50"
+                disabled={regenerateMutation.isPending}
+                data-testid="button-regenerate-lesson"
+              >
+                <RefreshCw className={cn("h-4 w-4", regenerateMutation.isPending && "animate-spin")} />
+                Regenerate
+              </Button>
+            )}
             {userXp && (
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <Trophy className="h-4 w-4 text-primary" />

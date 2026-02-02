@@ -2,9 +2,20 @@ import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { authStorage } from "./replit_integrations/auth/storage";
 import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
+
+// Admin emails - users who can regenerate lesson content
+const ADMIN_EMAILS = ["jpkorstad@gmail.com"];
+
+// Helper function to check if user is admin by their email
+async function isAdminUser(userId: string): Promise<boolean> {
+  const user = await authStorage.getUser(userId);
+  if (!user?.email) return false;
+  return ADMIN_EMAILS.includes(user.email.toLowerCase());
+}
 import { 
   getUserChatProvider,
   validateUserChatCredentials,
@@ -898,6 +909,55 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("Error fetching mastery:", error);
       res.status(500).json({ error: "Failed to fetch mastery" });
+    }
+  });
+
+  // ============ ADMIN ROUTES ============
+
+  // Check if current user is an admin
+  app.get("/api/admin/check", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      res.json({ isAdmin });
+    } catch (error) {
+      console.error("Error checking admin status:", error);
+      res.status(500).json({ error: "Failed to check admin status" });
+    }
+  });
+
+  // Regenerate lesson content (admin only) - clears existing content so it regenerates on next access
+  app.post("/api/admin/lessons/:unitId/regenerate", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const unitId = parseInt(req.params.unitId);
+      if (isNaN(unitId) || unitId <= 0) {
+        return res.status(400).json({ error: "Invalid unit ID" });
+      }
+
+      // Check if user is admin
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Only administrators can regenerate lesson content" });
+      }
+
+      // Check if unit exists
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) {
+        return res.status(404).json({ error: "Unit not found" });
+      }
+
+      // Clear the content so it will be regenerated on next access
+      await storage.clearLessonUnitContent(unitId);
+      console.log(`[Admin] Regenerate requested for unit ${unitId}: "${unit.title}" by user ${req.user.claims.sub}`);
+
+      res.json({ 
+        success: true, 
+        message: `Content cleared for "${unit.title}". It will be regenerated on next access.`,
+        unitId: unit.id,
+        unitTitle: unit.title
+      });
+    } catch (error) {
+      console.error("Error regenerating lesson content:", error);
+      res.status(500).json({ error: "Failed to regenerate lesson content" });
     }
   });
 
