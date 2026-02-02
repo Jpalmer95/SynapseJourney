@@ -1216,6 +1216,92 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Admin endpoint to regenerate empty lesson content
+  app.post("/api/admin/regenerate-empty-lessons", async (req: Request, res: Response) => {
+    try {
+      console.log("[Admin] Starting empty lesson content regeneration...");
+      
+      // Get all lesson units with empty content
+      const allUnits = await storage.getAllLessonUnitsWithContent();
+      const emptyUnits = allUnits.filter(unit => 
+        !unit.contentJson || 
+        unit.contentJson === null ||
+        (typeof unit.contentJson === 'object' && Object.keys(unit.contentJson as object).length === 0)
+      );
+      
+      console.log(`[Admin] Found ${emptyUnits.length} empty lesson units out of ${allUnits.length} total`);
+      
+      if (emptyUnits.length === 0) {
+        return res.json({ 
+          success: true, 
+          message: "No empty lesson units found",
+          regenerated: 0,
+          total: allUnits.length 
+        });
+      }
+      
+      // Get all topics for context
+      const topics = await storage.getTopics();
+      const topicMap = new Map(topics.map(t => [t.id, t]));
+      
+      let regenerated = 0;
+      let failed = 0;
+      const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+      
+      // Process in batches to avoid timeout
+      const unitsToProcess = emptyUnits.slice(0, limit);
+      
+      for (const unit of unitsToProcess) {
+        const topic = topicMap.get(unit.topicId);
+        if (!topic) {
+          console.log(`[Admin] Skipping unit ${unit.id} - topic ${unit.topicId} not found`);
+          failed++;
+          continue;
+        }
+        
+        try {
+          console.log(`[Admin] Generating content for: ${topic.title} - ${unit.title} (${unit.difficulty})`);
+          
+          const content = await generateLessonContent(
+            { title: topic.title, description: topic.description },
+            { title: unit.title, difficulty: unit.difficulty, outline: unit.outline },
+            [] // No mastered topics for batch generation
+          );
+          
+          // Only save if not placeholder
+          if (!content._isPlaceholder) {
+            await storage.updateLessonContent(unit.id, content);
+            regenerated++;
+            console.log(`[Admin] Successfully generated content for unit ${unit.id}`);
+          } else {
+            console.log(`[Admin] Got placeholder content for unit ${unit.id}, skipping save`);
+            failed++;
+          }
+        } catch (error) {
+          console.error(`[Admin] Failed to generate content for unit ${unit.id}:`, error);
+          failed++;
+        }
+        
+        // Small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+      
+      console.log(`[Admin] Regeneration complete: ${regenerated} success, ${failed} failed, ${emptyUnits.length - limit} remaining`);
+      
+      res.json({
+        success: true,
+        message: `Regenerated ${regenerated} lesson units`,
+        regenerated,
+        failed,
+        remaining: Math.max(0, emptyUnits.length - limit),
+        total: allUnits.length
+      });
+    } catch (error) {
+      console.error("[Admin] Error regenerating empty lessons:", error);
+      res.status(500).json({ error: "Failed to regenerate lesson content" });
+    }
+  });
+
   // Enroll in pathway
   app.post("/api/pathways/:id/enroll", isAuthenticated, async (req: any, res: Response) => {
     try {
