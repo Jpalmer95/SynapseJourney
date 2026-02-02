@@ -178,6 +178,7 @@ export interface IStorage {
   // Custom Topics
   createCustomTopic(topic: InsertCustomTopic): Promise<CustomTopic>;
   getUserCustomTopics(userId: string): Promise<CustomTopic[]>;
+  getCustomTopicById(id: number): Promise<CustomTopic | undefined>;
   updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic>;
 
   // User Infographics
@@ -1202,6 +1203,12 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(customTopics)
       .where(eq(customTopics.userId, userId))
       .orderBy(desc(customTopics.createdAt));
+  }
+
+  async getCustomTopicById(id: number): Promise<CustomTopic | undefined> {
+    const [topic] = await db.select().from(customTopics)
+      .where(eq(customTopics.id, id));
+    return topic;
   }
 
   async updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic> {

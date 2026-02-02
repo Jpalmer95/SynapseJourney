@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion, AnimatePresence } from "framer-motion";
-import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle, ChevronLeft, ClipboardList, GraduationCap } from "lucide-react";
+import { Search, Sparkles, Loader2, ChevronRight, Plus, BookOpen, Compass, Clock, CheckCircle, AlertCircle, ChevronLeft, ClipboardList, GraduationCap, RefreshCw } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,6 +116,26 @@ export default function ExplorePage() {
       toast({
         title: "Error",
         description: "Failed to create practice test. Please try again.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const retryTopicMutation = useMutation({
+    mutationFn: async (topicId: number) => {
+      return apiRequest("POST", `/api/custom-topics/${topicId}/retry`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/user/custom-topics"] });
+      toast({
+        title: "Retrying Generation",
+        description: "We're regenerating your learning journey. This may take a minute.",
+      });
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to retry generation. Please try again.",
         variant: "destructive",
       });
     },
@@ -418,9 +438,23 @@ export default function ExplorePage() {
                                   {ct.status === "failed" && "Generation failed. Please try again."}
                                 </p>
                               </div>
-                              <Badge variant="secondary" className={statusColor}>
-                                {ct.status}
-                              </Badge>
+                              {ct.status === "failed" ? (
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => retryTopicMutation.mutate(ct.id)}
+                                  disabled={retryTopicMutation.isPending}
+                                  className="gap-2"
+                                  data-testid={`btn-retry-topic-${ct.id}`}
+                                >
+                                  <RefreshCw className={`h-4 w-4 ${retryTopicMutation.isPending ? "animate-spin" : ""}`} />
+                                  Retry
+                                </Button>
+                              ) : (
+                                <Badge variant="secondary" className={statusColor}>
+                                  {ct.status}
+                                </Badge>
+                              )}
                             </div>
                           </CardContent>
                         </Card>

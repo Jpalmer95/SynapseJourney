@@ -2017,6 +2017,49 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
     }
   });
 
+  // Retry failed custom topic generation (owner only)
+  app.post("/api/custom-topics/:id/retry", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.id);
+      if (isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+
+      // Get the custom topic
+      const customTopic = await storage.getCustomTopicById(topicId);
+      if (!customTopic) {
+        return res.status(404).json({ error: "Custom topic not found" });
+      }
+
+      // Check ownership - only the creator can retry
+      if (customTopic.userId !== req.user.claims.sub) {
+        return res.status(403).json({ error: "You can only retry your own custom topics" });
+      }
+
+      // Only allow retry for failed topics
+      if (customTopic.status !== "failed") {
+        return res.status(400).json({ error: "Only failed topics can be retried" });
+      }
+
+      // Reset status to pending and re-trigger generation
+      await storage.updateCustomTopicStatus(topicId, "pending");
+      
+      // Start generating the topic in the background
+      generateCustomTopicContent(topicId, customTopic.title, customTopic.description).catch(console.error);
+      
+      console.log(`[CustomTopic] Retry requested for topic ${topicId}: "${customTopic.title}" by user ${req.user.claims.sub}`);
+
+      res.json({ 
+        success: true, 
+        message: `Retrying generation for "${customTopic.title}"`,
+        topicId: customTopic.id
+      });
+    } catch (error) {
+      console.error("Error retrying custom topic:", error);
+      res.status(500).json({ error: "Failed to retry custom topic generation" });
+    }
+  });
+
   // Search topics (for custom topic creation)
   app.get("/api/topics/search", async (req: Request, res: Response) => {
     try {
