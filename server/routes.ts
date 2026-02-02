@@ -859,7 +859,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
                 topic.title,
                 topic.description,
                 unit.difficulty,
-                unit.content
+                unit.contentJson
               ).catch(console.error);
             });
           }
@@ -1778,7 +1778,7 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
 
       // Get the latest lesson content for context
       const units = await storage.getLessonUnits(topicId);
-      const lessonContent = units.find(u => u.difficulty === difficulty)?.content;
+      const lessonContent = units.find(u => u.difficulty === difficulty)?.contentJson;
 
       const { generateAndStoreInfographic } = await import("./infographic-generator");
       const result = await generateAndStoreInfographic(
