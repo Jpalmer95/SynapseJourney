@@ -3,7 +3,7 @@ import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
 import { seedQuestionBank } from "./seedQuestionBank";
-import { populateMissingLessonUnits } from "./populateLessonUnits";
+import { populateMissingLessonUnits, regeneratePlaceholderContent } from "./populateLessonUnits";
 
 const app = express();
 const httpServer = createServer(app);
@@ -77,6 +77,9 @@ app.use((req, res, next) => {
   
   // Populate missing lesson units for topics that don't have any
   await populateMissingLessonUnits();
+  
+  // Check for and clear any placeholder content so it can be regenerated
+  await regeneratePlaceholderContent();
 
   // importantly only setup vite in development and after
   // setting up all the other routes so the catch-all route

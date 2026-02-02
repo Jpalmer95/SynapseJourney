@@ -546,16 +546,16 @@ export default function SettingsPage() {
               <CardHeader>
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-primary" />
-                  <CardTitle>AI Provider</CardTitle>
+                  <CardTitle>AI Chat Provider</CardTitle>
                 </div>
                 <CardDescription>
-                  Choose which AI model generates your lessons
+                  Choose which AI model powers your personal chat and Q&A sessions. All course content (lessons, roadmaps, practice tests) is generated using Gemini 3 Pro for consistent quality.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 {/* AI Provider Selection */}
                 <div className="space-y-2">
-                  <Label>Preferred AI Provider</Label>
+                  <Label>Preferred Chat Provider</Label>
                   <div className="grid grid-cols-2 gap-2">
                     <Button
                       variant={localProfile.preferredAiProvider === "openai" || !localProfile.preferredAiProvider ? "default" : "outline"}
@@ -568,7 +568,7 @@ export default function SettingsPage() {
                     >
                       <Sparkles className="h-4 w-4 mb-1" />
                       <span className="font-medium">Gemini 3 Pro</span>
-                      <span className="text-xs opacity-70">Default</span>
+                      <span className="text-xs opacity-70">Free (Platform)</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "huggingface" ? "default" : "outline"}
@@ -581,7 +581,7 @@ export default function SettingsPage() {
                     >
                       <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">Hugging Face</span>
-                      <span className="text-xs opacity-70">Free models</span>
+                      <span className="text-xs opacity-70">Your Token</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "ollama" ? "default" : "outline"}
@@ -594,7 +594,7 @@ export default function SettingsPage() {
                     >
                       <Server className="h-4 w-4 mb-1" />
                       <span className="font-medium">Ollama</span>
-                      <span className="text-xs opacity-70">Local models</span>
+                      <span className="text-xs opacity-70">Your Server</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
@@ -607,7 +607,7 @@ export default function SettingsPage() {
                     >
                       <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">OpenRouter</span>
-                      <span className="text-xs opacity-70">Many models</span>
+                      <span className="text-xs opacity-70">Your Key</span>
                     </Button>
                   </div>
                 </div>

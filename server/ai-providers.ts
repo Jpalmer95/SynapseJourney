@@ -267,4 +267,49 @@ export function getDefaultProvider(): AIProvider {
   return defaultGeminiProvider;
 }
 
+/**
+ * TWO-TIER AI ARCHITECTURE:
+ * 
+ * 1. COURSE CONTENT (Gemini 3 Pro only - platform pays)
+ *    - Lesson units, roadmaps, practice tests, custom topics
+ *    - Uses: getCourseContentProvider() or generateCourseContent()
+ *    - Shared across all users, generated once and cached in database
+ *    - Ensures consistent, high-quality educational content
+ * 
+ * 2. USER CHAT/Q&A (User's choice - user pays via their API keys)
+ *    - Interactive tutoring, follow-up questions, exploration
+ *    - Uses: getUserChatProvider() with user's provider config
+ *    - Personal to each user, unlimited if they use their own keys
+ */
+
+/**
+ * Get the provider for generating shared course content.
+ * ALWAYS returns Gemini 3 Pro - user preferences are ignored.
+ * Use this for: lesson units, roadmaps, practice tests, topic content.
+ */
+export function getCourseContentProvider(): AIProvider {
+  return defaultGeminiProvider;
+}
+
+/**
+ * Generate course content using Gemini 3 Pro.
+ * This is a convenience wrapper that ensures course content is always
+ * generated with consistent quality using the platform's AI credits.
+ */
+export async function generateCourseContent(
+  messages: { role: string; content: string }[],
+  options?: ChatOptions
+): Promise<string> {
+  return defaultGeminiProvider.chat(messages, options);
+}
+
+/**
+ * Get the provider for user chat/Q&A.
+ * Respects user's selected provider and API keys.
+ * Falls back to Gemini if user's provider is not configured.
+ */
+export function getUserChatProvider(config: ProviderConfig): AIProvider {
+  return getAIProvider(config);
+}
+
 export { DEFAULT_MODELS };

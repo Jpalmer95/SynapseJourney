@@ -51,3 +51,38 @@ export async function populateMissingLessonUnits(): Promise<void> {
     console.error("Error populating missing lesson units:", error);
   }
 }
+
+/**
+ * Check for lesson units with placeholder content and regenerate them.
+ * Placeholder content has _isPlaceholder: true in the contentJson field.
+ * This ensures production database has real content, not placeholders.
+ */
+export async function regeneratePlaceholderContent(): Promise<void> {
+  console.log("Checking for placeholder content in lesson units...");
+  
+  try {
+    // Get all lesson units with content
+    const allUnits = await storage.getAllLessonUnitsWithContent();
+    let regeneratedCount = 0;
+    
+    for (const unit of allUnits) {
+      // Check if contentJson has placeholder marker
+      const contentJson = unit.contentJson as Record<string, unknown> | null;
+      if (contentJson && contentJson._isPlaceholder === true) {
+        console.log(`Found placeholder content in unit ${unit.id}: "${unit.title}"`);
+        
+        // Clear the placeholder content so it will be regenerated on next access
+        await storage.clearLessonUnitContent(unit.id);
+        regeneratedCount++;
+      }
+    }
+    
+    if (regeneratedCount > 0) {
+      console.log(`Cleared ${regeneratedCount} placeholder lesson units for regeneration.`);
+    } else {
+      console.log("No placeholder content found in lesson units.");
+    }
+  } catch (error) {
+    console.error("Error checking placeholder content:", error);
+  }
+}

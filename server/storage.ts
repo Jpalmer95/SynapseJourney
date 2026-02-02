@@ -43,7 +43,7 @@ import {
   type NextGenContent,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, inArray } from "drizzle-orm";
+import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
 
 export interface IStorage {
   // Categories
@@ -117,6 +117,8 @@ export interface IStorage {
   getLessonUnitByIndex(topicId: number, difficulty: string, unitIndex: number): Promise<LessonUnit | undefined>;
   createLessonUnit(unit: InsertLessonUnit): Promise<LessonUnit>;
   updateLessonContent(unitId: number, contentJson: LessonContent | NextGenContent): Promise<LessonUnit>;
+  getAllLessonUnitsWithContent(): Promise<LessonUnit[]>;
+  clearLessonUnitContent(unitId: number): Promise<void>;
 
   // Lesson Progress
   getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined>;
@@ -706,6 +708,16 @@ export class DatabaseStorage implements IStorage {
       .where(eq(lessonUnits.id, unitId))
       .returning();
     return updated;
+  }
+
+  async getAllLessonUnitsWithContent(): Promise<LessonUnit[]> {
+    return db.select().from(lessonUnits).where(isNotNull(lessonUnits.contentJson));
+  }
+
+  async clearLessonUnitContent(unitId: number): Promise<void> {
+    await db.update(lessonUnits)
+      .set({ contentJson: null })
+      .where(eq(lessonUnits.id, unitId));
   }
 
   // Lesson Progress

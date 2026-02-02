@@ -5,15 +5,13 @@ import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integra
 import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
-import { getAIProvider, getDefaultProvider, type ProviderConfig } from "./ai-providers";
+import { 
+  getAIProvider, 
+  getUserChatProvider,
+  generateCourseContent,
+  type ProviderConfig 
+} from "./ai-providers";
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS } from "./seed-data";
-
-const openai = new OpenAI({
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-});
-
-const geminiProvider = getDefaultProvider();
 
 // Validation schemas
 const saveCardSchema = z.object({
@@ -144,7 +142,7 @@ export async function registerRoutes(
         }
 
         try {
-          const content = await geminiProvider.chat(
+          const content = await generateCourseContent(
             [
               {
                 role: "system",
@@ -1280,7 +1278,7 @@ Return a JSON object with:
 
 Only suggest topics that are genuinely relevant. If few topics match, suggest those few rather than padding with irrelevant ones.`;
 
-      const content = await geminiProvider.chat(
+      const content = await generateCourseContent(
         [
           { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
           { role: "user", content: prompt },
@@ -1898,6 +1896,17 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
       }
       
       const { question, userAnswer, correctAnswer, explanation, userMessage, history } = parsed.data;
+      const userId = req.user.claims.sub;
+      
+      // Get user's AI provider preference for chat (user pays via their API keys)
+      const userProfile = await storage.getUserProfile(userId);
+      const providerConfig: ProviderConfig = {
+        provider: (userProfile?.preferredAiProvider as ProviderConfig["provider"]) || "gemini",
+        huggingFaceToken: userProfile?.huggingFaceToken || undefined,
+        ollamaUrl: userProfile?.ollamaUrl || undefined,
+        openRouterKey: userProfile?.openRouterKey || undefined,
+        preferredModel: userProfile?.preferredModel || undefined,
+      };
       
       const systemPrompt = `You are a helpful tutor helping a student understand a practice test question they got wrong.
 
@@ -1914,7 +1923,9 @@ Help the student understand why their answer was wrong and why the correct answe
         { role: "user" as const, content: userMessage }
       ];
 
-      const content = await geminiProvider.chat(
+      // Use user's selected provider for chat (not course content provider)
+      const provider = getUserChatProvider(providerConfig);
+      const content = await provider.chat(
         messages.map(m => ({ role: m.role, content: m.content })),
         { maxTokens: 1024 }
       ) || "I couldn't generate a response. Please try again.";
@@ -2271,7 +2282,7 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
     // Generate a category for this topic
     const categoryPrompt = `Given the learning topic "${title}" (${description}), suggest the best category name, color (purple, blue, green, orange, pink, or teal), and icon (Brain, Code, Calculator, Beaker, Atom, Book, Music, Wrench, Rocket, Leaf, Flask, or Lightbulb) for this topic. Return JSON: { "name": "Category Name", "color": "blue", "icon": "Code" }`;
     
-    const categoryContent = await geminiProvider.chat(
+    const categoryContent = await generateCourseContent(
       [{ role: "user", content: categoryPrompt }],
       { responseFormat: "json" }
     ) || "{}";
@@ -2362,7 +2373,7 @@ Guidelines:
 - Outlines should be specific to the content covered`;
 
   try {
-    const content = await geminiProvider.chat(
+    const content = await generateCourseContent(
       [{ role: "user", content: prompt }],
       { responseFormat: "json", temperature: 0.7 }
     ) || "{}";
@@ -2451,7 +2462,7 @@ Include 3 quiz questions.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}`;
 
   try {
-    const content = await geminiProvider.chat(
+    const content = await generateCourseContent(
       [{ role: "user", content: prompt }],
       { responseFormat: "json", temperature: 0.7 }
     ) || "{}";
@@ -2560,7 +2571,7 @@ Guidelines:
 - This is about exploration and creativity, not right/wrong answers`;
 
   try {
-    const content = await geminiProvider.chat(
+    const content = await generateCourseContent(
       [{ role: "user", content: prompt }],
       { responseFormat: "json", temperature: 0.8 }
     ) || "{}";
@@ -2721,7 +2732,7 @@ Guidelines:
 - Distribute questions evenly across categories
 - Do NOT generate essay questions or any format without a definitive correct answer`;
 
-    const content = await geminiProvider.chat(
+    const content = await generateCourseContent(
       [{ role: "user", content: prompt }],
       { responseFormat: "json", temperature: 0.7 }
     ) || "{}";
