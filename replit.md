@@ -10,9 +10,12 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes (February 2026)
 
+- **Two-Tier AI Architecture**: Implemented separation between course content (always Gemini 3 Pro at platform's expense) and personal chat/Q&A (user's selected provider with their own API keys). This ensures consistent quality for shared content while allowing power users unlimited exploration.
+- **Course Content Generation**: `generateCourseContent()` function always uses Gemini 3 Pro for lessons, roadmaps, practice tests, and custom topics.
+- **User Chat**: `getUserChatProvider()` respects user's preferred provider (Gemini, Hugging Face, Ollama, OpenRouter) for personal chat/Q&A sessions.
+- **Settings UI**: Updated to clarify provider selection only affects chat, not course content. Shows "Free (Platform)" for Gemini and "Your Token/Key/Server" for alternative providers.
+- **Placeholder Content Cleanup**: Added startup check `regeneratePlaceholderContent()` to find and clear any placeholder content for regeneration.
 - **Fixed AI Content Generation**: Migrated from OpenAI SDK (chat.completions.create) to native @google/genai SDK (generateContent) for Gemini AI Integrations. The Replit AI Integrations only support the generateContent endpoint, not OpenAI-compatible chat.completions.
-- **AI Provider Architecture**: All AI requests now go through the `GeminiProvider` class in `server/ai-providers.ts`, which properly uses the @google/genai SDK with `AI_INTEGRATIONS_GEMINI_BASE_URL` and `AI_INTEGRATIONS_GEMINI_API_KEY`.
-- **Lesson Content Generation**: Lessons now successfully generate educational content using Gemini 3 Pro, with placeholder content only shown temporarily when generation fails (not saved to database to allow retry).
 
 ## System Architecture
 
