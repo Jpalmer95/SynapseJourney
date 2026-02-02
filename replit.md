@@ -10,10 +10,12 @@ Preferred communication style: Simple, everyday language.
 
 ## Recent Changes (February 2026)
 
-- **Two-Tier AI Architecture**: Implemented separation between course content (always Gemini 3 Pro at platform's expense) and personal chat/Q&A (user's selected provider with their own API keys). This ensures consistent quality for shared content while allowing power users unlimited exploration.
-- **Course Content Generation**: `generateCourseContent()` function always uses Gemini 3 Pro for lessons, roadmaps, practice tests, and custom topics.
-- **User Chat**: `getUserChatProvider()` respects user's preferred provider (Gemini, Hugging Face, Ollama, OpenRouter) for personal chat/Q&A sessions.
-- **Settings UI**: Updated to clarify provider selection only affects chat, not course content. Shows "Free (Platform)" for Gemini and "Your Token/Key/Server" for alternative providers.
+- **Two-Tier AI Architecture**: Implemented separation between course content (always Gemini 3 Pro at platform's expense) and personal chat/Q&A (user's credentials required). This ensures consistent quality for shared content while protecting the platform from unlimited chat costs.
+- **Chat Requires User Credentials**: Users MUST configure their own AI provider (Hugging Face, Ollama, or OpenRouter) to use chat features. No fallback to platform Gemini for chat - this protects the solo developer from exponential costs as the user base grows.
+- **Chat Setup Flow**: When users try to chat without credentials, they see a friendly overlay explaining the options and guiding them to settings.
+- **Course Content Generation**: `generateCourseContent()` function always uses Gemini 3 Pro for lessons, roadmaps, practice tests, and custom topics - always free for users.
+- **User Chat**: `getUserChatProvider()` requires user's own credentials (Hugging Face token, Ollama server, or OpenRouter key). Returns null and shows setup prompt if not configured.
+- **Settings UI**: Shows only user-provided options for chat (no Gemini/free option). Info banner explains why credentials are needed. Course content is always free.
 - **Placeholder Content Cleanup**: Added startup check `regeneratePlaceholderContent()` to find and clear any placeholder content for regeneration.
 - **Fixed AI Content Generation**: Migrated from OpenAI SDK (chat.completions.create) to native @google/genai SDK (generateContent) for Gemini AI Integrations. The Replit AI Integrations only support the generateContent endpoint, not OpenAI-compatible chat.completions.
 

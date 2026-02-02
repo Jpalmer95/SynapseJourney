@@ -304,12 +304,63 @@ export async function generateCourseContent(
 }
 
 /**
- * Get the provider for user chat/Q&A.
- * Respects user's selected provider and API keys.
- * Falls back to Gemini if user's provider is not configured.
+ * Check if user has valid chat credentials configured.
+ * Returns null if credentials are missing, provider config if valid.
  */
-export function getUserChatProvider(config: ProviderConfig): AIProvider {
-  return getAIProvider(config);
+export function validateUserChatCredentials(config: ProviderConfig): { valid: boolean; missingCredential?: string; provider?: string } {
+  switch (config.provider) {
+    case "huggingface":
+      if (!config.huggingFaceToken) {
+        return { valid: false, missingCredential: "Hugging Face Access Token", provider: "huggingface" };
+      }
+      return { valid: true, provider: "huggingface" };
+
+    case "ollama":
+      if (!config.ollamaUrl) {
+        return { valid: false, missingCredential: "Ollama Server URL", provider: "ollama" };
+      }
+      return { valid: true, provider: "ollama" };
+
+    case "openrouter":
+      if (!config.openRouterKey) {
+        return { valid: false, missingCredential: "OpenRouter API Key", provider: "openrouter" };
+      }
+      return { valid: true, provider: "openrouter" };
+
+    case "gemini":
+    case "openai":
+    default:
+      // User selected Gemini/default but hasn't configured their own provider
+      // This is NOT allowed for chat - they must use their own credentials
+      return { valid: false, missingCredential: "AI provider credentials", provider: "none" };
+  }
+}
+
+/**
+ * Get the provider for user chat/Q&A.
+ * REQUIRES user's own credentials - does NOT fall back to platform Gemini.
+ * Returns null if user hasn't configured valid credentials.
+ */
+export function getUserChatProvider(config: ProviderConfig): AIProvider | null {
+  const validation = validateUserChatCredentials(config);
+  
+  if (!validation.valid) {
+    return null;
+  }
+
+  switch (config.provider) {
+    case "huggingface":
+      return new HuggingFaceProvider(config.huggingFaceToken!, config.preferredModel);
+
+    case "ollama":
+      return new OllamaProvider(config.ollamaUrl!, config.preferredModel);
+
+    case "openrouter":
+      return new OpenRouterProvider(config.openRouterKey!, config.preferredModel);
+
+    default:
+      return null;
+  }
 }
 
 export { DEFAULT_MODELS };

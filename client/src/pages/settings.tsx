@@ -549,27 +549,21 @@ export default function SettingsPage() {
                   <CardTitle>AI Chat Provider</CardTitle>
                 </div>
                 <CardDescription>
-                  Choose which AI model powers your personal chat and Q&A sessions. All course content (lessons, roadmaps, practice tests) is generated using Gemini 3 Pro for consistent quality.
+                  Configure your AI provider for personal chat and Q&A sessions. You'll need to provide your own API credentials. Course content (lessons, roadmaps, practice tests) is always free and powered by Gemini 3 Pro.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
+                {/* Info Banner */}
+                <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
+                  <p className="text-sm">
+                    <strong>Why do I need my own credentials?</strong> Chat uses your compute so you can have unlimited conversations without limits. Many providers offer free tiers!
+                  </p>
+                </div>
+
                 {/* AI Provider Selection */}
                 <div className="space-y-2">
-                  <Label>Preferred Chat Provider</Label>
-                  <div className="grid grid-cols-2 gap-2">
-                    <Button
-                      variant={localProfile.preferredAiProvider === "openai" || !localProfile.preferredAiProvider ? "default" : "outline"}
-                      className="h-auto py-3 flex-col"
-                      onClick={() => {
-                        updateLocalProfile({ preferredAiProvider: "openai" });
-                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "openai" });
-                      }}
-                      data-testid="btn-provider-openai"
-                    >
-                      <Sparkles className="h-4 w-4 mb-1" />
-                      <span className="font-medium">Gemini 3 Pro</span>
-                      <span className="text-xs opacity-70">Free (Platform)</span>
-                    </Button>
+                  <Label>Select Your Chat Provider</Label>
+                  <div className="grid grid-cols-3 gap-2">
                     <Button
                       variant={localProfile.preferredAiProvider === "huggingface" ? "default" : "outline"}
                       className="h-auto py-3 flex-col"
@@ -581,7 +575,7 @@ export default function SettingsPage() {
                     >
                       <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">Hugging Face</span>
-                      <span className="text-xs opacity-70">Your Token</span>
+                      <span className="text-xs opacity-70">Free Tier</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "ollama" ? "default" : "outline"}
@@ -594,7 +588,7 @@ export default function SettingsPage() {
                     >
                       <Server className="h-4 w-4 mb-1" />
                       <span className="font-medium">Ollama</span>
-                      <span className="text-xs opacity-70">Your Server</span>
+                      <span className="text-xs opacity-70">Local/Free</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
@@ -607,7 +601,7 @@ export default function SettingsPage() {
                     >
                       <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">OpenRouter</span>
-                      <span className="text-xs opacity-70">Your Key</span>
+                      <span className="text-xs opacity-70">Many Models</span>
                     </Button>
                   </div>
                 </div>

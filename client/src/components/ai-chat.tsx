@@ -1,11 +1,12 @@
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { X, Send, Sparkles, User, Loader2, HelpCircle } from "lucide-react";
+import { X, Send, Sparkles, User, Loader2, HelpCircle, Settings, Key, Server, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
+import { useLocation } from "wouter";
 import type { Topic } from "@shared/schema";
 
 interface Message {
@@ -28,6 +29,7 @@ const suggestions = [
 ];
 
 export function AiChat({ topic, onClose }: AiChatProps) {
+  const [, setLocation] = useLocation();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
@@ -40,6 +42,7 @@ export function AiChat({ topic, onClose }: AiChatProps) {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [showProviderSetup, setShowProviderSetup] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -75,6 +78,17 @@ export function AiChat({ topic, onClose }: AiChatProps) {
       });
 
       if (!response.ok) {
+        // Check if this is a provider setup required error
+        if (response.status === 402) {
+          const errorData = await response.json();
+          if (errorData.error === "CHAT_PROVIDER_REQUIRED") {
+            setShowProviderSetup(true);
+            setIsLoading(false);
+            // Remove the user message we just added since we can't process it
+            setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
+            return;
+          }
+        }
         throw new Error("Failed to get response");
       }
 
@@ -103,6 +117,16 @@ export function AiChat({ topic, onClose }: AiChatProps) {
             if (line.startsWith("data: ")) {
               try {
                 const data = JSON.parse(line.slice(6));
+                
+                // Check for provider required error in SSE stream
+                if (data.error === "CHAT_PROVIDER_REQUIRED") {
+                  setShowProviderSetup(true);
+                  setIsLoading(false);
+                  // Remove the messages we just added
+                  setMessages((prev) => prev.filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id));
+                  return;
+                }
+                
                 if (data.content) {
                   assistantContent += data.content;
                   setMessages((prev) =>
@@ -178,6 +202,63 @@ export function AiChat({ topic, onClose }: AiChatProps) {
           <X className="h-5 w-5" />
         </Button>
       </header>
+
+      {/* Provider Setup Overlay */}
+      {showProviderSetup && (
+        <div className="absolute inset-0 bg-background/95 z-10 flex flex-col items-center justify-center p-6 text-center">
+          <div className="p-4 rounded-full bg-primary/10 mb-4">
+            <Key className="h-8 w-8 text-primary" />
+          </div>
+          <h3 className="text-lg font-semibold mb-2">Set Up AI Chat</h3>
+          <p className="text-muted-foreground mb-6 max-w-sm">
+            AI chat requires your own API credentials. Course content is always free, but for unlimited personal conversations, please configure one of these providers:
+          </p>
+          
+          <div className="space-y-3 w-full max-w-xs mb-6">
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+              <Zap className="h-5 w-5 text-amber-500" />
+              <div className="text-left">
+                <p className="font-medium text-sm">Hugging Face</p>
+                <p className="text-xs text-muted-foreground">Free tier available</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+              <Server className="h-5 w-5 text-green-500" />
+              <div className="text-left">
+                <p className="font-medium text-sm">Ollama</p>
+                <p className="text-xs text-muted-foreground">Run locally for free</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
+              <Zap className="h-5 w-5 text-blue-500" />
+              <div className="text-left">
+                <p className="font-medium text-sm">OpenRouter</p>
+                <p className="text-xs text-muted-foreground">Many models available</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowProviderSetup(false)}
+              data-testid="button-cancel-setup"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                onClose();
+                setLocation("/settings");
+              }}
+              data-testid="button-go-to-settings"
+            >
+              <Settings className="h-4 w-4 mr-2" />
+              Go to Settings
+            </Button>
+          </div>
+        </div>
+      )}
 
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="space-y-4">

@@ -6,8 +6,8 @@ import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
 import { 
-  getAIProvider, 
   getUserChatProvider,
+  validateUserChatCredentials,
   generateCourseContent,
   type ProviderConfig 
 } from "./ai-providers";
@@ -351,6 +351,17 @@ Make the progression natural from fundamentals to advanced concepts.`,
         preferredModel: userProfile?.preferredModel || undefined,
       };
 
+      // Validate user has configured their own chat provider credentials
+      const credentialCheck = validateUserChatCredentials(providerConfig);
+      if (!credentialCheck.valid) {
+        return res.status(402).json({ 
+          error: "CHAT_PROVIDER_REQUIRED",
+          message: "AI chat requires you to set up your own AI provider. Please configure your credentials in Settings.",
+          missingCredential: credentialCheck.missingCredential,
+          provider: credentialCheck.provider,
+        });
+      }
+
       // Get topic context if provided
       let topicContext = "";
       if (topicId) {
@@ -387,8 +398,14 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       ];
 
       try {
-        // Use the AI provider abstraction for all providers
-        const provider = getAIProvider(providerConfig);
+        // Get user's chat provider (requires their own credentials)
+        // This check should never trigger since we validate above, but keeping as safety net
+        const provider = getUserChatProvider(providerConfig);
+        if (!provider) {
+          res.write(`data: ${JSON.stringify({ error: "CHAT_PROVIDER_REQUIRED", message: "AI chat requires you to set up your own AI provider." })}\n\n`);
+          res.end();
+          return;
+        }
         const response = await provider.chat(
           messages.map(m => ({ role: m.role, content: m.content })),
           { maxTokens: 1024 }
@@ -1908,6 +1925,17 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
         preferredModel: userProfile?.preferredModel || undefined,
       };
       
+      // Validate user has configured their own chat provider credentials
+      const credentialCheck = validateUserChatCredentials(providerConfig);
+      if (!credentialCheck.valid) {
+        return res.status(402).json({ 
+          error: "CHAT_PROVIDER_REQUIRED",
+          message: "AI chat requires you to set up your own AI provider. Please configure your credentials in Settings.",
+          missingCredential: credentialCheck.missingCredential,
+          provider: credentialCheck.provider,
+        });
+      }
+      
       const systemPrompt = `You are a helpful tutor helping a student understand a practice test question they got wrong.
 
 Question: ${question}
@@ -1925,6 +1953,12 @@ Help the student understand why their answer was wrong and why the correct answe
 
       // Use user's selected provider for chat (not course content provider)
       const provider = getUserChatProvider(providerConfig);
+      if (!provider) {
+        return res.status(402).json({ 
+          error: "CHAT_PROVIDER_REQUIRED",
+          message: "AI chat requires you to set up your own AI provider.",
+        });
+      }
       const content = await provider.chat(
         messages.map(m => ({ role: m.role, content: m.content })),
         { maxTokens: 1024 }
