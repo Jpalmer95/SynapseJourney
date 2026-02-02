@@ -763,6 +763,13 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         ? await generateNextGenContent(topic, unit, masteredTopics)
         : await generateLessonContent(topic, unit, masteredTopics);
       
+      // Only save real AI-generated content, NOT placeholder fallbacks
+      // Placeholder content has _isPlaceholder: true - don't persist it so retry works
+      if (content._isPlaceholder) {
+        console.log(`Content generation failed for unit ${unitId}, returning placeholder without saving`);
+        return res.json({ unit, content, isNextGen, isTemporary: true });
+      }
+      
       // Save the generated content
       const updatedUnit = await storage.updateLessonContent(unitId, content);
 
@@ -2485,22 +2492,16 @@ ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if rel
     return JSON.parse(content);
   } catch (error) {
     console.error("Error generating lesson content:", error);
-    // Return default content on failure
+    // Return placeholder content with marker - DO NOT save this to DB
     return {
-      concept: `This lesson covers ${unit.title} in ${topic.title}. Content is being generated...`,
-      analogy: "Think of this concept like a familiar everyday process.",
+      _isPlaceholder: true,
+      concept: `We're having trouble generating content for "${unit.title}" right now. Please try again in a moment.`,
+      analogy: "Content generation is temporarily unavailable.",
       example: {
-        title: "Example",
-        content: "A detailed example will be provided here.",
+        title: "Content Unavailable",
+        content: "Please refresh the page to try generating this lesson again.",
       },
-      quiz: [
-        {
-          question: `What is the main focus of ${unit.title}?`,
-          options: ["Understanding basics", "Advanced theory", "History", "None of the above"],
-          correctIndex: 0,
-          explanation: "This unit focuses on building foundational understanding."
-        }
-      ],
+      quiz: [],
       crossLinks: []
     };
   }
@@ -2603,32 +2604,22 @@ Guidelines:
     return JSON.parse(content);
   } catch (error) {
     console.error("Error generating Next Gen content:", error);
+    // Return placeholder content with marker - DO NOT save this to DB
     return {
-      researchContext: `This explores the cutting edge of ${topic.title}. Researchers and industry leaders are actively working on new frontiers in this space.`,
+      _isPlaceholder: true,
+      researchContext: `We're having trouble generating Next Gen content for "${topic.title}" right now. Please try again in a moment.`,
       industryChallenge: {
-        title: `Current Frontiers in ${topic.title}`,
-        description: "Explore the most challenging open problems in this field.",
-        currentApproaches: ["Traditional methods", "Emerging technologies", "Hybrid approaches"],
-        openQuestions: ["What are the limits of current approaches?", "How can we improve efficiency?", "What new paradigms might emerge?"]
+        title: "Content Unavailable",
+        description: "Please refresh the page to try generating this content again.",
+        currentApproaches: [],
+        openQuestions: []
       },
-      thoughtExercises: [
-        {
-          prompt: `If you could redesign ${topic.title} from scratch, what would you change?`,
-          hints: ["Consider current limitations", "Think about user needs"],
-          explorationPaths: ["Start with first principles", "Look at analogies from other fields"]
-        }
-      ],
-      emergingTrends: [
-        {
-          trend: "Emerging approaches in this space",
-          implications: "Could transform how we think about this topic",
-          potentialBreakthroughs: "New capabilities and applications"
-        }
-      ],
+      thoughtExercises: [],
+      emergingTrends: [],
       creativeSynthesis: {
-        challenge: `Combine your knowledge of ${topic.title} with another field you're interested in to propose a novel application.`,
-        relatedConcepts: [topic.title, "Cross-domain thinking"],
-        suggestedConnections: ["Biology and technology", "Art and science", "Local and global perspectives"]
+        challenge: "Content generation is temporarily unavailable.",
+        relatedConcepts: [],
+        suggestedConnections: []
       },
       resources: []
     };
