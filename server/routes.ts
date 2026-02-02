@@ -1293,7 +1293,7 @@ Return a JSON object with:
 Only suggest topics that are genuinely relevant. If few topics match, suggest those few rather than padding with irrelevant ones.`;
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gemini-3-pro-preview",
         messages: [
           { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
           { role: "user", content: prompt },
@@ -1931,7 +1931,7 @@ Help the student understand why their answer was wrong and why the correct answe
       ];
 
       const response = await openai.chat.completions.create({
-        model: "gpt-4o",
+        model: "gemini-3-pro-preview",
         messages,
         max_tokens: 1024,
       });
@@ -2291,7 +2291,7 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
     const categoryPrompt = `Given the learning topic "${title}" (${description}), suggest the best category name, color (purple, blue, green, orange, pink, or teal), and icon (Brain, Code, Calculator, Beaker, Atom, Book, Music, Wrench, Rocket, Leaf, Flask, or Lightbulb) for this topic. Return JSON: { "name": "Category Name", "color": "blue", "icon": "Code" }`;
     
     const categoryResponse = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gemini-3-pro-preview",
       messages: [{ role: "user", content: categoryPrompt }],
       response_format: { type: "json_object" },
     });
@@ -2383,7 +2383,7 @@ Guidelines:
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gemini-3-pro-preview",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.7,
@@ -2475,7 +2475,7 @@ ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if rel
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gemini-3-pro-preview",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.7,
@@ -2593,7 +2593,7 @@ Guidelines:
 
   try {
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gemini-3-pro-preview",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.8, // Higher creativity for frontier content
@@ -2767,7 +2767,7 @@ Guidelines:
 - Do NOT generate essay questions or any format without a definitive correct answer`;
 
     const response = await openai.chat.completions.create({
-      model: "gpt-4o",
+      model: "gemini-3-pro-preview",
       messages: [{ role: "user", content: prompt }],
       response_format: { type: "json_object" },
       temperature: 0.7,

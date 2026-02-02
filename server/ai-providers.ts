@@ -50,28 +50,29 @@ class GeminiProvider implements AIProvider {
 
   async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
     const modelName = options?.model || DEFAULT_MODELS.gemini;
-    const model = this.client.getGenerativeModel({ 
-      model: modelName
-    });
-
-    const generationConfig = {
-      temperature: options?.temperature ?? 0.7,
-      maxOutputTokens: options?.maxTokens,
-      responseMimeType: options?.responseFormat === "json" ? "application/json" : "text/plain",
-    };
-
-    const chatHistory = messages.slice(0, -1).map(m => ({
+    
+    const chatContents = messages.map(m => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
     }));
 
-    const lastMessage = messages[messages.length - 1].content;
-    const result = await model.generateContent({
-      contents: [...chatHistory, { role: "user", parts: [{ text: lastMessage }] }],
-      generationConfig
+    const config: Record<string, unknown> = {
+      temperature: options?.temperature ?? 0.7,
+    };
+    if (options?.maxTokens) {
+      config.maxOutputTokens = options.maxTokens;
+    }
+    if (options?.responseFormat === "json") {
+      config.responseMimeType = "application/json";
+    }
+
+    const result = await this.client.models.generateContent({
+      model: modelName,
+      contents: chatContents,
+      config,
     });
 
-    return result.response.text();
+    return result.text || "";
   }
 }
 

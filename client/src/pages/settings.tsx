@@ -567,7 +567,7 @@ export default function SettingsPage() {
                       data-testid="btn-provider-openai"
                     >
                       <Sparkles className="h-4 w-4 mb-1" />
-                      <span className="font-medium">OpenAI GPT-4o</span>
+                      <span className="font-medium">Gemini 3 Pro</span>
                       <span className="text-xs opacity-70">Default</span>
                     </Button>
                     <Button
