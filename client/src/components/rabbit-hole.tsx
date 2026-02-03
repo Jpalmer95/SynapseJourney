@@ -311,13 +311,13 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     
     return (
       <motion.div
-        className="min-h-screen bg-background"
+        className="min-h-screen bg-background overflow-x-hidden max-w-full"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
         exit={{ opacity: 0 }}
       >
-        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-lg border-b border-border">
-          <div className="flex items-center gap-4 px-4 py-3 md:px-8">
+        <header className="sticky top-0 z-40 bg-background/80 backdrop-blur-lg border-b border-border overflow-x-hidden">
+          <div className="flex items-center gap-2 sm:gap-4 px-4 py-3 md:px-8 flex-wrap">
             <Button
               variant="ghost"
               size="icon"
@@ -343,28 +343,28 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               variant="outline"
               size="sm"
               onClick={() => saveMutation.mutate()}
-              className={cn("gap-2", isSaved && "text-red-500 border-red-500/50")}
+              className={cn("gap-1 sm:gap-2 shrink-0", isSaved && "text-red-500 border-red-500/50")}
               disabled={!mainCardId || saveMutation.isPending}
               data-testid="button-save-topic-lesson"
             >
               <Heart className={cn("h-4 w-4", isSaved && "fill-current")} />
-              {isSaved ? "Saved" : "Save"}
+              <span className="hidden sm:inline">{isSaved ? "Saved" : "Save"}</span>
             </Button>
             {isAdmin && selectedUnit && (
               <Button
                 variant="outline"
                 size="sm"
                 onClick={() => regenerateMutation.mutate(selectedUnit.id)}
-                className="gap-2 text-orange-600 border-orange-500/50"
+                className="gap-1 sm:gap-2 text-orange-600 border-orange-500/50 shrink-0"
                 disabled={regenerateMutation.isPending}
                 data-testid="button-regenerate-lesson"
               >
                 <RefreshCw className={cn("h-4 w-4", regenerateMutation.isPending && "animate-spin")} />
-                Regenerate
+                <span className="hidden sm:inline">Regenerate</span>
               </Button>
             )}
             {userXp && (
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
+              <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20 shrink-0">
                 <Trophy className="h-4 w-4 text-primary" />
                 <span className="text-sm font-medium">Lvl {userXp.level}</span>
                 {xpEarned > 0 && (
@@ -377,8 +377,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           </div>
         </header>
 
-        <ScrollArea className="h-[calc(100vh-64px)] w-full">
-          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 overflow-x-hidden">
+        <ScrollArea className="h-[calc(100vh-64px)] w-full overflow-x-hidden">
+          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 overflow-x-hidden w-full">
             {isLoadingContent ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -713,7 +713,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                                   )}
                                 >
                                   <RadioGroupItem value={oIndex.toString()} id={`q${qIndex}-o${oIndex}`} />
-                                  <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer">
+                                  <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer break-words">
                                     {option}
                                   </Label>
                                   {quizSubmitted && oIndex === q.correctIndex && (
