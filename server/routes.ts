@@ -1066,7 +1066,8 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 
       // Save generated content to database
       let savedCount = 0;
-      for (const [unitId, content] of contentMap) {
+      const entries = Array.from(contentMap.entries());
+      for (const [unitId, content] of entries) {
         if (content && !content._isPlaceholder) {
           await storage.updateLessonContent(unitId, content);
           savedCount++;

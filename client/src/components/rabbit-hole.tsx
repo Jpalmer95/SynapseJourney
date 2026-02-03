@@ -221,10 +221,11 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
         });
       }
     },
-    onError: () => {
+    onError: (error: any) => {
+      console.error("Batch generation error:", error);
       toast({
         title: "Error",
-        description: "Failed to batch generate lesson content",
+        description: error?.message || "Failed to batch generate lesson content",
         variant: "destructive",
       });
     },
@@ -442,7 +443,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </div>
                   <Card className="border-purple-500/20 overflow-hidden">
                     <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                         {nextGenContent.researchContext}
                       </p>
                     </CardContent>
@@ -458,14 +459,14 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     </div>
                     <Card className="border-orange-500/20 bg-orange-500/5 overflow-hidden">
                       <CardContent className="p-4 sm:p-6 space-y-4">
-                        <h3 className="font-semibold text-lg break-words">{nextGenContent.industryChallenge.title}</h3>
-                        <p className="text-muted-foreground break-words">{nextGenContent.industryChallenge.description}</p>
+                        <h3 className="font-semibold text-lg break-words [overflow-wrap:anywhere]">{nextGenContent.industryChallenge.title}</h3>
+                        <p className="text-muted-foreground break-words [overflow-wrap:anywhere]">{nextGenContent.industryChallenge.description}</p>
                         
                         <div className="space-y-3">
                           <h4 className="font-medium text-sm text-orange-600 dark:text-orange-400">Current Approaches:</h4>
                           <ul className="list-disc list-inside text-muted-foreground space-y-1">
                             {nextGenContent.industryChallenge.currentApproaches.map((approach: string, i: number) => (
-                              <li key={i}>{approach}</li>
+                              <li key={i} className="break-words [overflow-wrap:anywhere]">{approach}</li>
                             ))}
                           </ul>
                         </div>
@@ -474,7 +475,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                           <h4 className="font-medium text-sm text-orange-600 dark:text-orange-400">Open Questions:</h4>
                           <ul className="list-disc list-inside text-muted-foreground space-y-1">
                             {nextGenContent.industryChallenge.openQuestions.map((question: string, i: number) => (
-                              <li key={i} className="italic">{question}</li>
+                              <li key={i} className="italic break-words [overflow-wrap:anywhere]">{question}</li>
                             ))}
                           </ul>
                         </div>
@@ -494,14 +495,14 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                       {nextGenContent.thoughtExercises.map((exercise: any, i: number) => (
                         <Card key={i} className="border-blue-500/20 bg-blue-500/5 overflow-hidden">
                           <CardContent className="p-4 sm:p-6 space-y-4">
-                            <p className="font-medium text-lg break-words">{exercise.prompt}</p>
+                            <p className="font-medium text-lg break-words [overflow-wrap:anywhere]">{exercise.prompt}</p>
                             
                             {exercise.hints && exercise.hints.length > 0 && (
                               <div className="space-y-2">
                                 <h4 className="text-sm font-medium text-blue-600 dark:text-blue-400">Hints to get started:</h4>
                                 <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                                   {exercise.hints.map((hint: string, j: number) => (
-                                    <li key={j}>{hint}</li>
+                                    <li key={j} className="break-words [overflow-wrap:anywhere]">{hint}</li>
                                   ))}
                                 </ul>
                               </div>
@@ -512,7 +513,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                                 <h4 className="text-sm font-medium text-blue-600 dark:text-blue-400">Exploration paths:</h4>
                                 <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                                   {exercise.explorationPaths.map((path: string, j: number) => (
-                                    <li key={j}>{path}</li>
+                                    <li key={j} className="break-words [overflow-wrap:anywhere]">{path}</li>
                                   ))}
                                 </ul>
                               </div>
@@ -535,9 +536,9 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                       {nextGenContent.emergingTrends.map((trend: any, i: number) => (
                         <Card key={i} className="border-green-500/20 bg-green-500/5 overflow-hidden">
                           <CardContent className="p-4 sm:p-6 space-y-3">
-                            <h3 className="font-semibold break-words">{trend.trend}</h3>
-                            <p className="text-muted-foreground text-sm break-words"><span className="font-medium">Implications:</span> {trend.implications}</p>
-                            <p className="text-muted-foreground text-sm break-words"><span className="font-medium">Potential Breakthroughs:</span> {trend.potentialBreakthroughs}</p>
+                            <h3 className="font-semibold break-words [overflow-wrap:anywhere]">{trend.trend}</h3>
+                            <p className="text-muted-foreground text-sm break-words [overflow-wrap:anywhere]"><span className="font-medium">Implications:</span> {trend.implications}</p>
+                            <p className="text-muted-foreground text-sm break-words [overflow-wrap:anywhere]"><span className="font-medium">Potential Breakthroughs:</span> {trend.potentialBreakthroughs}</p>
                           </CardContent>
                         </Card>
                       ))}
@@ -554,7 +555,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     </div>
                     <Card className="border-purple-500/30 bg-gradient-to-br from-purple-500/10 to-pink-500/10 overflow-hidden">
                       <CardContent className="p-4 sm:p-6 space-y-4">
-                        <p className="font-medium text-lg break-words">{nextGenContent.creativeSynthesis.challenge}</p>
+                        <p className="font-medium text-lg break-words [overflow-wrap:anywhere]">{nextGenContent.creativeSynthesis.challenge}</p>
                         
                         {nextGenContent.creativeSynthesis.relatedConcepts && (
                           <div className="flex flex-wrap gap-2">
@@ -569,7 +570,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                             <h4 className="text-sm font-medium text-purple-600 dark:text-purple-400">Suggested connections to explore:</h4>
                             <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
                               {nextGenContent.creativeSynthesis.suggestedConnections.map((conn: string, i: number) => (
-                                <li key={i}>{conn}</li>
+                                <li key={i} className="break-words [overflow-wrap:anywhere]">{conn}</li>
                               ))}
                             </ul>
                           </div>
@@ -591,9 +592,9 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                         <Card key={i}>
                           <CardContent className="p-4 flex items-start gap-3">
                             <Badge variant="outline" className="text-xs shrink-0">{resource.type}</Badge>
-                            <div>
-                              <p className="font-medium">{resource.title}</p>
-                              <p className="text-sm text-muted-foreground">{resource.description}</p>
+                            <div className="min-w-0 flex-1">
+                              <p className="font-medium break-words [overflow-wrap:anywhere]">{resource.title}</p>
+                              <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{resource.description}</p>
                             </div>
                           </CardContent>
                         </Card>
@@ -652,7 +653,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </div>
                   <Card className="overflow-hidden">
                     <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words">
+                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
                         {lessonContent.concept}
                       </p>
                     </CardContent>
@@ -667,7 +668,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </div>
                   <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden">
                     <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed break-words">
+                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]">
                         {lessonContent.analogy}
                       </p>
                     </CardContent>
@@ -682,7 +683,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </div>
                   <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden">
                     <CardContent className="p-4 sm:p-6 space-y-4">
-                      <p className="text-muted-foreground leading-relaxed break-words">
+                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]">
                         {lessonContent.example.content}
                       </p>
                       {lessonContent.example.code && (
@@ -725,7 +726,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                       <CardContent className="p-4 sm:p-6 space-y-6">
                         {lessonContent.quiz.map((q, qIndex) => (
                           <div key={qIndex} className="space-y-3">
-                            <p className="font-medium break-words">
+                            <p className="font-medium break-words [overflow-wrap:anywhere]">
                               {qIndex + 1}. {q.question}
                             </p>
                             <RadioGroup
@@ -737,27 +738,27 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                                 <div 
                                   key={oIndex} 
                                   className={cn(
-                                    "flex items-center space-x-3 p-3 rounded-md border transition-colors",
+                                    "flex items-start space-x-3 p-3 rounded-md border transition-colors",
                                     quizSubmitted && oIndex === q.correctIndex && "bg-green-500/10 border-green-500/50",
                                     quizSubmitted && quizAnswers[qIndex] === oIndex && oIndex !== q.correctIndex && "bg-red-500/10 border-red-500/50",
                                     !quizSubmitted && "hover:bg-muted"
                                   )}
                                 >
-                                  <RadioGroupItem value={oIndex.toString()} id={`q${qIndex}-o${oIndex}`} />
-                                  <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer break-words">
+                                  <RadioGroupItem value={oIndex.toString()} id={`q${qIndex}-o${oIndex}`} className="mt-0.5 shrink-0" />
+                                  <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer break-words [overflow-wrap:anywhere] min-w-0">
                                     {option}
                                   </Label>
                                   {quizSubmitted && oIndex === q.correctIndex && (
-                                    <Check className="h-4 w-4 text-green-500" />
+                                    <Check className="h-4 w-4 text-green-500 shrink-0" />
                                   )}
                                   {quizSubmitted && quizAnswers[qIndex] === oIndex && oIndex !== q.correctIndex && (
-                                    <X className="h-4 w-4 text-red-500" />
+                                    <X className="h-4 w-4 text-red-500 shrink-0" />
                                   )}
                                 </div>
                               ))}
                             </RadioGroup>
                             {quizSubmitted && (
-                              <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md">
+                              <p className="text-sm text-muted-foreground bg-muted p-3 rounded-md break-words [overflow-wrap:anywhere]">
                                 {q.explanation}
                               </p>
                             )}
