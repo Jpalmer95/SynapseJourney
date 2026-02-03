@@ -945,15 +945,56 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(404).json({ error: "Unit not found" });
       }
 
-      // Clear the content so it will be regenerated on next access
-      await storage.clearLessonUnitContent(unitId);
-      console.log(`[Admin] Regenerate requested for unit ${unitId}: "${unit.title}" by user ${req.user.claims.sub}`);
+      const topic = await storage.getTopicById(unit.topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Store original content for rollback if regeneration fails
+      const originalContent = unit.contentJson;
+      const hadContent = !!originalContent;
+      
+      console.log(`[Admin] Regenerating unit ${unitId}: "${unit.title}" - had content: ${hadContent}`);
+
+      // Use empty mastered topics for neutral/general content (not user-specific)
+      // This ensures regenerated content is suitable for all learners
+      const masteredTopics: { topicId: number; topicTitle: string }[] = [];
+      const isNextGen = unit.difficulty === "nextgen";
+      
+      console.log(`[Admin] Generating new content for unit ${unitId} (${unit.difficulty} level)...`);
+      
+      const content = isNextGen 
+        ? await generateNextGenContent(topic, unit, masteredTopics)
+        : await generateLessonContent(topic, unit, masteredTopics);
+      
+      // Check if content generation succeeded
+      if (content._isPlaceholder) {
+        console.log(`[Admin] Content generation failed for unit ${unitId}, keeping original content`);
+        // Don't clear content - keep original so users aren't left with empty lessons
+        return res.json({ 
+          success: false, 
+          message: `AI generation failed for "${unit.title}". Original content preserved - please try again.`,
+          unitId: unit.id,
+          unitTitle: unit.title,
+          error: "AI generation failed",
+          retryable: true
+        });
+      }
+
+      // Only clear and save after successful generation
+      if (hadContent) {
+        await storage.clearLessonUnitContent(unitId);
+      }
+      
+      // Save the newly generated content
+      const updatedUnit = await storage.updateLessonContent(unitId, content);
+      console.log(`[Admin] Successfully regenerated content for unit ${unitId}: "${unit.title}"`);
 
       res.json({ 
         success: true, 
-        message: `Content cleared for "${unit.title}". It will be regenerated on next access.`,
-        unitId: unit.id,
-        unitTitle: unit.title
+        message: `Content regenerated for "${unit.title}".`,
+        unitId: updatedUnit.id,
+        unitTitle: updatedUnit.title
       });
     } catch (error) {
       console.error("Error regenerating lesson content:", error);

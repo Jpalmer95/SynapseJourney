@@ -171,16 +171,27 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       return res.json();
     },
     onSuccess: (data) => {
-      toast({
-        title: "Content Cleared",
-        description: data.message || "The lesson will be regenerated on next access.",
-      });
-      // Invalidate the lesson content cache so it regenerates
-      queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit", selectedUnit?.id, "content"] });
-      // Close the current lesson view so user can reopen to regenerate
-      setSelectedUnit(null);
-      setQuizAnswers({});
-      setQuizSubmitted(false);
+      if (data.success) {
+        toast({
+          title: "Content Regenerated",
+          description: data.message || "The lesson content has been refreshed.",
+        });
+        // Invalidate the lesson content cache to show the new content
+        queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit", selectedUnit?.id, "content"] });
+        // Reset quiz state for fresh content
+        setQuizAnswers({});
+        setQuizSubmitted(false);
+      } else {
+        // AI generation failed - original content preserved, can retry
+        toast({
+          title: "Regeneration Failed",
+          description: data.retryable 
+            ? "AI generation failed. Original content is preserved - click Regenerate to try again."
+            : (data.message || "AI content generation failed."),
+          variant: "destructive",
+        });
+        // Don't close lesson - admin can retry from current view
+      }
     },
     onError: (error: any) => {
       toast({
