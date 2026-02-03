@@ -130,7 +130,26 @@ export const topicMastery = pgTable("topic_mastery", {
   intermediateCompleted: integer("intermediate_completed").default(0).notNull(),
   advancedCompleted: integer("advanced_completed").default(0).notNull(),
   nextgenCompleted: integer("nextgen_completed").default(0).notNull(),
+  keyUnlocked: boolean("key_unlocked").default(false).notNull(), // True if user used an unlock key on this topic
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Unlock Keys (earned by mastering topics, can unlock all tiers of any topic)
+export const unlockKeys = pgTable("unlock_keys", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  totalKeys: integer("total_keys").default(0).notNull(), // Total keys earned
+  usedKeys: integer("used_keys").default(0).notNull(), // Keys spent on topic unlocks
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Key Usage History (tracks which topics were unlocked with keys)
+export const keyUsageHistory = pgTable("key_usage_history", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  usedAt: timestamp("used_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // AI Chat Sessions (per topic context)
@@ -450,6 +469,8 @@ export const insertUserCategoryPreferenceSchema = createInsertSchema(userCategor
 export const insertLessonUnitSchema = createInsertSchema(lessonUnits).omit({ id: true, generatedAt: true });
 export const insertLessonProgressSchema = createInsertSchema(lessonProgress).omit({ id: true, completedAt: true, lastAccessedAt: true });
 export const insertTopicMasterySchema = createInsertSchema(topicMastery).omit({ id: true, updatedAt: true });
+export const insertUnlockKeysSchema = createInsertSchema(unlockKeys).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertKeyUsageHistorySchema = createInsertSchema(keyUsageHistory).omit({ id: true, usedAt: true });
 export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPathwaySchema = createInsertSchema(pathways).omit({ id: true, createdAt: true });
 export const insertPathwayTopicSchema = createInsertSchema(pathwayTopics).omit({ id: true });
@@ -499,6 +520,10 @@ export type LessonProgress = typeof lessonProgress.$inferSelect;
 export type InsertLessonProgress = z.infer<typeof insertLessonProgressSchema>;
 export type TopicMastery = typeof topicMastery.$inferSelect;
 export type InsertTopicMastery = z.infer<typeof insertTopicMasterySchema>;
+export type UnlockKeys = typeof unlockKeys.$inferSelect;
+export type InsertUnlockKeys = z.infer<typeof insertUnlockKeysSchema>;
+export type KeyUsageHistory = typeof keyUsageHistory.$inferSelect;
+export type InsertKeyUsageHistory = z.infer<typeof insertKeyUsageHistorySchema>;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
 export type Pathway = typeof pathways.$inferSelect;

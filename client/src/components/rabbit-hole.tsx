@@ -72,6 +72,7 @@ interface LessonOutlineResponse {
   topic: Topic;
   units: LessonUnit[];
   mastery: TopicMastery;
+  isAdmin?: boolean; // Admin status for bypass unlock requirements
 }
 
 interface RabbitHoleProps {
@@ -157,12 +158,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     queryKey: ["/api/user/xp"],
   });
 
-  // Check if user is admin (only fetch when viewing lesson content)
-  const { data: adminData } = useQuery<{ isAdmin: boolean }>({
-    queryKey: ["/api/admin/check"],
-    enabled: !!selectedUnit,
-  });
-  const isAdmin = adminData?.isAdmin ?? false;
+  // Use admin status from lesson data (already fetched with outline)
+  const isAdmin = lessonData?.isAdmin ?? false;
 
   // Regenerate lesson content mutation (admin only)
   const regenerateMutation = useMutation({
@@ -197,6 +194,37 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       toast({
         title: "Regeneration Failed",
         description: error.message || "Failed to regenerate lesson content.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Batch generate all lesson content for topic (admin only)
+  const batchGenerateMutation = useMutation({
+    mutationFn: async ({ topicId, forceRegenerate = false }: { topicId: number; forceRegenerate?: boolean }) => {
+      const res = await apiRequest("POST", `/api/admin/topics/${topicId}/generate-batch`, { forceRegenerate });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      if (data.success) {
+        toast({
+          title: "Batch Generation Complete",
+          description: data.message || `Generated content for ${data.generated} units`,
+        });
+        // Invalidate lesson data to refresh the content
+        queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      } else {
+        toast({
+          title: "Batch Generation Failed",
+          description: data.message || "Failed to generate content",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: () => {
+      toast({
+        title: "Error",
+        description: "Failed to batch generate lesson content",
         variant: "destructive",
       });
     },
@@ -290,6 +318,9 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   };
 
   const isTabLocked = (difficulty: string) => {
+    // Admin bypass - all tabs unlocked
+    if (isAdmin) return false;
+    
     if (!mastery) return difficulty !== "beginner";
     switch (difficulty) {
       case "beginner": return !mastery.beginnerUnlocked;
@@ -851,6 +882,35 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           >
             <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
             <p className="text-lg text-muted-foreground">{topic.description}</p>
+            
+            {/* Admin batch generation controls */}
+            {isAdmin && (
+              <div className="mt-4 flex flex-wrap items-center gap-2 p-3 rounded-lg bg-orange-500/10 border border-orange-500/20">
+                <span className="text-sm text-orange-600 dark:text-orange-400 font-medium">Admin:</span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => batchGenerateMutation.mutate({ topicId: topic.id })}
+                  disabled={batchGenerateMutation.isPending}
+                  className="gap-2 text-orange-600 border-orange-500/50"
+                  data-testid="button-batch-generate"
+                >
+                  <Zap className={cn("h-4 w-4", batchGenerateMutation.isPending && "animate-pulse")} />
+                  {batchGenerateMutation.isPending ? "Generating..." : "Batch Generate All Content"}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => batchGenerateMutation.mutate({ topicId: topic.id, forceRegenerate: true })}
+                  disabled={batchGenerateMutation.isPending}
+                  className="gap-2 text-red-600 border-red-500/50"
+                  data-testid="button-batch-regenerate"
+                >
+                  <RefreshCw className={cn("h-4 w-4", batchGenerateMutation.isPending && "animate-spin")} />
+                  Force Regenerate All
+                </Button>
+              </div>
+            )}
           </motion.div>
 
           {isLoading ? (

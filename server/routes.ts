@@ -710,13 +710,16 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Get user's mastery status
       const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, topicId);
       
+      // Check if user is admin (bypass all locks)
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      
       // Get user's progress for each unit
       const unitsWithProgress = await Promise.all(units.map(async (unit) => {
         const progress = await storage.getLessonProgress(req.user.claims.sub, unit.id);
         return {
           ...unit,
           progress: progress || null,
-          locked: !isUnitUnlocked(unit.difficulty, mastery),
+          locked: !isUnitUnlocked(unit.difficulty, mastery, isAdmin),
         };
       }));
 
@@ -724,6 +727,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         topic,
         units: unitsWithProgress,
         mastery,
+        isAdmin, // Include admin status so frontend can show unlocked tabs
       });
     } catch (error) {
       console.error("Error fetching lesson outline:", error);
@@ -749,9 +753,10 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(404).json({ error: "Topic not found" });
       }
 
-      // Check if user has unlocked this difficulty level
+      // Check if user has unlocked this difficulty level (admin bypass all locks)
       const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, unit.topicId);
-      if (!isUnitUnlocked(unit.difficulty, mastery)) {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isUnitUnlocked(unit.difficulty, mastery, isAdmin)) {
         return res.status(403).json({ 
           error: "This lesson is locked",
           message: "Complete more lessons in the previous difficulty to unlock this level."
@@ -999,6 +1004,87 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("Error regenerating lesson content:", error);
       res.status(500).json({ error: "Failed to regenerate lesson content" });
+    }
+  });
+
+  // Batch generate all lesson content for a topic (admin only)
+  // More cost-effective than generating per-unit - generates all beginner/intermediate/advanced content in one API call
+  app.post("/api/admin/topics/:topicId/generate-batch", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+
+      // Check if user is admin
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) {
+        return res.status(403).json({ error: "Only administrators can batch generate content" });
+      }
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Get all units for this topic
+      let units = await storage.getLessonUnits(topicId);
+      
+      if (units.length === 0) {
+        // Generate outline first if no units exist
+        units = await generateLessonOutline(topicId, topic.title, topic.description);
+      }
+
+      // Filter to units that don't have content yet (or force regenerate if specified)
+      const forceRegenerate = req.body?.forceRegenerate === true;
+      const unitsToGenerate = forceRegenerate 
+        ? units.filter(u => u.difficulty !== "nextgen") // nextgen uses different structure
+        : units.filter(u => !u.contentJson && u.difficulty !== "nextgen");
+
+      if (unitsToGenerate.length === 0) {
+        return res.json({
+          success: true,
+          message: "All units already have content generated",
+          generated: 0,
+          total: units.length
+        });
+      }
+
+      console.log(`[Admin] Batch generating content for ${unitsToGenerate.length} units of topic "${topic.title}"`);
+
+      // Use batch content generation
+      const contentMap = await generateBatchLessonContent(
+        topic,
+        unitsToGenerate.map(u => ({
+          id: u.id,
+          title: u.title,
+          difficulty: u.difficulty,
+          outline: u.outline
+        })),
+        [] // Empty mastered topics for neutral content
+      );
+
+      // Save generated content to database
+      let savedCount = 0;
+      for (const [unitId, content] of contentMap) {
+        if (content && !content._isPlaceholder) {
+          await storage.updateLessonContent(unitId, content);
+          savedCount++;
+        }
+      }
+
+      console.log(`[Admin] Successfully batch generated content for ${savedCount}/${unitsToGenerate.length} units`);
+
+      res.json({
+        success: true,
+        message: `Batch generated content for ${savedCount} units`,
+        generated: savedCount,
+        total: units.length,
+        attempted: unitsToGenerate.length
+      });
+    } catch (error) {
+      console.error("Error batch generating lesson content:", error);
+      res.status(500).json({ error: "Failed to batch generate lesson content" });
     }
   });
 
@@ -2599,7 +2685,15 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
 }
 
 // Helper function to check if a difficulty level is unlocked
-function isUnitUnlocked(difficulty: string, mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean }): boolean {
+// If isAdmin is true, all levels are unlocked (admin bypass)
+function isUnitUnlocked(
+  difficulty: string, 
+  mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean },
+  isAdmin: boolean = false
+): boolean {
+  // Admin bypass - all levels unlocked
+  if (isAdmin) return true;
+  
   switch (difficulty) {
     case "beginner": return mastery.beginnerUnlocked;
     case "intermediate": return mastery.intermediateUnlocked;
@@ -2665,6 +2759,100 @@ Guidelines:
     console.error("Error generating lesson outline:", error);
     // Return default outline on failure
     return getDefaultLessonUnits(topicId, topicTitle);
+  }
+}
+
+// Generate ALL lesson content for a topic in a single batch API call
+// This is more cost-effective than generating content per-unit
+async function generateBatchLessonContent(
+  topic: { title: string; description: string },
+  units: { id: number; title: string; difficulty: string; outline?: string | null }[],
+  masteredTopics: { topicId: number; topicTitle: string }[]
+): Promise<Map<number, any>> {
+  const crossTopicContext = masteredTopics.length > 0
+    ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
+    : "";
+
+  // Group units by difficulty for the prompt
+  const beginnerUnits = units.filter(u => u.difficulty === "beginner");
+  const intermediateUnits = units.filter(u => u.difficulty === "intermediate");
+  const advancedUnits = units.filter(u => u.difficulty === "advanced");
+  // Note: nextgen units use a different content structure and are generated separately
+
+  const unitsList = [...beginnerUnits, ...intermediateUnits, ...advancedUnits];
+  
+  if (unitsList.length === 0) {
+    return new Map();
+  }
+
+  const unitsDescription = unitsList.map((u, i) => 
+    `${i + 1}. [${u.difficulty.toUpperCase()}] "${u.title}" - ${u.outline || "No description"}`
+  ).join("\n");
+
+  const prompt = `You are a Socratic learning tutor. Create comprehensive lesson content for ALL units of the topic "${topic.title}".
+
+Topic Description: ${topic.description}
+
+${crossTopicContext}
+
+Create content for these ${unitsList.length} units, ensuring a cohesive learning progression:
+${unitsDescription}
+
+Respond with a JSON object where each key is the unit index (0, 1, 2...) and each value is the lesson content:
+{
+  "0": {
+    "concept": "Clear explanation (2-3 paragraphs)",
+    "analogy": "Creative real-world analogy",
+    "example": {
+      "title": "Example title",
+      "content": "Detailed worked example",
+      "code": "Optional code snippet"
+    },
+    "quiz": [
+      {
+        "question": "Question text",
+        "options": ["A", "B", "C", "D"],
+        "correctIndex": 0,
+        "explanation": "Why correct"
+      }
+    ],
+    "crossLinks": []
+  },
+  "1": { ... },
+  ...
+}
+
+CRITICAL Guidelines by difficulty:
+- BEGINNER: Simple language, no jargon, everyday analogies, focus on 'what', basic comprehension quizzes
+- INTERMEDIATE: Explain mechanisms, practical applications, connect concepts, application-based quizzes
+- ADVANCED: Edge cases, nuances, current research/debates, challenge assumptions, analytical quizzes
+
+Each unit should have 3 quiz questions. Build each level on the previous - concepts in intermediate should reference beginner concepts, and advanced should build on both.`;
+
+  try {
+    console.log(`[BatchContent] Generating batch content for ${unitsList.length} units of topic "${topic.title}"`);
+    
+    const content = await generateCourseContent(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "{}";
+
+    const parsed = JSON.parse(content);
+    const resultMap = new Map<number, any>();
+    
+    // Map the response back to unit IDs
+    unitsList.forEach((unit, index) => {
+      const unitContent = parsed[String(index)];
+      if (unitContent && !unitContent._isPlaceholder) {
+        resultMap.set(unit.id, unitContent);
+      }
+    });
+    
+    console.log(`[BatchContent] Successfully generated content for ${resultMap.size}/${unitsList.length} units`);
+    return resultMap;
+  } catch (error) {
+    console.error("[BatchContent] Error generating batch lesson content:", error);
+    return new Map(); // Return empty map on failure - individual unit generation will be used as fallback
   }
 }
 
