@@ -410,7 +410,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
         </header>
 
         <ScrollArea className="h-[calc(100vh-64px)] w-full overflow-x-hidden">
-          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 overflow-x-hidden w-full">
+          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 overflow-hidden w-full box-border">
             {isLoadingContent ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -420,7 +420,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               </div>
             ) : nextGenContent ? (
               /* Next Gen Content - Frontier Research View */
-              <div className="space-y-8">
+              <div className="space-y-8 w-full min-w-0 max-w-full">
                 {/* Header Badge */}
                 <div className="flex items-center justify-center gap-4">
                   <Badge className="bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30 text-sm px-4 py-1">
@@ -634,7 +634,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               </div>
             ) : lessonContent ? (
               /* Standard Lesson Content View */
-              <div className="space-y-8">
+              <div className="space-y-8 w-full min-w-0 max-w-full">
                 {/* Listen Button - for driving or accessibility */}
                 <div className="flex justify-center">
                   <TTSButton
@@ -646,14 +646,14 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 </div>
 
                 {/* Concept Section */}
-                <section>
+                <section className="min-w-0 w-full">
                   <div className="flex items-center gap-2 mb-4">
-                    <BookOpen className="h-5 w-5 text-primary" />
+                    <BookOpen className="h-5 w-5 text-primary shrink-0" />
                     <h2 className="text-xl font-semibold">Concept</h2>
                   </div>
-                  <Card className="overflow-hidden">
-                    <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                  <Card className="overflow-hidden w-full">
+                    <CardContent className="p-4 sm:p-6 overflow-hidden">
+                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]">
                         {lessonContent.concept}
                       </p>
                     </CardContent>
@@ -661,14 +661,14 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 </section>
 
                 {/* Analogy Section */}
-                <section>
+                <section className="min-w-0 w-full">
                   <div className="flex items-center gap-2 mb-4">
-                    <Lightbulb className="h-5 w-5 text-yellow-500" />
+                    <Lightbulb className="h-5 w-5 text-yellow-500 shrink-0" />
                     <h2 className="text-xl font-semibold">Think of it like...</h2>
                   </div>
-                  <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden">
-                    <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]">
+                  <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden w-full">
+                    <CardContent className="p-4 sm:p-6 overflow-hidden">
+                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
                         {lessonContent.analogy}
                       </p>
                     </CardContent>
@@ -676,20 +676,22 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 </section>
 
                 {/* Example Section */}
-                <section>
+                <section className="min-w-0 w-full">
                   <div className="flex items-center gap-2 mb-4">
-                    <Sparkles className="h-5 w-5 text-blue-500" />
-                    <h2 className="text-xl font-semibold">{lessonContent.example.title}</h2>
+                    <Sparkles className="h-5 w-5 text-blue-500 shrink-0" />
+                    <h2 className="text-xl font-semibold break-words [overflow-wrap:anywhere]">{lessonContent.example.title}</h2>
                   </div>
-                  <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden">
-                    <CardContent className="p-4 sm:p-6 space-y-4">
-                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]">
+                  <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden w-full">
+                    <CardContent className="p-4 sm:p-6 space-y-4 overflow-hidden">
+                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
                         {lessonContent.example.content}
                       </p>
                       {lessonContent.example.code && (
-                        <pre className="bg-muted p-3 sm:p-4 rounded-md overflow-x-auto text-xs sm:text-sm font-mono max-w-full">
-                          {lessonContent.example.code}
-                        </pre>
+                        <div className="overflow-x-auto max-w-full">
+                          <pre className="bg-muted p-3 sm:p-4 rounded-md text-xs sm:text-sm font-mono min-w-0">
+                            {lessonContent.example.code}
+                          </pre>
+                        </div>
                       )}
                     </CardContent>
                   </Card>
@@ -697,17 +699,17 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
 
                 {/* Cross-links Section */}
                 {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (
-                  <section>
+                  <section className="min-w-0 w-full">
                     <div className="flex items-center gap-2 mb-4">
-                      <Zap className="h-5 w-5 text-purple-500" />
+                      <Zap className="h-5 w-5 text-purple-500 shrink-0" />
                       <h2 className="text-xl font-semibold">Connections to What You Know</h2>
                     </div>
                     <div className="space-y-3">
                       {lessonContent.crossLinks.map((link, i) => (
-                        <Card key={i} className="border-purple-500/20 bg-purple-500/5 overflow-hidden">
-                          <CardContent className="p-3 sm:p-4">
-                            <p className="font-medium text-purple-600 dark:text-purple-400 break-words">{link.topicTitle}</p>
-                            <p className="text-sm text-muted-foreground mt-1 break-words">{link.connection}</p>
+                        <Card key={i} className="border-purple-500/20 bg-purple-500/5 overflow-hidden w-full">
+                          <CardContent className="p-3 sm:p-4 overflow-hidden">
+                            <p className="font-medium text-purple-600 dark:text-purple-400 break-words [overflow-wrap:anywhere] [word-break:break-word]">{link.topicTitle}</p>
+                            <p className="text-sm text-muted-foreground mt-1 break-words [overflow-wrap:anywhere] [word-break:break-word]">{link.connection}</p>
                           </CardContent>
                         </Card>
                       ))}
@@ -717,13 +719,13 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
 
                 {/* Quiz Section */}
                 {lessonContent.quiz && lessonContent.quiz.length > 0 && (
-                  <section>
+                  <section className="min-w-0 w-full">
                     <div className="flex items-center gap-2 mb-4">
-                      <Brain className="h-5 w-5 text-primary" />
+                      <Brain className="h-5 w-5 text-primary shrink-0" />
                       <h2 className="text-xl font-semibold">Check Your Understanding</h2>
                     </div>
-                    <Card className="overflow-hidden">
-                      <CardContent className="p-4 sm:p-6 space-y-6">
+                    <Card className="overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-6 space-y-6 overflow-hidden">
                         {lessonContent.quiz.map((q, qIndex) => (
                           <div key={qIndex} className="space-y-3">
                             <p className="font-medium break-words [overflow-wrap:anywhere]">
