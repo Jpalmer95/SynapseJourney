@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -100,6 +100,44 @@ const experienceAreas = [
   "Education",
   "Other Sciences",
 ];
+
+const DOGE_WALLET = "DQqGoxU66iTj6tHdSMRU61r3Rxhv6e9T8w";
+
+function CopyWalletAddress({ testIdPrefix = "" }: { testIdPrefix?: string }) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(DOGE_WALLET);
+      setCopied(true);
+      toast({ title: "Copied!", description: "Wallet address copied to clipboard" });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: "Copy failed", description: "Please copy the address manually", variant: "destructive" });
+    }
+  };
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+        <Wallet className="h-4 w-4 shrink-0" />
+        <span>Or send directly to DOGE wallet:</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <code className="text-xs flex-1 truncate select-all p-2 rounded-md bg-muted border">{DOGE_WALLET}</code>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={copyAddress}
+          data-testid={`${testIdPrefix}copy-wallet-address`}
+        >
+          {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function KeysAndSupportSection() {
   const { toast } = useToast();
@@ -305,17 +343,34 @@ function KeysAndSupportSection() {
                   </p>
                 </div>
 
-                <Button variant="outline" asChild className="w-full gap-2">
-                  <a
-                    href="https://mydoge.com/JonK"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    data-testid="link-settings-doge-payment"
-                  >
-                    <ExternalLink className="h-4 w-4" />
-                    Pay with Dogecoin at mydoge.com/JonK
-                  </a>
-                </Button>
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-muted-foreground">Payment Options:</p>
+                  <Button variant="outline" asChild className="w-full gap-2">
+                    <a
+                      href="https://mydoge.com/JonK"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="link-settings-doge-payment"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Pay via MyDoge at mydoge.com/JonK
+                    </a>
+                  </Button>
+
+                  <CopyWalletAddress testIdPrefix="settings-keys-" />
+
+                  <Button variant="outline" asChild className="w-full gap-2">
+                    <a
+                      href="https://buymeacoffee.com/jkorstad"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      data-testid="link-settings-bmac-payment"
+                    >
+                      <Coffee className="h-4 w-4" />
+                      Pay via Buy Me a Coffee
+                    </a>
+                  </Button>
+                </div>
 
                 <Button
                   className="w-full gap-2"
@@ -343,24 +398,39 @@ function KeysAndSupportSection() {
             <CardTitle>Support the Builder</CardTitle>
           </div>
           <CardDescription>
-            Synapse is built by a solo developer. If you enjoy the platform, consider sending a Dogecoin tip to keep development going!
+            Synapse is built by a solo developer. If you enjoy the platform, consider supporting development!
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 text-sm text-muted-foreground">
-            Your donations help cover server costs, AI compute, and future feature development. Every DOGE counts!
+            Your support helps cover server costs, AI compute, and future feature development. Thank you!
           </div>
+
+          <Button variant="outline" asChild className="w-full gap-2">
+            <a
+              href="https://buymeacoffee.com/jkorstad"
+              target="_blank"
+              rel="noopener noreferrer"
+              data-testid="link-settings-donate-bmac"
+            >
+              <Coffee className="h-4 w-4" />
+              Buy Me a Coffee
+            </a>
+          </Button>
+
           <Button variant="outline" asChild className="w-full gap-2">
             <a
               href="https://mydoge.com/JonK"
               target="_blank"
               rel="noopener noreferrer"
-              data-testid="link-settings-donate"
+              data-testid="link-settings-donate-doge"
             >
-              <Heart className="h-4 w-4" />
-              Donate Dogecoin at mydoge.com/JonK
+              <ExternalLink className="h-4 w-4" />
+              Donate Dogecoin via MyDoge
             </a>
           </Button>
+
+          <CopyWalletAddress testIdPrefix="settings-donate-" />
         </CardContent>
       </Card>
     </div>
