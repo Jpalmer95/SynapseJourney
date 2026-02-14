@@ -6,6 +6,7 @@ import {
   monthlyChallenges, userChallengeProgress, researchIdeas, userStreaks, customTopics,
   userInfographics, user3DRewards, customFeeds,
   practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
+  unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -41,6 +42,11 @@ import {
   type TestGapRecommendation, type InsertTestGapRecommendation,
   type LessonContent,
   type NextGenContent,
+  type UnlockKeys,
+  type KeyUsageHistory,
+  type KeyEarnHistory,
+  type KeyPurchaseRequest,
+  type InsertKeyPurchaseRequest,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -236,6 +242,18 @@ export interface IStorage {
   getQuestionBankCount(testType: string): Promise<number>;
   addQuestionToBank(question: InsertPracticeQuestionBank): Promise<PracticeQuestionBank>;
   addQuestionsToBank(questions: InsertPracticeQuestionBank[]): Promise<PracticeQuestionBank[]>;
+
+  // Unlock Keys
+  getUserKeys(userId: string): Promise<UnlockKeys>;
+  useKeyOnTopic(userId: string, topicId: number): Promise<{ success: boolean; error?: string }>;
+  getKeyEarnProgress(userId: string): Promise<{ topicsCompletedToday: number; topicsNeeded: number; alreadyEarnedToday: boolean; qualifyingTopics: number[] }>;
+  checkAndAwardDailyKey(userId: string): Promise<{ awarded: boolean; newTotal: number }>;
+
+  // Key Purchases (Dogecoin)
+  createKeyPurchaseRequest(userId: string, quantity: number): Promise<KeyPurchaseRequest>;
+  getPendingPurchaseRequests(): Promise<(KeyPurchaseRequest & { username?: string })[]>;
+  getUserPurchaseRequests(userId: string): Promise<KeyPurchaseRequest[]>;
+  resolveKeyPurchaseRequest(requestId: number, approved: boolean, adminNote?: string): Promise<KeyPurchaseRequest>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1532,6 +1550,173 @@ export class DatabaseStorage implements IStorage {
     if (questions.length === 0) return [];
     const created = await db.insert(practiceQuestionBank).values(questions).returning();
     return created;
+  }
+
+  // Unlock Keys
+  async getUserKeys(userId: string): Promise<UnlockKeys> {
+    const [existing] = await db.select().from(unlockKeys).where(eq(unlockKeys.userId, userId));
+    if (existing) return existing;
+    const [created] = await db.insert(unlockKeys)
+      .values({ userId, totalKeys: 3, usedKeys: 0 })
+      .returning();
+    return created;
+  }
+
+  async useKeyOnTopic(userId: string, topicId: number): Promise<{ success: boolean; error?: string }> {
+    const keys = await this.getUserKeys(userId);
+    const availableKeys = keys.totalKeys - keys.usedKeys;
+    if (availableKeys <= 0) {
+      return { success: false, error: "No keys available" };
+    }
+
+    const mastery = await this.getOrCreateTopicMastery(userId, topicId);
+    if (mastery.keyUnlocked) {
+      return { success: false, error: "Topic already unlocked" };
+    }
+
+    const [updated] = await db.update(unlockKeys)
+      .set({ usedKeys: sql`${unlockKeys.usedKeys} + 1`, updatedAt: sql`CURRENT_TIMESTAMP` })
+      .where(and(eq(unlockKeys.id, keys.id), sql`${unlockKeys.totalKeys} - ${unlockKeys.usedKeys} > 0`))
+      .returning();
+
+    if (!updated) {
+      return { success: false, error: "No keys available" };
+    }
+
+    await db.update(topicMastery)
+      .set({
+        keyUnlocked: true,
+        intermediateUnlocked: true,
+        advancedUnlocked: true,
+        nextgenUnlocked: true,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(topicMastery.id, mastery.id));
+
+    await db.insert(keyUsageHistory).values({ userId, topicId });
+
+    return { success: true };
+  }
+
+  async getKeyEarnProgress(userId: string): Promise<{ topicsCompletedToday: number; topicsNeeded: number; alreadyEarnedToday: boolean; qualifyingTopics: number[] }> {
+    const today = new Date().toISOString().split('T')[0];
+    const keys = await this.getUserKeys(userId);
+
+    if (keys.lastKeyEarnedDate === today) {
+      return { topicsCompletedToday: 0, topicsNeeded: 3, alreadyEarnedToday: true, qualifyingTopics: [] };
+    }
+
+    const allMastery = await db.select().from(topicMastery)
+      .where(and(
+        eq(topicMastery.userId, userId),
+        eq(topicMastery.keyUnlocked, false),
+        sql`${topicMastery.beginnerCompleted} > 0`,
+        sql`${topicMastery.intermediateCompleted} > 0`,
+        sql`${topicMastery.advancedCompleted} > 0`
+      ));
+
+    const earnedTopics = await db.select().from(keyEarnHistory)
+      .where(eq(keyEarnHistory.userId, userId));
+    const earnedTopicIds = new Set(earnedTopics.map(e => e.topicId));
+
+    const qualifyingTopics = allMastery
+      .filter(m => !earnedTopicIds.has(m.topicId))
+      .map(m => m.topicId);
+
+    return {
+      topicsCompletedToday: qualifyingTopics.length,
+      topicsNeeded: 3,
+      alreadyEarnedToday: false,
+      qualifyingTopics,
+    };
+  }
+
+  async checkAndAwardDailyKey(userId: string): Promise<{ awarded: boolean; newTotal: number }> {
+    const progress = await this.getKeyEarnProgress(userId);
+    const keys = await this.getUserKeys(userId);
+
+    if (progress.alreadyEarnedToday || progress.topicsCompletedToday < 3) {
+      return { awarded: false, newTotal: keys.totalKeys };
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+
+    const [updated] = await db.update(unlockKeys)
+      .set({
+        totalKeys: sql`${unlockKeys.totalKeys} + 1`,
+        lastKeyEarnedDate: today,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(and(
+        eq(unlockKeys.id, keys.id),
+        sql`${unlockKeys.lastKeyEarnedDate} IS DISTINCT FROM ${today}`
+      ))
+      .returning();
+
+    if (!updated) {
+      return { awarded: false, newTotal: keys.totalKeys };
+    }
+
+    const topicsToRecord = progress.qualifyingTopics.slice(0, 3);
+    for (const topicId of topicsToRecord) {
+      await db.insert(keyEarnHistory).values({ userId, topicId, earnDate: today });
+    }
+
+    return { awarded: true, newTotal: updated.totalKeys };
+  }
+
+  // Key Purchases (Dogecoin)
+  async createKeyPurchaseRequest(userId: string, quantity: number): Promise<KeyPurchaseRequest> {
+    const [created] = await db.insert(keyPurchaseRequests)
+      .values({ userId, quantity, dogeAmount: quantity, status: "pending" })
+      .returning();
+    return created;
+  }
+
+  async getPendingPurchaseRequests(): Promise<(KeyPurchaseRequest & { username?: string })[]> {
+    const requests = await db.select({
+      request: keyPurchaseRequests,
+      firstName: users.firstName,
+      lastName: users.lastName,
+    })
+      .from(keyPurchaseRequests)
+      .leftJoin(users, eq(keyPurchaseRequests.userId, users.id))
+      .where(eq(keyPurchaseRequests.status, "pending"))
+      .orderBy(desc(keyPurchaseRequests.createdAt));
+
+    return requests.map(r => ({
+      ...r.request,
+      username: [r.firstName, r.lastName].filter(Boolean).join(' ') || undefined,
+    }));
+  }
+
+  async getUserPurchaseRequests(userId: string): Promise<KeyPurchaseRequest[]> {
+    return db.select().from(keyPurchaseRequests)
+      .where(eq(keyPurchaseRequests.userId, userId))
+      .orderBy(desc(keyPurchaseRequests.createdAt));
+  }
+
+  async resolveKeyPurchaseRequest(requestId: number, approved: boolean, adminNote?: string): Promise<KeyPurchaseRequest> {
+    const [updated] = await db.update(keyPurchaseRequests)
+      .set({
+        status: approved ? "approved" : "rejected",
+        adminNote: adminNote || null,
+        resolvedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(keyPurchaseRequests.id, requestId))
+      .returning();
+
+    if (approved) {
+      await this.getUserKeys(updated.userId);
+      await db.update(unlockKeys)
+        .set({
+          totalKeys: sql`${unlockKeys.totalKeys} + ${updated.quantity}`,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(eq(unlockKeys.userId, updated.userId));
+    }
+
+    return updated;
   }
 }
 

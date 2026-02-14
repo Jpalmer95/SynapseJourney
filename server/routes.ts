@@ -885,15 +885,20 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         }
       }
 
+      const keyEarnResult = await storage.checkAndAwardDailyKey(userId);
+
       res.json({ 
         progress, 
         xpAwarded: totalXp,
         mastery,
         newAchievements,
         infographicEarned,
-        message: mastery.intermediateUnlocked || mastery.advancedUnlocked 
-          ? "New difficulty level unlocked!" 
-          : undefined
+        keyEarned: keyEarnResult.awarded,
+        message: keyEarnResult.awarded
+          ? "You earned an Unlock Key!"
+          : mastery.intermediateUnlocked || mastery.advancedUnlocked 
+            ? "New difficulty level unlocked!" 
+            : undefined
       });
     } catch (error) {
       console.error("Error completing lesson:", error);
@@ -914,6 +919,110 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     } catch (error) {
       console.error("Error fetching mastery:", error);
       res.status(500).json({ error: "Failed to fetch mastery" });
+    }
+  });
+
+  // ============ UNLOCK KEYS ROUTES ============
+
+  app.get("/api/keys", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const keys = await storage.getUserKeys(userId);
+      const earnProgress = await storage.getKeyEarnProgress(userId);
+      const availableKeys = keys.totalKeys - keys.usedKeys;
+      res.json({
+        totalKeys: keys.totalKeys,
+        usedKeys: keys.usedKeys,
+        availableKeys,
+        earnProgress,
+      });
+    } catch (error) {
+      console.error("Error getting keys:", error);
+      res.status(500).json({ error: "Failed to get keys" });
+    }
+  });
+
+  app.post("/api/keys/use/:topicId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId)) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+      const result = await storage.useKeyOnTopic(userId, topicId);
+      if (!result.success) {
+        return res.status(400).json({ error: result.error });
+      }
+      const keys = await storage.getUserKeys(userId);
+      res.json({ success: true, availableKeys: keys.totalKeys - keys.usedKeys });
+    } catch (error) {
+      console.error("Error using key:", error);
+      res.status(500).json({ error: "Failed to use key" });
+    }
+  });
+
+  app.post("/api/keys/check-earn", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const result = await storage.checkAndAwardDailyKey(userId);
+      res.json(result);
+    } catch (error) {
+      console.error("Error checking daily key:", error);
+      res.status(500).json({ error: "Failed to check daily key" });
+    }
+  });
+
+  app.post("/api/keys/purchase", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { quantity } = req.body;
+      if (!quantity || typeof quantity !== "number" || quantity < 1 || quantity > 100) {
+        return res.status(400).json({ error: "Quantity must be between 1 and 100" });
+      }
+      const request = await storage.createKeyPurchaseRequest(userId, quantity);
+      res.json(request);
+    } catch (error) {
+      console.error("Error creating purchase request:", error);
+      res.status(500).json({ error: "Failed to create purchase request" });
+    }
+  });
+
+  app.get("/api/keys/purchases", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const purchases = await storage.getUserPurchaseRequests(userId);
+      res.json(purchases);
+    } catch (error) {
+      console.error("Error getting purchases:", error);
+      res.status(500).json({ error: "Failed to get purchases" });
+    }
+  });
+
+  app.get("/api/admin/keys/pending", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) return res.status(403).json({ error: "Forbidden" });
+      const pending = await storage.getPendingPurchaseRequests();
+      res.json(pending);
+    } catch (error) {
+      console.error("Error getting pending purchases:", error);
+      res.status(500).json({ error: "Failed to get pending purchases" });
+    }
+  });
+
+  app.post("/api/admin/keys/resolve/:requestId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) return res.status(403).json({ error: "Forbidden" });
+      const requestId = parseInt(req.params.requestId);
+      if (isNaN(requestId)) return res.status(400).json({ error: "Invalid request ID" });
+      const { approved, adminNote } = req.body;
+      if (typeof approved !== "boolean") return res.status(400).json({ error: "approved must be boolean" });
+      const result = await storage.resolveKeyPurchaseRequest(requestId, approved, adminNote);
+      res.json(result);
+    } catch (error) {
+      console.error("Error resolving purchase:", error);
+      res.status(500).json({ error: "Failed to resolve purchase" });
     }
   });
 
@@ -2689,11 +2798,11 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
 // If isAdmin is true, all levels are unlocked (admin bypass)
 function isUnitUnlocked(
   difficulty: string, 
-  mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean },
+  mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean; keyUnlocked?: boolean },
   isAdmin: boolean = false
 ): boolean {
-  // Admin bypass - all levels unlocked
   if (isAdmin) return true;
+  if (mastery.keyUnlocked) return true;
   
   switch (difficulty) {
     case "beginner": return mastery.beginnerUnlocked;

@@ -138,8 +138,9 @@ export const topicMastery = pgTable("topic_mastery", {
 export const unlockKeys = pgTable("unlock_keys", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
-  totalKeys: integer("total_keys").default(0).notNull(), // Total keys earned
-  usedKeys: integer("used_keys").default(0).notNull(), // Keys spent on topic unlocks
+  totalKeys: integer("total_keys").default(3).notNull(),
+  usedKeys: integer("used_keys").default(0).notNull(),
+  lastKeyEarnedDate: varchar("last_key_earned_date"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -150,6 +151,27 @@ export const keyUsageHistory = pgTable("key_usage_history", {
   userId: varchar("user_id").notNull(),
   topicId: integer("topic_id").references(() => topics.id).notNull(),
   usedAt: timestamp("used_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Key Earn History (tracks which topics counted toward earning a daily key)
+export const keyEarnHistory = pgTable("key_earn_history", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  earnDate: varchar("earn_date").notNull(),
+  earnedAt: timestamp("earned_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Key Purchase Requests (Dogecoin purchases awaiting admin approval)
+export const keyPurchaseRequests = pgTable("key_purchase_requests", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  quantity: integer("quantity").notNull(),
+  dogeAmount: integer("doge_amount").notNull(),
+  status: varchar("status").default("pending").notNull(),
+  adminNote: text("admin_note"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  resolvedAt: timestamp("resolved_at"),
 });
 
 // AI Chat Sessions (per topic context)
@@ -471,6 +493,8 @@ export const insertLessonProgressSchema = createInsertSchema(lessonProgress).omi
 export const insertTopicMasterySchema = createInsertSchema(topicMastery).omit({ id: true, updatedAt: true });
 export const insertUnlockKeysSchema = createInsertSchema(unlockKeys).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertKeyUsageHistorySchema = createInsertSchema(keyUsageHistory).omit({ id: true, usedAt: true });
+export const insertKeyEarnHistorySchema = createInsertSchema(keyEarnHistory).omit({ id: true, earnedAt: true });
+export const insertKeyPurchaseRequestSchema = createInsertSchema(keyPurchaseRequests).omit({ id: true, createdAt: true, resolvedAt: true });
 export const insertUserProfileSchema = createInsertSchema(userProfiles).omit({ id: true, createdAt: true, updatedAt: true });
 export const insertPathwaySchema = createInsertSchema(pathways).omit({ id: true, createdAt: true });
 export const insertPathwayTopicSchema = createInsertSchema(pathwayTopics).omit({ id: true });
@@ -524,6 +548,10 @@ export type UnlockKeys = typeof unlockKeys.$inferSelect;
 export type InsertUnlockKeys = z.infer<typeof insertUnlockKeysSchema>;
 export type KeyUsageHistory = typeof keyUsageHistory.$inferSelect;
 export type InsertKeyUsageHistory = z.infer<typeof insertKeyUsageHistorySchema>;
+export type KeyEarnHistory = typeof keyEarnHistory.$inferSelect;
+export type InsertKeyEarnHistory = z.infer<typeof insertKeyEarnHistorySchema>;
+export type KeyPurchaseRequest = typeof keyPurchaseRequests.$inferSelect;
+export type InsertKeyPurchaseRequest = z.infer<typeof insertKeyPurchaseRequestSchema>;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
 export type Pathway = typeof pathways.$inferSelect;

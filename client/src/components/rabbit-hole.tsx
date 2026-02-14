@@ -26,6 +26,9 @@ import {
   ExternalLink,
   Heart,
   RefreshCw,
+  Key,
+  ShoppingCart,
+  Gift,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -66,6 +69,7 @@ interface TopicMastery {
   intermediateCompleted: number;
   advancedCompleted: number;
   nextgenCompleted: number;
+  keyUnlocked?: boolean;
 }
 
 interface LessonOutlineResponse {
@@ -94,6 +98,64 @@ const difficultyIcons: Record<string, any> = {
   advanced: Brain,
   nextgen: Sparkles,
 };
+
+function AdminPurchaseApprovals() {
+  const { toast } = useToast();
+  const { data: pending = [] } = useQuery<any[]>({
+    queryKey: ["/api/admin/keys/pending"],
+  });
+
+  const resolveMutation = useMutation({
+    mutationFn: async ({ requestId, approved }: { requestId: number; approved: boolean }) => {
+      const res = await apiRequest("POST", `/api/admin/keys/resolve/${requestId}`, { approved });
+      return res.json();
+    },
+    onSuccess: (_data, variables) => {
+      toast({ title: variables.approved ? "Purchase Approved" : "Purchase Rejected" });
+      queryClient.invalidateQueries({ queryKey: ["/api/admin/keys/pending"] });
+    },
+  });
+
+  if (pending.length === 0) return null;
+
+  return (
+    <div className="border-t pt-4 space-y-2">
+      <p className="text-sm font-medium text-orange-600 dark:text-orange-400">Pending Purchase Requests ({pending.length})</p>
+      {pending.map((req: any) => (
+        <div key={req.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
+          <div className="min-w-0">
+            <p className="text-sm font-medium truncate">{req.username || "User"}</p>
+            <p className="text-xs text-muted-foreground">{req.quantity} keys ({req.dogeAmount} DOGE)</p>
+          </div>
+          <div className="flex gap-1 shrink-0">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resolveMutation.mutate({ requestId: req.id, approved: true })}
+              disabled={resolveMutation.isPending}
+              className="gap-1 text-green-600 border-green-500/50"
+              data-testid={`button-approve-${req.id}`}
+            >
+              <Check className="h-3 w-3" />
+              Approve
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => resolveMutation.mutate({ requestId: req.id, approved: false })}
+              disabled={resolveMutation.isPending}
+              className="gap-1 text-red-600 border-red-500/50"
+              data-testid={`button-reject-${req.id}`}
+            >
+              <X className="h-3 w-3" />
+              Reject
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [showChat, setShowChat] = useState(false);
@@ -156,6 +218,56 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   // Fetch user XP
   const { data: userXp } = useQuery<{ totalXp: number; level: number; progress: number }>({
     queryKey: ["/api/user/xp"],
+  });
+
+  // Fetch user's unlock keys
+  const { data: keysData } = useQuery<{
+    totalKeys: number;
+    usedKeys: number;
+    availableKeys: number;
+    earnProgress: {
+      topicsCompletedToday: number;
+      topicsNeeded: number;
+      alreadyEarnedToday: boolean;
+      qualifyingTopics: number[];
+    };
+  }>({
+    queryKey: ["/api/keys"],
+  });
+
+  const useKeyMutation = useMutation({
+    mutationFn: async (topicId: number) => {
+      const res = await apiRequest("POST", `/api/keys/use/${topicId}`);
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Topic Unlocked!", description: "All difficulty levels are now available." });
+      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Failed to unlock", description: err.message || "Could not use key", variant: "destructive" });
+    },
+  });
+
+  const [showBuyKeys, setShowBuyKeys] = useState(false);
+  const [buyQuantity, setBuyQuantity] = useState(1);
+
+  const purchaseMutation = useMutation({
+    mutationFn: async (quantity: number) => {
+      const res = await apiRequest("POST", "/api/keys/purchase", { quantity });
+      return res.json();
+    },
+    onSuccess: () => {
+      toast({ title: "Purchase Request Submitted", description: "Your request is pending admin approval. Send your Dogecoin payment and we'll approve it shortly." });
+      setShowBuyKeys(false);
+      setBuyQuantity(1);
+      queryClient.invalidateQueries({ queryKey: ["/api/keys/purchases"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Purchase Failed", description: err.message || "Could not submit purchase", variant: "destructive" });
+    },
   });
 
   // Use admin status from lesson data (already fetched with outline)
@@ -319,8 +431,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   };
 
   const isTabLocked = (difficulty: string) => {
-    // Admin bypass - all tabs unlocked
     if (isAdmin) return false;
+    if (mastery?.keyUnlocked) return false;
     
     if (!mastery) return difficulty !== "beginner";
     switch (difficulty) {
@@ -853,6 +965,18 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           </div>
 
           <div className="flex items-center gap-3">
+            {keysData && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowBuyKeys(true)}
+                className="gap-1.5"
+                data-testid="button-keys-balance"
+              >
+                <Key className="h-4 w-4 text-amber-500" />
+                <span className="text-sm font-medium">{keysData.availableKeys}</span>
+              </Button>
+            )}
             {userXp && (
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <Trophy className="h-4 w-4 text-primary" />
@@ -885,6 +1009,36 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           >
             <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
             <p className="text-lg text-muted-foreground">{topic.description}</p>
+
+            {/* Daily Key Earn Progress */}
+            {keysData && !keysData.earnProgress.alreadyEarnedToday && (
+              <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <div className="flex items-center gap-2 mb-2">
+                  <Key className="h-4 w-4 text-amber-500" />
+                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400">Daily Key Progress</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <Progress 
+                    value={(keysData.earnProgress.topicsCompletedToday / keysData.earnProgress.topicsNeeded) * 100} 
+                    className="flex-1 h-2" 
+                  />
+                  <span className="text-xs text-muted-foreground whitespace-nowrap">
+                    {keysData.earnProgress.topicsCompletedToday}/{keysData.earnProgress.topicsNeeded} topics mastered
+                  </span>
+                </div>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Complete beginner, intermediate, and advanced for {keysData.earnProgress.topicsNeeded} topics to earn a free key today
+                </p>
+              </div>
+            )}
+            {keysData?.earnProgress.alreadyEarnedToday && (
+              <div className="mt-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
+                <div className="flex items-center gap-2">
+                  <Gift className="h-4 w-4 text-green-500" />
+                  <span className="text-sm font-medium text-green-700 dark:text-green-400">Daily key earned! Come back tomorrow for another.</span>
+                </div>
+              </div>
+            )}
             
             {/* Admin batch generation controls */}
             {isAdmin && (
@@ -1065,6 +1219,25 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                               Explore frontier research, industry challenges, and creative thinking.
                             </p>
                           )}
+                          {keysData && keysData.availableKeys > 0 && (
+                            <div className="mt-4 pt-4 border-t border-dashed">
+                              <p className="text-sm text-muted-foreground mb-3">Or skip the requirements:</p>
+                              <Button
+                                size="sm"
+                                onClick={() => useKeyMutation.mutate(topic.id)}
+                                disabled={useKeyMutation.isPending}
+                                className="gap-2"
+                                data-testid="button-use-key"
+                              >
+                                {useKeyMutation.isPending ? (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                  <Key className="h-4 w-4" />
+                                )}
+                                Unlock All Levels ({keysData.availableKeys} {keysData.availableKeys === 1 ? "key" : "keys"} remaining)
+                              </Button>
+                            </div>
+                          )}
                         </CardContent>
                       </Card>
                     )}
@@ -1075,6 +1248,135 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           )}
         </div>
       </main>
+
+      {/* Buy Keys Modal */}
+      <AnimatePresence>
+        {showBuyKeys && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShowBuyKeys(false)}
+          >
+            <motion.div
+              className="w-full max-w-md"
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <Card>
+                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-4">
+                  <CardTitle className="flex items-center gap-2">
+                    <Key className="h-5 w-5 text-amber-500" />
+                    Unlock Keys
+                  </CardTitle>
+                  <Button variant="ghost" size="icon" onClick={() => setShowBuyKeys(false)} data-testid="button-close-buy-keys">
+                    <X className="h-4 w-4" />
+                  </Button>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
+                    <span className="text-sm font-medium">Your Keys</span>
+                    <Badge variant="secondary" className="text-base gap-1">
+                      <Key className="h-3.5 w-3.5 text-amber-500" />
+                      {keysData?.availableKeys ?? 0} available
+                    </Badge>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-sm font-medium">How to get keys:</p>
+                    <div className="space-y-2 text-sm text-muted-foreground">
+                      <div className="flex items-start gap-2">
+                        <Gift className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                        <span>3 free keys when you join</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <Trophy className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
+                        <span>Earn 1 key/day by completing beginner + intermediate + advanced on 3 topics</span>
+                      </div>
+                      <div className="flex items-start gap-2">
+                        <ShoppingCart className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                        <span>Buy keys with Dogecoin (1 DOGE = 1 key)</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Admin: Pending Purchase Approvals */}
+                  {isAdmin && <AdminPurchaseApprovals />}
+
+                  <div className="border-t pt-4 space-y-3">
+                    <p className="text-sm font-medium">Buy Keys with Dogecoin</p>
+                    <div className="flex items-center gap-3">
+                      <label className="text-sm text-muted-foreground shrink-0">Quantity:</label>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setBuyQuantity(q => Math.max(1, q - 1))}
+                          disabled={buyQuantity <= 1}
+                          data-testid="button-decrease-quantity"
+                        >
+                          <span className="text-lg leading-none">-</span>
+                        </Button>
+                        <span className="w-10 text-center text-lg font-medium" data-testid="text-buy-quantity">{buyQuantity}</span>
+                        <Button
+                          variant="outline"
+                          size="icon"
+                          onClick={() => setBuyQuantity(q => Math.min(100, q + 1))}
+                          disabled={buyQuantity >= 100}
+                          data-testid="button-increase-quantity"
+                        >
+                          <span className="text-lg leading-none">+</span>
+                        </Button>
+                      </div>
+                      <span className="text-sm text-muted-foreground">= {buyQuantity} DOGE</span>
+                    </div>
+
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">
+                        1. Send {buyQuantity} DOGE to the payment link below
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        2. Submit your purchase request
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        3. Keys will be added after admin confirmation
+                      </p>
+                    </div>
+
+                    <a
+                      href="https://mydoge.com/JonK"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center justify-center gap-2 w-full p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-700 dark:text-amber-400 text-sm font-medium transition-colors hover:bg-amber-500/20"
+                      data-testid="link-doge-payment"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Pay with Dogecoin at mydoge.com/JonK
+                    </a>
+
+                    <Button
+                      className="w-full gap-2"
+                      onClick={() => purchaseMutation.mutate(buyQuantity)}
+                      disabled={purchaseMutation.isPending}
+                      data-testid="button-submit-purchase"
+                    >
+                      {purchaseMutation.isPending ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <Key className="h-4 w-4" />
+                      )}
+                      Submit Purchase Request ({buyQuantity} {buyQuantity === 1 ? "key" : "keys"})
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <AnimatePresence>
         {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
