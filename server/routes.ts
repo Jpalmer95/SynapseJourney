@@ -1026,6 +1026,66 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // ============ IDEA CONTRIBUTIONS & NOVA COINS (Pioneer System) ============
+
+  // Get ideas for a topic (public read)
+  app.get("/api/topics/:topicId/ideas", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId)) return res.status(400).json({ error: "Invalid topic ID" });
+      const ideas = await storage.getIdeaContributionsByTopic(topicId);
+      res.json(ideas);
+    } catch (error) {
+      console.error("Error getting ideas:", error);
+      res.status(500).json({ error: "Failed to get ideas" });
+    }
+  });
+
+  // Submit an idea (awards 1 Nova Coin)
+  app.post("/api/topics/:topicId/ideas", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId)) return res.status(400).json({ error: "Invalid topic ID" });
+
+      const { title, description, unitId } = req.body;
+      if (!title || typeof title !== "string" || title.trim().length < 5) {
+        return res.status(400).json({ error: "Title must be at least 5 characters" });
+      }
+      if (!description || typeof description !== "string" || description.trim().length < 20) {
+        return res.status(400).json({ error: "Description must be at least 20 characters" });
+      }
+
+      const idea = await storage.createIdeaContribution(
+        userId,
+        topicId,
+        unitId ? parseInt(unitId) : null,
+        title.trim(),
+        description.trim()
+      );
+
+      // Award a Nova Coin for the contribution
+      const coins = await storage.awardNovaCoin(userId);
+
+      res.json({ idea, novaCoins: coins, message: "Pioneer badge earned! Your idea has been timestamped and attributed to you." });
+    } catch (error) {
+      console.error("Error submitting idea:", error);
+      res.status(500).json({ error: "Failed to submit idea" });
+    }
+  });
+
+  // Get current user's Nova Coin balance
+  app.get("/api/user/nova-coins", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const coins = await storage.getUserNovaCoins(userId);
+      res.json(coins);
+    } catch (error) {
+      console.error("Error getting nova coins:", error);
+      res.status(500).json({ error: "Failed to get nova coins" });
+    }
+  });
+
   // ============ ADMIN ROUTES ============
 
   // Check if current user is an admin
@@ -2899,45 +2959,79 @@ async function generateBatchLessonContent(
     `${i + 1}. [${u.difficulty.toUpperCase()}] "${u.title}" - ${u.outline || "No description"}`
   ).join("\n");
 
-  const prompt = `You are a Socratic learning tutor. Create comprehensive lesson content for ALL units of the topic "${topic.title}".
+  const prompt = `You are an expert curriculum designer creating a deep, engaging learning journey for "${topic.title}".
 
 Topic Description: ${topic.description}
 
 ${crossTopicContext}
 
-Create content for these ${unitsList.length} units, ensuring a cohesive learning progression:
+Create content for these ${unitsList.length} units, ensuring a cohesive and progressively deeper learning journey:
 ${unitsDescription}
 
-Respond with a JSON object where each key is the unit index (0, 1, 2...) and each value is the lesson content:
+Respond with a JSON object where each key is the unit index (0, 1, 2...) and each value is the lesson content.
+
+CRITICAL: Each unit MUST include "keyTakeaways" (3-5 bullet points) and "externalResources" (2-5 real, specific links). See requirements below.
+
+JSON format:
 {
   "0": {
-    "concept": "Clear explanation (2-3 paragraphs)",
-    "analogy": "Creative real-world analogy",
+    "concept": "Engaging explanation (2-3 paragraphs with a story hook, real-world relevance, and clear 'why this matters')",
+    "keyTakeaways": ["Key point 1", "Key point 2", "Key point 3"],
+    "analogy": "Creative, memorable real-world analogy that makes the concept click",
     "example": {
       "title": "Example title",
-      "content": "Detailed worked example",
-      "code": "Optional code snippet"
+      "content": "Detailed worked example with concrete details",
+      "code": "Optional code snippet if relevant"
     },
     "quiz": [
       {
         "question": "Question text",
         "options": ["A", "B", "C", "D"],
         "correctIndex": 0,
-        "explanation": "Why correct"
+        "explanation": "Why this answer is correct and why others are not"
       }
     ],
-    "crossLinks": []
+    "crossLinks": [],
+    "externalResources": [
+      {
+        "title": "Resource title",
+        "url": "https://actual-url.com",
+        "type": "video|course|paper|book|forum|tool",
+        "description": "What this resource offers and why it's worth exploring"
+      }
+    ]
   },
   "1": { ... },
   ...
 }
 
-CRITICAL Guidelines by difficulty:
-- BEGINNER: Simple language, no jargon, everyday analogies, focus on 'what', basic comprehension quizzes
-- INTERMEDIATE: Explain mechanisms, practical applications, connect concepts, application-based quizzes
-- ADVANCED: Edge cases, nuances, current research/debates, challenge assumptions, analytical quizzes
+TIER-SPECIFIC REQUIREMENTS:
 
-Each unit should have 3 quiz questions. Build each level on the previous - concepts in intermediate should reference beginner concepts, and advanced should build on both.`;
+BEGINNER units MUST:
+- Open with a captivating real-world story or surprising fact that hooks curiosity
+- Use zero jargon - explain everything with everyday language and analogies
+- Focus on "what is it?" and "why does this matter to my life?"
+- Show the human story behind the discovery or invention
+- externalResources: 2-3 beginner-friendly resources (Khan Academy, Crash Course YouTube, TED Talks, introductory books)
+- Quiz questions test basic recall and "why does this matter?"
+
+INTERMEDIATE units MUST:
+- Explain the mechanisms: "how does it actually work under the hood?"
+- Include mathematical, technical, or conceptual frameworks where appropriate
+- Use real case studies and practical worked examples
+- Connect to adjacent concepts and build a mental model
+- externalResources: 3-4 free online courses or textbooks (MIT OpenCourseWare at ocw.mit.edu, Stanford Online at online.stanford.edu, Coursera free audits, specific open textbook chapters, arXiv survey papers)
+- Quiz questions test application and mechanism understanding
+
+ADVANCED units MUST:
+- Describe the current state of the field: what do experts know now, what is still debated?
+- Reference specific landmark papers, recent breakthroughs, or key researchers by name
+- Cover edge cases, failure modes, and nuances practitioners must know
+- Discuss active debates or competing paradigms in the field
+- externalResources: 3-5 research-grade resources (specific arXiv papers with links, journal articles, conference proceedings like NeurIPS/CVPR/Nature/Science, expert lecture series, professional community resources)
+- Quiz questions are analytical and require synthesis of multiple concepts
+
+Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanced should feel like a genuine progression in depth. The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
 
   try {
     console.log(`[BatchContent] Generating batch content for ${unitsList.length} units of topic "${topic.title}"`);
@@ -2976,30 +3070,88 @@ async function generateLessonContent(
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
     : "";
 
-  const prompt = `You are a Socratic learning tutor. Create engaging lesson content for:
+  const difficultyGuidelines = unit.difficulty === "beginner"
+    ? `BEGINNER TIER REQUIREMENTS:
+- Open with a captivating real-world story, surprising fact, or historical moment that immediately hooks curiosity
+- Use zero jargon — if a technical word is unavoidable, define it immediately with a simple everyday equivalent
+- Focus on "what is it?" and "why does this matter to my life right now?"
+- Show the human story: who discovered or built this, what problem were they solving, what changed in the world as a result?
+- The concept should feel like reading an engaging magazine article, not a textbook
+- Quiz questions test basic recognition, "why does this matter?", and connecting to everyday experience
+- externalResources: 2-3 highly accessible resources that a complete beginner would love:
+  * Khan Academy videos/articles (khanacademy.org)
+  * CrashCourse YouTube videos (youtube.com/@crashcourse)
+  * TED or TEDx Talks (ted.com)
+  * Popular science books or articles
+  * Introductory Wikipedia pages for jumping off`
+    : unit.difficulty === "intermediate"
+    ? `INTERMEDIATE TIER REQUIREMENTS:
+- Now explain HOW it works, not just what it is — dive into the underlying mechanisms and frameworks
+- Include mathematical intuition or technical frameworks where appropriate, explained step-by-step
+- Use at least one detailed real-world case study or practical worked example from industry or research
+- Build a mental model: connect this to adjacent concepts and show how it fits into a bigger picture
+- The concept should feel like a solid college lecture — rigorous but still accessible
+- Quiz questions test mechanism understanding and ability to apply concepts to new scenarios
+- externalResources: 3-4 free courses or textbooks that provide substantial depth:
+  * MIT OpenCourseWare (ocw.mit.edu) — cite specific course pages
+  * Stanford Online (online.stanford.edu) or Stanford Engineering Everywhere
+  * Coursera free audit courses from top universities
+  * Specific open textbook chapters (OpenStax, LibreTexts, etc.)
+  * arXiv survey papers (arxiv.org) that provide comprehensive overviews
+  * YouTube lecture series from university professors`
+    : unit.difficulty === "advanced"
+    ? `ADVANCED TIER REQUIREMENTS:
+- Describe the CURRENT STATE OF THE ART: what do leading researchers know right now, what is still actively debated?
+- Reference specific landmark papers or breakthroughs (mention authors, publication years, and venues like Nature/Science/NeurIPS/CVPR)
+- Cover edge cases, failure modes, limitations, and nuances that practitioners MUST know to avoid mistakes
+- Discuss competing paradigms or schools of thought within the field
+- Include at least one recent development from 2022-2025 that changed or challenged prior understanding
+- The concept should feel like reading a graduate-level review or expert practitioner's guide
+- Quiz questions are analytical: require synthesizing multiple concepts, critiquing approaches, or reasoning about tradeoffs
+- externalResources: 3-5 research-grade resources:
+  * Specific arXiv papers with direct links (e.g., https://arxiv.org/abs/XXXX.XXXXX)
+  * Nature, Science, or top-tier journal articles
+  * Conference proceedings pages (neurips.cc, cvpr papers, etc.)
+  * Expert lecture series (e.g., Lex Fridman podcast episodes with relevant researchers)
+  * Professional/academic community resources and forums`
+    : `NEXT GEN TIER REQUIREMENTS:
+- This is a frontier exploration — present the field as an active, unfinished adventure
+- Focus on what is NOT yet known and why it matters
+- Reference real, active research questions being pursued by labs right now
+- Quiz questions should be open-ended thought exercises that don't have single correct answers
+- externalResources: 3-4 research frontier resources:
+  * Active arXiv categories or recent preprints
+  * Open source research community forums
+  * Relevant Discord servers or academic Slack communities
+  * Preprint servers and working papers`;
+
+  const prompt = `You are an expert curriculum designer creating a deep, engaging lesson for:
 
 Topic: ${topic.title}
 Unit: ${unit.title}
-Difficulty Level: ${unit.difficulty}
+Difficulty Level: ${unit.difficulty.toUpperCase()}
 Unit Description: ${unit.outline || ""}
 
 ${crossTopicContext}
 
-Create comprehensive lesson content in this JSON format:
+${difficultyGuidelines}
+
+Create the lesson content in this JSON format:
 {
-  "concept": "Clear explanation of the main concept (2-3 paragraphs, engaging and accessible)",
-  "analogy": "A creative real-world analogy that makes the concept intuitive",
+  "concept": "Engaging, in-depth explanation (2-3 substantial paragraphs appropriate for this difficulty tier)",
+  "keyTakeaways": ["Key insight 1", "Key insight 2", "Key insight 3", "Key insight 4"],
+  "analogy": "A creative, memorable real-world analogy that makes this concept click",
   "example": {
     "title": "Example title",
-    "content": "Detailed worked example with step-by-step explanation",
-    "code": "Optional: code snippet if relevant to the topic"
+    "content": "Detailed worked example appropriate to the difficulty level",
+    "code": "Optional code snippet if relevant"
   },
   "quiz": [
     {
       "question": "Question text",
       "options": ["Option A", "Option B", "Option C", "Option D"],
       "correctIndex": 0,
-      "explanation": "Why this answer is correct and others are not"
+      "explanation": "Thorough explanation of why this is correct and why the others are not"
     }
   ],
   "crossLinks": [
@@ -3008,20 +3160,20 @@ Create comprehensive lesson content in this JSON format:
       "topicTitle": "Related Topic",
       "connection": "How this concept connects to the related topic"
     }
+  ],
+  "externalResources": [
+    {
+      "title": "Specific resource title",
+      "url": "https://real-working-url.com/specific-path",
+      "type": "video|course|paper|book|forum|tool",
+      "description": "What this resource covers and why it's the best next step for this difficulty level"
+    }
   ]
 }
 
-Guidelines for ${unit.difficulty} level:
-${unit.difficulty === "beginner" 
-  ? "- Use simple language, no jargon\n- Rely on everyday analogies\n- Focus on 'what' rather than 'how'\n- Create basic comprehension quiz questions"
-  : unit.difficulty === "intermediate"
-  ? "- Explain mechanisms and relationships\n- Include practical applications\n- Connect to related concepts\n- Create application-based quiz questions"
-  : unit.difficulty === "advanced"
-  ? "- Explore edge cases and nuances\n- Reference current research or debates\n- Challenge assumptions\n- Create analytical quiz questions"
-  : "- This is NEXT GEN content - focus on frontier research and creative challenges\n- Present open-ended thought exercises instead of traditional quizzes\n- Encourage creative synthesis of ideas\n- Reference active research questions in the field"}
-
-Include 3 quiz questions.
-${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}`;
+Include exactly 3 quiz questions appropriate for the difficulty level.
+${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}
+The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc). Do not invent URLs.`;
 
   try {
     const content = await generateCourseContent(
@@ -3078,59 +3230,76 @@ async function generateNextGenContent(
     ? `The learner has mastered these topics and can draw connections: ${masteredTopics.map(t => t.topicTitle).join(", ")}.`
     : "";
 
-  const prompt = `You are a research mentor helping advanced learners engage with cutting-edge questions in "${topic.title}".
+  const prompt = `You are a research mentor and frontier scientist helping advanced learners engage with the bleeding edge of "${topic.title}".
 
 Unit: ${unit.title}
 Unit Focus: ${unit.outline || "Frontier exploration and creative thinking"}
 
 ${crossTopicContext}
 
-Create content that sparks curiosity and encourages creative thinking about active research and industry challenges.
+This is a NEXT GEN unit — the final frontier of learning. The learner has already mastered beginner, intermediate, and advanced content. Now they step into the unknown alongside working researchers. Write as if briefing a smart, curious person at the start of a PhD program.
 
-Respond with JSON in this format:
+Respond with JSON in this EXACT format:
 {
-  "researchContext": "2-3 paragraphs explaining the current state of research/industry in this area, what we know, and what remains unknown or debated",
+  "researchContext": "3 rich paragraphs: (1) Current state of the field — what we know confidently and what the frontier looks like right now as of 2024-2025. (2) The journey here — what key breakthroughs got us to this point and who made them. (3) The horizon — what is the field reaching for and why is it hard?",
+  "openRoadblocks": [
+    {
+      "title": "Specific unsolved problem or bottleneck",
+      "description": "Detailed explanation of what this challenge actually is and why current approaches fail",
+      "whyItMatters": "What becomes possible if this roadblock is solved — what does it unlock for humanity?"
+    }
+  ],
   "industryChallenge": {
-    "title": "A specific challenge or problem being actively worked on",
-    "description": "Detailed explanation of why this is challenging",
-    "currentApproaches": ["Approach 1 being tried", "Approach 2", "Approach 3"],
-    "openQuestions": ["Unanswered question 1", "Question 2", "Question 3"]
+    "title": "A specific real challenge actively being worked on in industry or academia RIGHT NOW",
+    "description": "Detailed explanation of why this is hard — technical and conceptual obstacles",
+    "currentApproaches": ["Specific approach being tried by specific labs or companies", "Another real approach", "A third methodology"],
+    "openQuestions": ["A specific unanswered question that active researchers are pursuing", "Another genuine open question", "A fundamental question that may require new frameworks to answer"]
   },
   "thoughtExercises": [
     {
-      "prompt": "An open-ended question that encourages creative thinking",
-      "hints": ["Hint to get started", "Another angle to consider"],
-      "explorationPaths": ["One direction to explore", "Another possibility"]
+      "prompt": "An open-ended thought experiment or design challenge that has no known right answer",
+      "hints": ["A specific hint that points toward a productive angle", "A counterintuitive consideration"],
+      "explorationPaths": ["A concrete direction to explore further", "A cross-disciplinary connection worth investigating"]
     }
   ],
   "emergingTrends": [
     {
-      "trend": "A significant emerging trend in this field",
-      "implications": "What this could mean for the future",
-      "potentialBreakthroughs": "Possible breakthrough outcomes"
+      "trend": "A specific emerging development in this field from 2023-2025",
+      "implications": "What this trend changes about how we think about the field",
+      "potentialBreakthroughs": "What breakthrough this trend could lead to in 5-10 years"
     }
   ],
   "creativeSynthesis": {
-    "challenge": "A creative challenge that asks learners to combine concepts in novel ways",
-    "relatedConcepts": ["Concept from this topic", "Related idea"],
-    "suggestedConnections": ["Cross-domain connection to explore", "Unexpected application area"]
+    "challenge": "A creative challenge that asks learners to combine this topic with unexpected domains to propose a novel approach or application",
+    "relatedConcepts": ["Concept from this topic", "Unexpected domain or field that might connect"],
+    "suggestedConnections": ["A specific cross-domain insight worth exploring", "An analogy from a completely different field that might yield new ideas"]
   },
+  "communityForums": [
+    {
+      "name": "Community or forum name",
+      "url": "https://real-url.com",
+      "description": "What kind of discussion and who participates"
+    }
+  ],
   "resources": [
     {
-      "title": "Resource title",
-      "type": "paper/blog/tool/community",
-      "description": "Brief description of the resource"
+      "title": "Specific resource title",
+      "url": "https://real-arxiv-or-journal-url.com",
+      "type": "paper|preprint|community|tool|lecture|forum",
+      "description": "What this resource contains and why it is essential for anyone serious about this frontier"
     }
   ]
 }
 
-Guidelines:
-- Focus on REAL current research questions and industry challenges
-- Include 2-3 thought exercises that encourage original thinking
-- Include 2-3 emerging trends relevant to this topic
-- The creative synthesis should encourage cross-pollination of ideas
-- Make resources diverse: academic papers, industry blogs, tools, and communities
-- This is about exploration and creativity, not right/wrong answers`;
+Requirements:
+- openRoadblocks: Include 2-3 REAL specific unsolved problems (not vague, e.g. "the alignment problem in large language models" not just "AI safety")
+- thoughtExercises: Include 2-3 open-ended challenges that genuinely have no known answers yet
+- emergingTrends: Include 2-3 specific trends from 2023-2025, named and concrete
+- communityForums: Include 2-3 REAL communities (e.g., arXiv cs.LG, LessWrong, r/MachineLearning, relevant Discord servers, academic mailing lists)
+- resources: Include 3-5 REAL resources with working URLs — arXiv preprints, Nature/Science papers, conference papers, expert YouTube lectures
+- This is about the thrill of the unknown — write with the excitement of someone at the frontier, not the detachment of a textbook
+- End with an implicit invitation: "This is where YOU could contribute something new"`;
+
 
   try {
     const content = await generateCourseContent(

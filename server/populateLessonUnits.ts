@@ -1,18 +1,18 @@
 import { storage } from "./storage";
 
 const DEFAULT_UNITS = [
-  { difficulty: "beginner", unitIndex: 0, title: "Introduction & Basics", outline: "Get started with the fundamentals" },
-  { difficulty: "beginner", unitIndex: 1, title: "Core Vocabulary", outline: "Learn the essential terms and concepts" },
-  { difficulty: "beginner", unitIndex: 2, title: "Simple Examples", outline: "See the concepts in action with easy examples" },
-  { difficulty: "intermediate", unitIndex: 0, title: "Deeper Mechanisms", outline: "Understand how things work under the hood" },
-  { difficulty: "intermediate", unitIndex: 1, title: "Practical Applications", outline: "Apply your knowledge to real scenarios" },
-  { difficulty: "intermediate", unitIndex: 2, title: "Common Patterns", outline: "Recognize recurring themes and approaches" },
-  { difficulty: "advanced", unitIndex: 0, title: "Edge Cases", outline: "Explore unusual situations and exceptions" },
-  { difficulty: "advanced", unitIndex: 1, title: "Current Research", outline: "Discover what experts are working on today" },
-  { difficulty: "advanced", unitIndex: 2, title: "Expert Applications", outline: "See how professionals use these concepts" },
-  { difficulty: "nextgen", unitIndex: 0, title: "Open Research Questions", outline: "Explore unsolved problems and cutting-edge questions" },
-  { difficulty: "nextgen", unitIndex: 1, title: "Industry Frontiers", outline: "Discover active challenges and emerging opportunities" },
-  { difficulty: "nextgen", unitIndex: 2, title: "Creative Synthesis", outline: "Combine ideas from different domains for breakthrough insights" },
+  { difficulty: "beginner", unitIndex: 0, title: "The Big Picture: Why This Matters", outline: "Start with a captivating story and real-world relevance — discover why this topic changes everything" },
+  { difficulty: "beginner", unitIndex: 1, title: "Core Concepts Made Simple", outline: "Learn the essential ideas in plain language with memorable analogies and examples" },
+  { difficulty: "beginner", unitIndex: 2, title: "Seeing It In Action", outline: "Explore real-world examples and how this shows up in daily life" },
+  { difficulty: "intermediate", unitIndex: 0, title: "How It Actually Works", outline: "Dive into the mechanisms, frameworks, and underlying principles" },
+  { difficulty: "intermediate", unitIndex: 1, title: "Technical Deep Dive", outline: "Build a rigorous mental model with mathematical intuition and formal frameworks" },
+  { difficulty: "intermediate", unitIndex: 2, title: "Case Studies & Applications", outline: "Examine real case studies from industry and research — how experts apply this knowledge" },
+  { difficulty: "advanced", unitIndex: 0, title: "State of the Art", outline: "Explore the current research frontier — what experts know, what is debated, and recent breakthroughs" },
+  { difficulty: "advanced", unitIndex: 1, title: "Cutting-Edge Methods & Trade-offs", outline: "Study the most sophisticated techniques, their limitations, and the trade-offs practitioners navigate" },
+  { difficulty: "advanced", unitIndex: 2, title: "Open Problems & Expert Debates", outline: "Engage with the active controversies, unsolved problems, and competing paradigms in the field today" },
+  { difficulty: "nextgen", unitIndex: 0, title: "The Frontier: What We Don't Yet Know", outline: "Explore the genuine unknowns — the open roadblocks that the brightest minds are still working to solve" },
+  { difficulty: "nextgen", unitIndex: 1, title: "Where Research Is Heading", outline: "Discover emerging trends, paradigm shifts, and the theoretical directions that could reshape the field" },
+  { difficulty: "nextgen", unitIndex: 2, title: "Your Turn: Contribute an Idea", outline: "Synthesize what you know across domains and propose an original theoretical direction or novel idea" },
 ];
 
 export async function populateMissingLessonUnits(): Promise<void> {
@@ -34,7 +34,7 @@ export async function populateMissingLessonUnits(): Promise<void> {
             difficulty: unit.difficulty,
             unitIndex: unit.unitIndex,
             title: unit.title,
-            outline: `${unit.outline} - ${topic.title}`,
+            outline: `${unit.outline} — ${topic.title}`,
           });
         }
         
@@ -61,17 +61,13 @@ export async function regeneratePlaceholderContent(): Promise<void> {
   console.log("Checking for placeholder content in lesson units...");
   
   try {
-    // Get all lesson units with content
     const allUnits = await storage.getAllLessonUnitsWithContent();
     let regeneratedCount = 0;
     
     for (const unit of allUnits) {
-      // Check if contentJson has placeholder marker
       const contentJson = unit.contentJson as Record<string, unknown> | null;
       if (contentJson && contentJson._isPlaceholder === true) {
         console.log(`Found placeholder content in unit ${unit.id}: "${unit.title}"`);
-        
-        // Clear the placeholder content so it will be regenerated on next access
         await storage.clearLessonUnitContent(unit.id);
         regeneratedCount++;
       }

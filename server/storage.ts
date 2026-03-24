@@ -7,6 +7,7 @@ import {
   userInfographics, user3DRewards, customFeeds,
   practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
   unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
+  ideaContributions, novaCoins,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -47,6 +48,9 @@ import {
   type KeyEarnHistory,
   type KeyPurchaseRequest,
   type InsertKeyPurchaseRequest,
+  type IdeaContribution,
+  type InsertIdeaContribution,
+  type NovaCoin,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -254,6 +258,15 @@ export interface IStorage {
   getPendingPurchaseRequests(): Promise<(KeyPurchaseRequest & { username?: string })[]>;
   getUserPurchaseRequests(userId: string): Promise<KeyPurchaseRequest[]>;
   resolveKeyPurchaseRequest(requestId: number, approved: boolean, adminNote?: string): Promise<KeyPurchaseRequest>;
+
+  // Idea Contributions (Pioneer system)
+  createIdeaContribution(userId: string, topicId: number, unitId: number | null, title: string, description: string): Promise<IdeaContribution>;
+  getIdeaContributionsByTopic(topicId: number): Promise<(IdeaContribution & { username?: string })[]>;
+  getUserIdeaContributions(userId: string): Promise<IdeaContribution[]>;
+
+  // Nova Coins
+  getUserNovaCoins(userId: string): Promise<NovaCoin>;
+  awardNovaCoin(userId: string): Promise<NovaCoin>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1717,6 +1730,63 @@ export class DatabaseStorage implements IStorage {
     }
 
     return updated;
+  }
+
+  // Idea Contributions (Pioneer system)
+  async createIdeaContribution(userId: string, topicId: number, unitId: number | null, title: string, description: string): Promise<IdeaContribution> {
+    const [created] = await db.insert(ideaContributions).values({
+      userId,
+      topicId,
+      unitId: unitId || null,
+      title,
+      description,
+    }).returning();
+    return created;
+  }
+
+  async getIdeaContributionsByTopic(topicId: number): Promise<(IdeaContribution & { username?: string })[]> {
+    const results = await db
+      .select({
+        idea: ideaContributions,
+        firstName: users.firstName,
+        lastName: users.lastName,
+      })
+      .from(ideaContributions)
+      .leftJoin(users, eq(ideaContributions.userId, users.id))
+      .where(eq(ideaContributions.topicId, topicId))
+      .orderBy(desc(ideaContributions.submittedAt));
+
+    return results.map(r => ({
+      ...r.idea,
+      username: [r.firstName, r.lastName].filter(Boolean).join(' ') || 'Anonymous Pioneer',
+    }));
+  }
+
+  async getUserIdeaContributions(userId: string): Promise<IdeaContribution[]> {
+    return db.select().from(ideaContributions)
+      .where(eq(ideaContributions.userId, userId))
+      .orderBy(desc(ideaContributions.submittedAt));
+  }
+
+  // Nova Coins
+  async getUserNovaCoins(userId: string): Promise<NovaCoin> {
+    const [existing] = await db.select().from(novaCoins).where(eq(novaCoins.userId, userId));
+    if (existing) return existing;
+
+    const [created] = await db.insert(novaCoins).values({ userId, totalCoins: 0 }).returning();
+    return created;
+  }
+
+  async awardNovaCoin(userId: string): Promise<NovaCoin> {
+    const existing = await this.getUserNovaCoins(userId);
+    const [updated] = await db.update(novaCoins)
+      .set({
+        totalCoins: sql`${novaCoins.totalCoins} + 1`,
+        updatedAt: sql`CURRENT_TIMESTAMP`,
+      })
+      .where(eq(novaCoins.userId, userId))
+      .returning();
+    return updated || existing;
   }
 }
 

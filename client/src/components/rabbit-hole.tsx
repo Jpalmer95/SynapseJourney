@@ -32,7 +32,21 @@ import {
   Copy,
   Coffee,
   Wallet,
+  Star,
+  Send,
+  Users,
+  ChevronDown,
+  ChevronUp,
+  Video,
+  GraduationCap,
+  FileText,
+  Globe,
+  Wrench,
+  AlertTriangle,
+  Coins,
 } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -205,6 +219,11 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [quizAnswers, setQuizAnswers] = useState<Record<number, number>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [xpEarned, setXpEarned] = useState(0);
+  const [showResources, setShowResources] = useState(false);
+  const [ideaTitle, setIdeaTitle] = useState("");
+  const [ideaDescription, setIdeaDescription] = useState("");
+  const [showIdeaForm, setShowIdeaForm] = useState(false);
+  const [justSubmittedIdea, setJustSubmittedIdea] = useState(false);
   const { toast } = useToast();
 
   // Fetch saved cards to check if this topic's card is saved
@@ -308,6 +327,54 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     },
     onError: (err: any) => {
       toast({ title: "Purchase Failed", description: err.message || "Could not submit purchase", variant: "destructive" });
+    },
+  });
+
+  // Fetch ideas for this topic (used in NextGen Idea Board)
+  const { data: topicIdeas = [] } = useQuery<{
+    id: number;
+    userId: string;
+    title: string;
+    description: string;
+    submittedAt: string;
+  }[]>({
+    queryKey: ["/api/topics", topic.id, "ideas"],
+  });
+
+  // Fetch user's Nova Coins balance
+  const { data: novaCoinsData } = useQuery<{
+    id: number;
+    userId: string;
+    totalCoins: number;
+    updatedAt: string;
+  } | null>({
+    queryKey: ["/api/user/nova-coins"],
+  });
+
+  // Submit idea mutation
+  const submitIdeaMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", `/api/topics/${topic.id}/ideas`, {
+        title: ideaTitle,
+        description: ideaDescription,
+        unitId: selectedUnit?.id,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      toast({
+        title: "Pioneer Idea Submitted!",
+        description: `You earned 1 Nova Coin! Your idea has been timestamped and attributed to you.`,
+      });
+      setIdeaTitle("");
+      setIdeaDescription("");
+      setShowIdeaForm(false);
+      setJustSubmittedIdea(true);
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "ideas"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/nova-coins"] });
+    },
+    onError: (err: any) => {
+      toast({ title: "Submission Failed", description: err.message || "Could not submit idea", variant: "destructive" });
     },
   });
 
@@ -733,20 +800,55 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </section>
                 )}
 
-                {/* Resources */}
+                {/* Open Roadblocks */}
+                {(nextGenContent as any).openRoadblocks && (nextGenContent as any).openRoadblocks.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <AlertTriangle className="h-5 w-5 text-red-500" />
+                      <h2 className="text-xl font-semibold">Open Roadblocks</h2>
+                      <Badge variant="destructive" className="text-xs">Unsolved</Badge>
+                    </div>
+                    <div className="space-y-4">
+                      {(nextGenContent as any).openRoadblocks.map((roadblock: any, i: number) => (
+                        <Card key={i} className="border-red-500/20 bg-red-500/5 overflow-hidden" data-testid={`card-roadblock-${i}`}>
+                          <CardContent className="p-4 sm:p-6 space-y-3">
+                            <h3 className="font-semibold break-words [overflow-wrap:anywhere] text-red-700 dark:text-red-400">{roadblock.title}</h3>
+                            <p className="text-muted-foreground text-sm break-words [overflow-wrap:anywhere]">{roadblock.description}</p>
+                            {roadblock.whyItMatters && (
+                              <div className="bg-red-500/10 rounded-md p-3">
+                                <p className="text-xs font-medium text-red-600 dark:text-red-400 mb-1">Why solving this matters:</p>
+                                <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{roadblock.whyItMatters}</p>
+                              </div>
+                            )}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Resources (with links) */}
                 {nextGenContent.resources && nextGenContent.resources.length > 0 && (
                   <section>
                     <div className="flex items-center gap-2 mb-4">
-                      <ExternalLink className="h-5 w-5 text-muted-foreground" />
-                      <h2 className="text-xl font-semibold">Further Resources</h2>
+                      <ExternalLink className="h-5 w-5 text-emerald-500" />
+                      <h2 className="text-xl font-semibold">Research Resources</h2>
                     </div>
                     <div className="space-y-2">
                       {nextGenContent.resources.map((resource: any, i: number) => (
-                        <Card key={i}>
+                        <Card key={i} className="hover:border-emerald-500/50 transition-colors" data-testid={`card-nextgen-resource-${i}`}>
                           <CardContent className="p-4 flex items-start gap-3">
                             <Badge variant="outline" className="text-xs shrink-0">{resource.type}</Badge>
                             <div className="min-w-0 flex-1">
-                              <p className="font-medium break-words [overflow-wrap:anywhere]">{resource.title}</p>
+                              {resource.url ? (
+                                <a href={resource.url} target="_blank" rel="noopener noreferrer"
+                                  className="font-medium break-words [overflow-wrap:anywhere] hover:text-emerald-600 dark:hover:text-emerald-400 transition-colors flex items-center gap-1">
+                                  {resource.title}
+                                  <ExternalLink className="h-3 w-3 shrink-0" />
+                                </a>
+                              ) : (
+                                <p className="font-medium break-words [overflow-wrap:anywhere]">{resource.title}</p>
+                              )}
                               <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{resource.description}</p>
                             </div>
                           </CardContent>
@@ -755,6 +857,145 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     </div>
                   </section>
                 )}
+
+                {/* Community Forums */}
+                {(nextGenContent as any).communityForums && (nextGenContent as any).communityForums.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Users className="h-5 w-5 text-blue-500" />
+                      <h2 className="text-xl font-semibold">Community & Discussions</h2>
+                    </div>
+                    <div className="space-y-2">
+                      {(nextGenContent as any).communityForums.map((forum: any, i: number) => (
+                        <Card key={i} className="border-blue-500/20 bg-blue-500/5 hover:border-blue-500/50 transition-colors" data-testid={`card-forum-${i}`}>
+                          <CardContent className="p-4 flex items-start gap-3">
+                            <Users className="h-4 w-4 text-blue-500 shrink-0 mt-0.5" />
+                            <div className="min-w-0 flex-1">
+                              {forum.url ? (
+                                <a href={forum.url} target="_blank" rel="noopener noreferrer"
+                                  className="font-medium break-words [overflow-wrap:anywhere] hover:text-blue-600 dark:hover:text-blue-400 transition-colors flex items-center gap-1">
+                                  {forum.name}
+                                  <ExternalLink className="h-3 w-3 shrink-0" />
+                                </a>
+                              ) : (
+                                <p className="font-medium break-words [overflow-wrap:anywhere]">{forum.name}</p>
+                              )}
+                              <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{forum.description}</p>
+                            </div>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Pioneer Idea Board */}
+                <section className="min-w-0 w-full" data-testid="section-idea-board">
+                  <div className="flex items-center gap-2 mb-4">
+                    <Star className="h-5 w-5 text-amber-500 shrink-0" />
+                    <h2 className="text-xl font-semibold">Pioneer Idea Board</h2>
+                    <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-400 text-xs border-amber-500/30">Nova Coins</Badge>
+                  </div>
+
+                  {/* Nova Coin Balance */}
+                  {novaCoinsData !== undefined && (
+                    <div className="flex items-center gap-2 mb-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                      <Coins className="h-4 w-4 text-amber-500 shrink-0" />
+                      <span className="text-sm font-medium">Your Nova Coins: <span className="text-amber-600 dark:text-amber-400 font-bold">{novaCoinsData?.totalCoins ?? 0}</span></span>
+                      <span className="text-xs text-muted-foreground ml-auto">(valueless — for attribution only)</span>
+                    </div>
+                  )}
+
+                  <p className="text-sm text-muted-foreground mb-4 leading-relaxed">
+                    Submit an original research idea or theoretical direction. Each submission is timestamped and permanently attributed to you. You earn 1 Nova Coin per idea — they have no monetary value, but represent your Pioneer status in this community of knowledge builders.
+                  </p>
+
+                  {/* Submitted Ideas */}
+                  {topicIdeas.length > 0 && (
+                    <div className="space-y-3 mb-4">
+                      <p className="text-sm font-medium text-muted-foreground">{topicIdeas.length} community idea{topicIdeas.length !== 1 ? "s" : ""} submitted for this topic:</p>
+                      {topicIdeas.map((idea, i) => (
+                        <Card key={idea.id} className="border-amber-500/20 bg-amber-500/5" data-testid={`card-idea-${idea.id}`}>
+                          <CardContent className="p-4 space-y-1">
+                            <div className="flex items-start justify-between gap-2">
+                              <p className="font-medium text-sm break-words [overflow-wrap:anywhere]">{idea.title}</p>
+                              <Badge variant="outline" className="text-xs shrink-0">Pioneer</Badge>
+                            </div>
+                            <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{idea.description}</p>
+                            <p className="text-xs text-muted-foreground">{new Date(idea.submittedAt).toLocaleDateString()}</p>
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Submit Idea Form */}
+                  {justSubmittedIdea ? (
+                    <Card className="border-amber-500/30 bg-gradient-to-br from-amber-500/10 to-yellow-500/10">
+                      <CardContent className="p-6 text-center space-y-2">
+                        <Sparkles className="h-8 w-8 text-amber-500 mx-auto" />
+                        <p className="font-semibold text-amber-700 dark:text-amber-400">Pioneer Attribution Recorded!</p>
+                        <p className="text-sm text-muted-foreground">Your idea has been timestamped and attributed to you. You earned 1 Nova Coin.</p>
+                        <Button variant="outline" size="sm" onClick={() => setJustSubmittedIdea(false)} data-testid="button-submit-another">
+                          Submit Another Idea
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  ) : showIdeaForm ? (
+                    <Card className="border-amber-500/20">
+                      <CardContent className="p-4 sm:p-6 space-y-4">
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Idea Title</label>
+                          <Input
+                            placeholder="A concise title for your research idea..."
+                            value={ideaTitle}
+                            onChange={(e) => setIdeaTitle(e.target.value)}
+                            data-testid="input-idea-title"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <label className="text-sm font-medium">Description</label>
+                          <Textarea
+                            placeholder="Describe your original idea, theoretical direction, or novel research approach in detail..."
+                            value={ideaDescription}
+                            onChange={(e) => setIdeaDescription(e.target.value)}
+                            rows={5}
+                            data-testid="textarea-idea-description"
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => submitIdeaMutation.mutate()}
+                            disabled={submitIdeaMutation.isPending || ideaTitle.trim().length < 5 || ideaDescription.trim().length < 20}
+                            className="flex-1 bg-amber-600 hover:bg-amber-700 text-white"
+                            data-testid="button-submit-idea"
+                          >
+                            {submitIdeaMutation.isPending ? (
+                              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                            ) : (
+                              <Send className="h-4 w-4 mr-2" />
+                            )}
+                            Submit & Claim Attribution
+                          </Button>
+                          <Button variant="outline" onClick={() => setShowIdeaForm(false)} data-testid="button-cancel-idea">
+                            Cancel
+                          </Button>
+                        </div>
+                        <p className="text-xs text-muted-foreground text-center">Nova Coins are valueless — they exist only to record your Pioneer attribution.</p>
+                      </CardContent>
+                    </Card>
+                  ) : (
+                    <Button
+                      className="w-full border-amber-500/30 bg-amber-500/10 hover:bg-amber-500/20 text-amber-700 dark:text-amber-400"
+                      variant="outline"
+                      onClick={() => setShowIdeaForm(true)}
+                      data-testid="button-show-idea-form"
+                    >
+                      <Star className="h-4 w-4 mr-2" />
+                      Submit a Pioneer Idea (+1 Nova Coin)
+                    </Button>
+                  )}
+                </section>
 
                 {/* Mark Complete Button for Next Gen */}
                 <div className="flex justify-center pt-4">
@@ -797,6 +1038,28 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     size="default"
                   />
                 </div>
+
+                {/* Key Takeaways Section */}
+                {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (
+                  <section className="min-w-0 w-full" data-testid="section-key-takeaways">
+                    <div className="flex items-center gap-2 mb-3">
+                      <Star className="h-5 w-5 text-amber-500 shrink-0" />
+                      <h2 className="text-xl font-semibold">Key Takeaways</h2>
+                    </div>
+                    <Card className="border-amber-500/20 bg-amber-500/5 overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-5 overflow-hidden">
+                        <ul className="space-y-2">
+                          {lessonContent.keyTakeaways.map((takeaway: string, i: number) => (
+                            <li key={i} className="flex items-start gap-2 text-sm" data-testid={`text-takeaway-${i}`}>
+                              <Check className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
+                              <span className="text-muted-foreground break-words [overflow-wrap:anywhere]">{takeaway}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </CardContent>
+                    </Card>
+                  </section>
+                )}
 
                 {/* Concept Section */}
                 <section className="min-w-0 w-full">
@@ -933,6 +1196,77 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                         )}
                       </CardContent>
                     </Card>
+                  </section>
+                )}
+
+                {/* Go Deeper: External Resources */}
+                {lessonContent.externalResources && lessonContent.externalResources.length > 0 && (
+                  <section className="min-w-0 w-full" data-testid="section-external-resources">
+                    <button
+                      className="flex items-center gap-2 mb-3 w-full text-left group"
+                      onClick={() => setShowResources(r => !r)}
+                      data-testid="button-toggle-resources"
+                    >
+                      <ExternalLink className="h-5 w-5 text-emerald-500 shrink-0" />
+                      <h2 className="text-xl font-semibold flex-1">Go Deeper</h2>
+                      <Badge variant="secondary" className="text-xs">{lessonContent.externalResources.length} resources</Badge>
+                      {showResources
+                        ? <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                        : <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      }
+                    </button>
+                    <AnimatePresence>
+                      {showResources && (
+                        <motion.div
+                          initial={{ opacity: 0, height: 0 }}
+                          animate={{ opacity: 1, height: "auto" }}
+                          exit={{ opacity: 0, height: 0 }}
+                          transition={{ duration: 0.2 }}
+                          className="overflow-hidden"
+                        >
+                          <div className="space-y-3">
+                            {lessonContent.externalResources.map((resource: any, i: number) => {
+                              const typeIcon = resource.type === "video"
+                                ? <Video className="h-4 w-4 shrink-0 text-red-500" />
+                                : resource.type === "course"
+                                ? <GraduationCap className="h-4 w-4 shrink-0 text-blue-500" />
+                                : resource.type === "paper"
+                                ? <FileText className="h-4 w-4 shrink-0 text-purple-500" />
+                                : resource.type === "forum"
+                                ? <Users className="h-4 w-4 shrink-0 text-orange-500" />
+                                : resource.type === "tool"
+                                ? <Wrench className="h-4 w-4 shrink-0 text-gray-500" />
+                                : <Globe className="h-4 w-4 shrink-0 text-emerald-500" />;
+                              return (
+                                <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 overflow-hidden w-full hover:border-emerald-500/50 transition-colors" data-testid={`card-resource-${i}`}>
+                                  <CardContent className="p-4 overflow-hidden">
+                                    <a
+                                      href={resource.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="flex items-start gap-3 group"
+                                    >
+                                      <div className="mt-0.5">{typeIcon}</div>
+                                      <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 flex-wrap">
+                                          <span className="font-medium text-sm group-hover:text-emerald-600 dark:group-hover:text-emerald-400 transition-colors break-words [overflow-wrap:anywhere]">
+                                            {resource.title}
+                                          </span>
+                                          <ExternalLink className="h-3 w-3 text-muted-foreground shrink-0" />
+                                        </div>
+                                        <p className="text-xs text-muted-foreground mt-1 break-words [overflow-wrap:anywhere]">
+                                          {resource.description}
+                                        </p>
+                                      </div>
+                                    </a>
+                                  </CardContent>
+                                </Card>
+                              );
+                            })}
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </section>
                 )}
 

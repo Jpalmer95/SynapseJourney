@@ -433,6 +433,25 @@ export const testGapRecommendations = pgTable("test_gap_recommendations", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Idea Contributions (Pioneer system for novel research ideas)
+export const ideaContributions = pgTable("idea_contributions", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  unitId: integer("unit_id").references(() => lessonUnits.id),
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  submittedAt: timestamp("submitted_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Nova Coins (valueless credits tracking novel idea contributions)
+export const novaCoins = pgTable("nova_coins", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  totalCoins: integer("total_coins").default(0).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -514,6 +533,8 @@ export const insertPracticeQuestionBankSchema = createInsertSchema(practiceQuest
 export const insertPracticeTestQuestionSchema = createInsertSchema(practiceTestQuestions).omit({ id: true });
 export const insertPracticeTestAttemptSchema = createInsertSchema(practiceTestAttempts).omit({ id: true, startedAt: true, completedAt: true });
 export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecommendations).omit({ id: true, createdAt: true });
+export const insertIdeaContributionSchema = createInsertSchema(ideaContributions).omit({ id: true, submittedAt: true });
+export const insertNovaCoinSchema = createInsertSchema(novaCoins).omit({ id: true, updatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -590,11 +611,16 @@ export type PracticeTestAttempt = typeof practiceTestAttempts.$inferSelect;
 export type InsertPracticeTestAttempt = z.infer<typeof insertPracticeTestAttemptSchema>;
 export type TestGapRecommendation = typeof testGapRecommendations.$inferSelect;
 export type InsertTestGapRecommendation = z.infer<typeof insertTestGapRecommendationSchema>;
+export type IdeaContribution = typeof ideaContributions.$inferSelect;
+export type InsertIdeaContribution = z.infer<typeof insertIdeaContributionSchema>;
+export type NovaCoin = typeof novaCoins.$inferSelect;
+export type InsertNovaCoin = z.infer<typeof insertNovaCoinSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
   concept: string;
   analogy: string;
+  keyTakeaways?: string[];
   example: {
     title: string;
     content: string;
@@ -611,11 +637,22 @@ export interface LessonContent {
     topicTitle: string;
     connection: string;
   }[];
+  externalResources?: {
+    title: string;
+    url: string;
+    type: "course" | "video" | "paper" | "book" | "forum" | "tool";
+    description: string;
+  }[];
 }
 
 // Next Gen content structure for frontier research challenges
 export interface NextGenContent {
   researchContext: string;
+  openRoadblocks?: {
+    title: string;
+    description: string;
+    whyItMatters: string;
+  }[];
   industryChallenge: {
     title: string;
     description: string;
@@ -637,8 +674,14 @@ export interface NextGenContent {
     relatedConcepts: string[];
     suggestedConnections: string[];
   };
+  communityForums?: {
+    name: string;
+    url: string;
+    description: string;
+  }[];
   resources?: {
     title: string;
+    url?: string;
     type: string;
     description: string;
   }[];
