@@ -334,6 +334,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const { data: topicIdeas = [] } = useQuery<{
     id: number;
     userId: string;
+    username?: string;
     title: string;
     description: string;
     submittedAt: string;
@@ -914,15 +915,29 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   {topicIdeas.length > 0 && (
                     <div className="space-y-3 mb-4">
                       <p className="text-sm font-medium text-muted-foreground">{topicIdeas.length} community idea{topicIdeas.length !== 1 ? "s" : ""} submitted for this topic:</p>
-                      {topicIdeas.map((idea, i) => (
+                      {topicIdeas.map((idea) => (
                         <Card key={idea.id} className="border-amber-500/20 bg-amber-500/5" data-testid={`card-idea-${idea.id}`}>
-                          <CardContent className="p-4 space-y-1">
+                          <CardContent className="p-4 space-y-2">
                             <div className="flex items-start justify-between gap-2">
                               <p className="font-medium text-sm break-words [overflow-wrap:anywhere]">{idea.title}</p>
-                              <Badge variant="outline" className="text-xs shrink-0">Pioneer</Badge>
+                              <div className="flex items-center gap-1 shrink-0">
+                                <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30 text-xs">Pioneer</Badge>
+                              </div>
                             </div>
                             <p className="text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">{idea.description}</p>
-                            <p className="text-xs text-muted-foreground">{new Date(idea.submittedAt).toLocaleDateString()}</p>
+                            <div className="flex items-center justify-between text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1">
+                                <span className="font-medium" data-testid={`text-idea-author-${idea.id}`}>
+                                  {idea.username || "Anonymous Pioneer"}
+                                </span>
+                                <span>·</span>
+                                <span>{new Date(idea.submittedAt).toLocaleDateString()}</span>
+                              </span>
+                              <span className="flex items-center gap-1 text-amber-600 dark:text-amber-400">
+                                <Coins className="h-3 w-3" />
+                                <span>+1 Nova Coin</span>
+                              </span>
+                            </div>
                           </CardContent>
                         </Card>
                       ))}

@@ -10,6 +10,8 @@ import {
   Clock,
   TrendingUp,
   LogOut,
+  Coins,
+  Star,
 } from "lucide-react";
 import { AppLayout } from "@/components/app-layout";
 import { Button } from "@/components/ui/button";
@@ -58,6 +60,15 @@ export function ProfilePage() {
 
   const { data: userXp } = useQuery<UserXpData>({
     queryKey: ["/api/user/xp"],
+  });
+
+  const { data: novaCoinsData } = useQuery<{
+    id: number;
+    userId: string;
+    totalCoins: number;
+    updatedAt: string;
+  } | null>({
+    queryKey: ["/api/user/nova-coins"],
   });
 
   const isLoading = authLoading || statsLoading;
@@ -161,6 +172,20 @@ export function ProfilePage() {
                       <p className="text-sm text-muted-foreground">
                         Keep learning to earn XP and level up! Spend time in modules to gain experience.
                       </p>
+                    </div>
+                    {/* Nova Coins */}
+                    <div className="flex flex-col items-center gap-1 px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/20 min-w-[100px]" data-testid="section-nova-coins">
+                      <Coins className="h-6 w-6 text-amber-500" />
+                      <span className="text-2xl font-bold text-amber-600 dark:text-amber-400" data-testid="text-nova-coin-balance">
+                        {novaCoinsData?.totalCoins ?? 0}
+                      </span>
+                      <span className="text-xs text-muted-foreground text-center leading-tight">Nova Coins</span>
+                      {(novaCoinsData?.totalCoins ?? 0) > 0 && (
+                        <Badge className="bg-amber-500/20 text-amber-700 dark:text-amber-400 border-amber-500/30 text-xs mt-1">
+                          <Star className="h-2.5 w-2.5 mr-1" />
+                          Pioneer
+                        </Badge>
+                      )}
                     </div>
                   </div>
                 </CardContent>
