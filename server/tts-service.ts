@@ -66,6 +66,26 @@ export function getWavDurationSeconds(buffer: Buffer): number | null {
   return null;
 }
 
+/**
+ * Get audio duration in seconds for any supported format using music-metadata.
+ * Returns null when format is unrecognised or metadata cannot be parsed.
+ * Falls back to WAV header parser for WAV files (faster, no library needed).
+ */
+export async function getAudioDurationSeconds(buffer: Buffer): Promise<number | null> {
+  // WAV: use fast header parser
+  const wavDuration = getWavDurationSeconds(buffer);
+  if (wavDuration !== null) return wavDuration;
+  // MP3, FLAC, OGG, M4A, etc: use music-metadata
+  try {
+    const mm = await import("music-metadata");
+    const meta = await mm.parseBuffer(buffer);
+    const duration = meta.format.duration;
+    return typeof duration === "number" && isFinite(duration) ? duration : null;
+  } catch {
+    return null;
+  }
+}
+
 export function hashVoiceConfig(preset: string, referenceAudioHash?: string): string {
   const input = `${preset}:${referenceAudioHash || ""}`;
   return createHash("sha256").update(input).digest("hex").slice(0, 16);

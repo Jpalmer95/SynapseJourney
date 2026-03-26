@@ -838,8 +838,9 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 
   app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const VALID_PRESETS = ["browser", "custom", "aria", "nova", "lyra", "echo", "sage", "orion"] as const;
       const schema = z.object({
-        voicePreset: z.string().min(1).optional(),
+        voicePreset: z.enum(VALID_PRESETS).optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
       }).refine(d => d.voicePreset || d.playbackSpeed !== undefined, { message: "At least one setting must be provided" });
       const parsed = schema.safeParse(req.body);
@@ -872,12 +873,12 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(400).json({ error: "Reference audio must be 30 seconds or less (max 2MB). Please trim your recording." });
       }
 
-      const { hashBase64, getWavDurationSeconds } = await import("./tts-service");
+      const { hashBase64, getAudioDurationSeconds } = await import("./tts-service");
 
-      // For WAV files, validate exact duration from header (more accurate than size proxy)
-      const wavDuration = getWavDurationSeconds(audioBuffer);
-      if (wavDuration !== null && wavDuration > 30) {
-        return res.status(400).json({ error: `Reference audio is ${Math.round(wavDuration)}s — must be 30 seconds or less. Please trim your recording.` });
+      // Validate duration for all audio formats (WAV via header, others via music-metadata)
+      const duration = await getAudioDurationSeconds(audioBuffer);
+      if (duration !== null && duration > 30) {
+        return res.status(400).json({ error: `Reference audio is ${Math.round(duration)}s — must be 30 seconds or less. Please trim your recording.` });
       }
       const referenceAudioPath = `ref-${hashBase64(audioBase64)}`;
       await storage.saveTtsSettings(req.user.claims.sub, "custom", audioBase64);
@@ -891,11 +892,12 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) => {
     try {
       // Accept either a unitId (lesson-based) or free-form text + voiceConfig
+      const VALID_PRESETS = ["browser", "custom", "aria", "nova", "lyra", "echo", "sage", "orion"] as const;
       const schema = z.object({
         unitId: z.number().int().positive().optional(),
         text: z.string().min(1).max(5000).optional(),
         voiceConfig: z.object({
-          preset: z.string().optional(),
+          preset: z.enum(VALID_PRESETS).optional(),
           referenceAudio: z.string().optional(),
           playbackSpeed: z.number().min(0.5).max(3).optional(),
         }).optional(),
