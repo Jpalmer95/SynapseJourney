@@ -234,13 +234,14 @@ async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?
     }
 
     return Buffer.from(await audioRes.arrayBuffer());
-  } catch (err: any) {
+  } catch (err: unknown) {
     // AbortError = timeout; TypeError = network error — both handled gracefully
-    const name = err?.name as string | undefined;
+    const name = err instanceof Error ? err.name : undefined;
+    const message = err instanceof Error ? err.message : String(err);
     if (name === "AbortError" || name === "TimeoutError") {
       console.info("[TTS] Qwen3-TTS: Request timed out — falling back");
     } else {
-      console.info("[TTS] Qwen3-TTS:", err?.message || String(err), "— falling back");
+      console.info("[TTS] Qwen3-TTS:", message, "— falling back");
     }
     return null;
   }
@@ -279,8 +280,9 @@ async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer
       if (arrayBuf.byteLength > 0) {
         return Buffer.from(arrayBuf);
       }
-    } catch (err: any) {
-      console.info(`[TTS] HF Inference (${model}): ${err?.message || err}`);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.info(`[TTS] HF Inference (${model}): ${message}`);
     }
   }
   return null;

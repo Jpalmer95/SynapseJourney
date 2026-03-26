@@ -21,8 +21,8 @@ app.use((req, res, next) => {
     express.json({ limit: "8mb" })(req, res, next);
   } else {
     express.json({
-      verify: (req: any, _res: any, buf: any) => {
-        req.rawBody = buf;
+      verify: (req, _res, buf) => {
+        (req as Request & { rawBody: Buffer }).rawBody = buf;
       },
     })(req, res, next);
   }

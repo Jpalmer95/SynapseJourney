@@ -228,8 +228,13 @@ export function useTTS(): UseTTSReturn {
     const currentPreset = serverVoicePreset;
 
     try {
-      if (currentPreset !== "browser") {
-        // Try server-side TTS for all presets — works on Tesla (no browser speechSynthesis needed)
+      // Always attempt server TTS when:
+      // (a) an AI preset is selected, OR
+      // (b) browser speechSynthesis is unavailable (e.g. Tesla, web views, headless)
+      // This makes audio work on unsupported browsers regardless of the saved preset.
+      const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
+
+      if (shouldTryServer) {
         const serverResult = unitId
           ? await fetchServerTTSAudio(unitId)
           : await fetchServerTTSText(text);
@@ -242,15 +247,15 @@ export function useTTS(): UseTTSReturn {
               setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
             }
             return;
-          } catch (audioErr: any) {
-            if (audioErr?.message === "cancelled") return;
+          } catch (audioErr: unknown) {
+            if (audioErr instanceof Error && audioErr.message === "cancelled") return;
             // Server audio playback failed — fall through to browser TTS
           }
         }
       }
 
       if (!BROWSER_SPEECH_SUPPORTED) {
-        // Both server TTS and browser TTS have failed (e.g. Tesla browser without AI preset)
+        // Server TTS returned nothing and browser TTS is unavailable — surface actionable error
         setState(prev => ({ ...prev, isLoading: false, error: "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.", isSupported: true }));
         return;
       }

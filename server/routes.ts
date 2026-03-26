@@ -780,7 +780,9 @@ Be conversational, warm, and genuinely curious about helping the learner underst
           : await generateLessonContent(topic, unit, masteredTopics, categoryName);
         
         // Only save real AI-generated content, NOT placeholder fallbacks
-        if ((generatedContent as any)._isPlaceholder) {
+        const isPlaceholder = typeof generatedContent === "object" && generatedContent !== null &&
+          "_isPlaceholder" in generatedContent && Boolean((generatedContent as Record<string, unknown>)._isPlaceholder);
+        if (isPlaceholder) {
           console.log(`Content generation failed for unit ${unitId}, returning placeholder without saving`);
           return res.json({ unit, content: generatedContent, isNextGen, isTemporary: true });
         }
@@ -1053,6 +1055,13 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Award XP only on first start
       if (isFirstStart) {
         await storage.addXp(userId, 5);
+      }
+
+      // Predictive pre-generation: warm TTS cache for the current unit on lesson start.
+      // Only attempted when content already exists (generated lazily, may be null for brand-new units).
+      if (unit.contentJson) {
+        const isNextGenUnit = unit.difficulty === "nextgen";
+        preTTSForUnit(userId, unitId, unit.contentJson, isNextGenUnit).catch(console.error);
       }
 
       res.json({ progress, xpAwarded: isFirstStart ? 5 : 0 });
