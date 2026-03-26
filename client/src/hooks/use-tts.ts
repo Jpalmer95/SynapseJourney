@@ -109,7 +109,7 @@ export function useTTS(): UseTTSReturn {
   useEffect(() => { rateRef.current = rate; }, [rate]);
   useEffect(() => { voiceRef.current = selectedVoiceName; }, [selectedVoiceName]);
 
-  const { data: ttsSettings } = useQuery<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }>({
+  const { data: ttsSettings } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
     queryKey: ["/api/tts/settings"],
     staleTime: 60000,
     retry: false,

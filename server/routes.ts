@@ -823,7 +823,13 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.get("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
     try {
       const settings = await storage.getTtsSettings(req.user.claims.sub);
-      res.json(settings);
+      // Never send raw base64 reference audio to the client — it's only needed server-side for TTS generation.
+      // Return hasReferenceAudio so the UI knows whether a clone voice is configured.
+      res.json({
+        voicePreset: settings.voicePreset,
+        playbackSpeed: settings.playbackSpeed,
+        hasReferenceAudio: !!settings.referenceAudio,
+      });
     } catch (err) {
       console.error("TTS settings fetch error:", err);
       res.status(500).json({ error: "Failed to fetch TTS settings" });
@@ -982,7 +988,19 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     try {
       const unitId = parseInt(req.params.unitId);
       if (isNaN(unitId)) return res.status(400).json({ error: "Invalid unit ID" });
-      const ttsSettings = await storage.getTtsSettings(req.user.claims.sub);
+
+      const userId = req.user.claims.sub;
+
+      // Authorization: same unlock check as /api/tts/generate to prevent information leakage
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) return res.status(404).json({ error: "Unit not found" });
+      const mastery = await storage.getOrCreateTopicMastery(userId, unit.topicId);
+      const isAdmin = await isAdminUser(userId);
+      if (!isUnitUnlocked(unit.difficulty, mastery, isAdmin)) {
+        return res.status(403).json({ error: "This lesson is locked" });
+      }
+
+      const ttsSettings = await storage.getTtsSettings(userId);
       const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
       // Only include referenceAudio in the hash when preset is "custom" — matches /api/tts/generate behavior
       const isCustomPreset = ttsSettings.voicePreset === "custom";
