@@ -14,13 +14,19 @@ declare module "http" {
   }
 }
 
-app.use(
-  express.json({
-    verify: (req, _res, buf) => {
-      req.rawBody = buf;
-    },
-  }),
-);
+// Default JSON limit (100kb) for most routes
+app.use((req, res, next) => {
+  if (req.path === "/api/tts/voice-upload") {
+    // Allow up to 8MB for base64 voice reference audio uploads (~5MB binary = ~6.7MB base64)
+    express.json({ limit: "8mb" })(req, res, next);
+  } else {
+    express.json({
+      verify: (req: any, _res: any, buf: any) => {
+        req.rawBody = buf;
+      },
+    })(req, res, next);
+  }
+});
 
 app.use(express.urlencoded({ extended: false }));
 
@@ -51,7 +57,10 @@ app.use((req, res, next) => {
     if (path.startsWith("/api")) {
       let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
       if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
+        // Exclude large binary fields (e.g. base64 audio) from log output
+        const loggable = { ...capturedJsonResponse };
+        if (loggable.audioData) loggable.audioData = `[base64 ~${Math.round((loggable.audioData.length * 3) / 4 / 1024)}KB]`;
+        logLine += ` :: ${JSON.stringify(loggable)}`;
       }
 
       log(logLine);

@@ -887,6 +887,13 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(404).json({ error: "Lesson content not found. Load the lesson first." });
       }
 
+      // Authorization: verify the user has access to this unit (same check as lesson content endpoint)
+      const mastery = await storage.getOrCreateTopicMastery(userId, unit.topicId);
+      const isAdmin = await isAdminUser(userId);
+      if (!isUnitUnlocked(unit.difficulty, mastery, isAdmin)) {
+        return res.status(403).json({ error: "This lesson is locked" });
+      }
+
       const ttsSettings = await storage.getTtsSettings(userId);
       const { voicePreset, referenceAudio, playbackSpeed } = ttsSettings;
 
@@ -905,7 +912,6 @@ Be conversational, warm, and genuinely curious about helping the learner underst
             audioData: cached.audioData, 
             audioFormat: cached.audioFormat,
             fromCache: true,
-            fallback: false,
             playbackSpeed,
           });
         }
@@ -923,7 +929,8 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       });
 
       if (!result) {
-        return res.json({ fallback: true, message: "TTS generation failed — browser fallback" });
+        // No audio data available — client should fall back to browser TTS
+        return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
       }
 
       await storage.saveTtsAudioCache(unitId, configHash, result.audioData, result.audioFormat);

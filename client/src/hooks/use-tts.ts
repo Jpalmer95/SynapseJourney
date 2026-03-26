@@ -35,7 +35,7 @@ interface UseTTSReturn extends TTSState {
 
 const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
 
-async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number; fallback: boolean } | null> {
+async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
   try {
     const res = await fetch("/api/tts/generate", {
       method: "POST",
@@ -43,10 +43,12 @@ async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string;
       credentials: "include",
       body: JSON.stringify({ unitId }),
     });
+    if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
     const data = await res.json();
-    if (data.fallback) return null;
-    return data;
+    // Only use server TTS if audio data is actually present
+    if (!data.audioData) return null;
+    return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
   } catch {
     return null;
   }
