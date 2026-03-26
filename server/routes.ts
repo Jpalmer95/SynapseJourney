@@ -864,8 +864,10 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(400).json({ error: "Reference audio must be 30 seconds or less (max 2MB). Please trim your recording." });
       }
 
+      const { hashBase64 } = await import("./tts-service");
+      const referenceAudioPath = `ref-${hashBase64(audioBase64)}`;
       await storage.saveTtsSettings(req.user.claims.sub, "custom", audioBase64);
-      res.json({ ok: true, message: "Voice reference uploaded successfully" });
+      res.json({ ok: true, referenceAudioPath, message: "Voice reference uploaded successfully" });
     } catch (err) {
       console.error("TTS voice upload error:", err);
       res.status(500).json({ error: "Failed to upload voice reference" });
@@ -3026,18 +3028,28 @@ async function predictivelyGenerateNextUnit(
       }
     }
 
-    if (!nextUnit || nextUnit.contentJson) return;
+    if (!nextUnit) return;
 
-    console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} (${nextUnit.difficulty} #${nextUnit.unitIndex})`);
     const isNextGen = nextUnit.difficulty === "nextgen";
-    const content = isNextGen
-      ? await generateNextGenContent(topic, nextUnit, masteredTopics)
-      : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
 
-    if (!(content as any)._isPlaceholder) {
-      await storage.updateLessonContent(nextUnit.id, content);
-      console.log(`[Predictive] Saved content for unit ${nextUnit.id}`);
-      // Also pre-generate TTS for the next unit
+    // If content already exists, still attempt TTS pre-caching (don't return early)
+    let content = nextUnit.contentJson;
+
+    if (!content) {
+      console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} (${nextUnit.difficulty} #${nextUnit.unitIndex})`);
+      const generated = isNextGen
+        ? await generateNextGenContent(topic, nextUnit, masteredTopics)
+        : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
+
+      if (!(generated as any)._isPlaceholder) {
+        await storage.updateLessonContent(nextUnit.id, generated);
+        console.log(`[Predictive] Saved content for unit ${nextUnit.id}`);
+        content = generated;
+      }
+    }
+
+    // Always attempt TTS pre-caching whenever we have content (covers both new and existing content)
+    if (content) {
       await preTTSForUnit(userId, nextUnit.id, content, isNextGen);
     }
   } catch (err) {

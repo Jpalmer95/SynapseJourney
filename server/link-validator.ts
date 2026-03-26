@@ -1,7 +1,42 @@
+import { lookup as dnsLookup } from "dns/promises";
+
 const TIMEOUT_MS = 8000;
 const MAX_REDIRECTS = 3;
 
 const USER_AGENT = "Mozilla/5.0 (compatible; SynapseBot/1.0; +https://synapse.app/bot)";
+
+// Private/internal IP ranges to block (SSRF protection)
+const PRIVATE_IP_PATTERNS = [
+  /^127\./,                          // Loopback
+  /^10\./,                           // RFC 1918
+  /^172\.(1[6-9]|2\d|3[01])\./,     // RFC 1918
+  /^192\.168\./,                     // RFC 1918
+  /^169\.254\./,                     // Link-local (metadata endpoints)
+  /^::1$/,                           // IPv6 loopback
+  /^fc[0-9a-f][0-9a-f]:/i,          // IPv6 unique local
+  /^fe[89ab][0-9a-f]:/i,            // IPv6 link-local
+  /^0\./,                            // This network
+  /^100\.(6[4-9]|[7-9]\d|1[0-1]\d|12[0-7])\./,  // Shared address space
+];
+
+async function isSafeHost(hostname: string): Promise<boolean> {
+  // Block obvious localhost/internal hostnames
+  if (hostname === "localhost" || hostname.endsWith(".local") || hostname.endsWith(".internal")) {
+    return false;
+  }
+  // Resolve DNS and check resulting IPs
+  try {
+    const addresses = await dnsLookup(hostname, { all: true });
+    for (const addr of addresses) {
+      if (PRIVATE_IP_PATTERNS.some(p => p.test(addr.address))) {
+        return false;
+      }
+    }
+  } catch {
+    // DNS resolution failed — allow URL (network error, not SSRF)
+  }
+  return true;
+}
 
 interface ValidatedResource {
   title: string;
@@ -18,10 +53,22 @@ interface ValidationResult {
 }
 
 async function checkUrl(url: string): Promise<ValidationResult> {
+  let parsed: URL;
   try {
-    new URL(url);
+    parsed = new URL(url);
   } catch {
     return { url, live: false, error: "invalid_url" };
+  }
+
+  // Only allow http and https schemes
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    return { url, live: false, error: "disallowed_scheme" };
+  }
+
+  // SSRF protection: deny private/internal addresses
+  const safe = await isSafeHost(parsed.hostname);
+  if (!safe) {
+    return { url, live: false, error: "blocked_private_ip" };
   }
 
   const controller = new AbortController();

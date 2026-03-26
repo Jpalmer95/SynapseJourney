@@ -75,7 +75,8 @@ async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?
   const attempt = (async () => {
     try {
       const { Client } = await import("@gradio/client");
-      const client = await Client.connect("Qwen/Qwen3-TTS", { hf_token: undefined });
+      // Connect anonymously — no auth token needed for public ZeroGPU spaces
+      const client = await (Client as any).connect("Qwen/Qwen3-TTS");
 
       const voicePreset = getVoicePreset(voicePresetId);
       const promptText = voicePreset
@@ -88,15 +89,15 @@ async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?
         referenceBlob = new Blob([audioBuffer], { type: "audio/wav" });
       }
 
-      const inputArgs: any[] = [promptText];
+      const inputArgs: unknown[] = [promptText];
       if (referenceBlob) inputArgs.push(referenceBlob);
 
-      const result = await client.predict("/synthesize", inputArgs);
+      const result = await client.predict("/synthesize", inputArgs) as { data: unknown[] };
 
-      if (result?.data?.[0]) {
-        const audioOutput = result.data[0];
-        if (audioOutput?.url) {
-          const audioRes = await fetch(audioOutput.url, { signal: AbortSignal.timeout(10000) });
+      const audioOutput = result?.data?.[0] as { url?: string } | Blob | null | undefined;
+      if (audioOutput) {
+        if (typeof (audioOutput as { url?: string }).url === "string") {
+          const audioRes = await fetch((audioOutput as { url: string }).url, { signal: AbortSignal.timeout(10000) });
           const arrayBuf = await audioRes.arrayBuffer();
           return Buffer.from(arrayBuf);
         }
