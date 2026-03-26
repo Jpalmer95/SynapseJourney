@@ -69,50 +69,56 @@ function buildLessonText(content: any, isNextGen: boolean): string {
 }
 
 async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
-  // Wrap with a hard timeout so a slow Gradio connection never hangs the server
+  // Use a local unhandledRejection listener scoped to this call only,
+  // so Gradio WebSocket errors don't propagate as global process crashes.
+  // This is intentionally local (not a global handler) — only active during the Gradio call.
+  const onRejection = (_reason: unknown) => { /* suppress — logged below */ };
+  process.on("unhandledRejection", onRejection);
+
   const TIMEOUT_MS = 5000;
-  const raceTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS));
-  const attempt = (async () => {
-    try {
-      const { Client } = await import("@gradio/client");
-      // Connect anonymously — no auth token needed for public ZeroGPU spaces
-      const client = await (Client as any).connect("Qwen/Qwen3-TTS");
+  try {
+    const result = await Promise.race([
+      (async () => {
+        try {
+          const { Client } = await import("@gradio/client");
+          const client = await (Client as any).connect("Qwen/Qwen3-TTS");
 
-      const voicePreset = getVoicePreset(voicePresetId);
-      const promptText = voicePreset
-        ? `[${voicePreset.style}] ${text}`
-        : text;
+          const voicePreset = getVoicePreset(voicePresetId);
+          const promptText = voicePreset ? `[${voicePreset.style}] ${text}` : text;
 
-      let referenceBlob: Blob | undefined;
-      if (referenceAudio) {
-        const audioBuffer = Buffer.from(referenceAudio, "base64");
-        referenceBlob = new Blob([audioBuffer], { type: "audio/wav" });
-      }
+          let referenceBlob: Blob | undefined;
+          if (referenceAudio) {
+            referenceBlob = new Blob([Buffer.from(referenceAudio, "base64")], { type: "audio/wav" });
+          }
 
-      const inputArgs: unknown[] = [promptText];
-      if (referenceBlob) inputArgs.push(referenceBlob);
+          const inputArgs: unknown[] = [promptText];
+          if (referenceBlob) inputArgs.push(referenceBlob);
 
-      const result = await client.predict("/synthesize", inputArgs) as { data: unknown[] };
+          const res = await client.predict("/synthesize", inputArgs) as { data: unknown[] };
+          const audioOutput = res?.data?.[0] as { url?: string } | Blob | null | undefined;
 
-      const audioOutput = result?.data?.[0] as { url?: string } | Blob | null | undefined;
-      if (audioOutput) {
-        if (typeof (audioOutput as { url?: string }).url === "string") {
-          const audioRes = await fetch((audioOutput as { url: string }).url, { signal: AbortSignal.timeout(10000) });
-          const arrayBuf = await audioRes.arrayBuffer();
-          return Buffer.from(arrayBuf);
+          if (audioOutput) {
+            if (typeof (audioOutput as { url?: string }).url === "string") {
+              const audioRes = await fetch((audioOutput as { url: string }).url, { signal: AbortSignal.timeout(10000) });
+              return Buffer.from(await audioRes.arrayBuffer());
+            }
+            if (audioOutput instanceof Blob) {
+              return Buffer.from(await audioOutput.arrayBuffer());
+            }
+          }
+          return null;
+        } catch (err: any) {
+          console.warn("[TTS] Qwen3-TTS predict failed:", err?.message || err);
+          return null;
         }
-        if (audioOutput instanceof Blob) {
-          const arrayBuf = await audioOutput.arrayBuffer();
-          return Buffer.from(arrayBuf);
-        }
-      }
-      return null;
-    } catch (err: any) {
-      console.warn("[TTS] Qwen3-TTS failed:", err?.message || err);
-      return null;
-    }
-  })();
-  return Promise.race([attempt, raceTimeout]);
+      })(),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS)),
+    ]);
+    return result;
+  } finally {
+    // Always remove the local listener once the call completes
+    process.off("unhandledRejection", onRejection);
+  }
 }
 
 async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {

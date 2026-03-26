@@ -898,6 +898,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 
       let contentForTTS: any;
       let unitIdForCache: number | undefined;
+      let isNextGenUnit = false;
 
       // Always validate unitId first (before checking voice preset) — prevents IDOR and gives correct 404/403
       if (unitId) {
@@ -913,6 +914,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         }
         contentForTTS = unit.contentJson;
         unitIdForCache = unitId;
+        isNextGenUnit = unit.difficulty === "nextgen";
       }
 
       // Load TTS settings (user's saved preferences, overridable by voiceConfig)
@@ -954,7 +956,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       const result = await generateTTSAudio({
         unitId: unitIdForCache!,
         content: contentForTTS,
-        isNextGen: false,
+        isNextGen: isNextGenUnit,
         voicePreset,
         referenceAudio,
         hfToken: userProfile?.huggingFaceToken || undefined,
@@ -982,7 +984,9 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       if (isNaN(unitId)) return res.status(400).json({ error: "Invalid unit ID" });
       const ttsSettings = await storage.getTtsSettings(req.user.claims.sub);
       const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
-      const refHash = ttsSettings.referenceAudio ? hashBase64(ttsSettings.referenceAudio) : undefined;
+      // Only include referenceAudio in the hash when preset is "custom" — matches /api/tts/generate behavior
+      const isCustomPreset = ttsSettings.voicePreset === "custom";
+      const refHash = (isCustomPreset && ttsSettings.referenceAudio) ? hashBase64(ttsSettings.referenceAudio) : undefined;
       const configHash = hashVoiceConfig(ttsSettings.voicePreset, refHash);
       const cached = await storage.getTtsAudioCache(unitId, configHash);
       res.json({ cached: !!cached, voicePreset: ttsSettings.voicePreset });
@@ -3078,7 +3082,10 @@ async function preTTSForUnit(userId: string, unitId: number, content: any, isNex
     if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
 
     const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("./tts-service");
-    const refHash = ttsSettings.referenceAudio ? hashBase64(ttsSettings.referenceAudio) : undefined;
+    // Only include referenceAudio in hash when preset is "custom" — must match /api/tts/generate and /api/tts/cache-status
+    const isCustomPreset = ttsSettings.voicePreset === "custom";
+    const referenceAudio = isCustomPreset ? (ttsSettings.referenceAudio || undefined) : undefined;
+    const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
     const configHash = hashVoiceConfig(ttsSettings.voicePreset, refHash);
 
     const existing = await storage.getTtsAudioCache(unitId, configHash);
@@ -3090,7 +3097,7 @@ async function preTTSForUnit(userId: string, unitId: number, content: any, isNex
       content,
       isNextGen,
       voicePreset: ttsSettings.voicePreset,
-      referenceAudio: ttsSettings.referenceAudio || undefined,
+      referenceAudio,
       hfToken: userProfile?.huggingFaceToken || undefined,
     });
 
