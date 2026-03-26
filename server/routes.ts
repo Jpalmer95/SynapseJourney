@@ -763,32 +763,194 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         });
       }
 
-      // If content already exists, return it
-      if (unit.contentJson) {
-        return res.json({ unit, content: unit.contentJson, isNextGen: unit.difficulty === "nextgen" });
-      }
-
-      // Generate content using AI - use different generator for Next Gen
-      const masteredTopics = await storage.getUserMasteredTopics(req.user.claims.sub);
+      const userId = req.user.claims.sub;
+      const masteredTopics = await storage.getUserMasteredTopics(userId);
       const isNextGen = unit.difficulty === "nextgen";
-      const content = isNextGen 
-        ? await generateNextGenContent(topic, unit, masteredTopics)
-        : await generateLessonContent(topic, unit, masteredTopics);
-      
-      // Only save real AI-generated content, NOT placeholder fallbacks
-      // Placeholder content has _isPlaceholder: true - don't persist it so retry works
-      if (content._isPlaceholder) {
-        console.log(`Content generation failed for unit ${unitId}, returning placeholder without saving`);
-        return res.json({ unit, content, isNextGen, isTemporary: true });
-      }
-      
-      // Save the generated content
-      const updatedUnit = await storage.updateLessonContent(unitId, content);
 
-      res.json({ unit: updatedUnit, content, isNextGen });
+      // Fetch category for hyper-specific resource links
+      const category = topic.categoryId ? await storage.getCategoryById(topic.categoryId) : null;
+      const categoryName = category?.name;
+
+      let content = unit.contentJson;
+
+      if (!content) {
+        // Generate content using AI - use different generator for Next Gen
+        const generatedContent = isNextGen 
+          ? await generateNextGenContent(topic, unit, masteredTopics)
+          : await generateLessonContent(topic, unit, masteredTopics, categoryName);
+        
+        // Only save real AI-generated content, NOT placeholder fallbacks
+        if ((generatedContent as any)._isPlaceholder) {
+          console.log(`Content generation failed for unit ${unitId}, returning placeholder without saving`);
+          return res.json({ unit, content: generatedContent, isNextGen, isTemporary: true });
+        }
+        
+        const updatedUnit = await storage.updateLessonContent(unitId, generatedContent);
+        content = generatedContent;
+
+        // Predictive pre-generation: asynchronously generate next unit's content
+        predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
+
+        return res.json({ unit: updatedUnit, content, isNextGen });
+      }
+
+      // Content already exists — still trigger predictive pre-gen in background
+      predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
+
+      // Background link re-validation: check if content is stale (>30 days)
+      if (unit.generatedAt) {
+        const contentDate = new Date(unit.generatedAt);
+        const daysSince = (Date.now() - contentDate.getTime()) / (1000 * 60 * 60 * 24);
+        if (daysSince > 30) {
+          revalidateUnitLinks(unitId, content).catch(console.error);
+        }
+      }
+
+      // Also pre-generate TTS audio for this unit if user has a non-browser preset
+      preTTSForUnit(userId, unitId, content, isNextGen).catch(console.error);
+
+      return res.json({ unit, content, isNextGen });
     } catch (error) {
       console.error("Error fetching lesson content:", error);
       res.status(500).json({ error: "Failed to fetch lesson content" });
+    }
+  });
+
+  // ============================================
+  // TTS ENDPOINTS
+  // ============================================
+
+  app.get("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const settings = await storage.getTtsSettings(req.user.claims.sub);
+      res.json(settings);
+    } catch (err) {
+      console.error("TTS settings fetch error:", err);
+      res.status(500).json({ error: "Failed to fetch TTS settings" });
+    }
+  });
+
+  app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const schema = z.object({
+        voicePreset: z.string().min(1),
+        playbackSpeed: z.number().min(0.5).max(3).optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
+      const { voicePreset, playbackSpeed } = parsed.data;
+      await storage.saveTtsSettings(req.user.claims.sub, voicePreset, undefined, playbackSpeed);
+      res.json({ ok: true });
+    } catch (err) {
+      console.error("TTS settings save error:", err);
+      res.status(500).json({ error: "Failed to save TTS settings" });
+    }
+  });
+
+  app.post("/api/tts/voice-upload", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const schema = z.object({
+        audioBase64: z.string().min(1),
+        mimeType: z.string().optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid audio data" });
+
+      const { audioBase64 } = parsed.data;
+      const sizeBytes = Buffer.from(audioBase64, "base64").length;
+      if (sizeBytes > 5 * 1024 * 1024) {
+        return res.status(400).json({ error: "Reference audio must be under 5MB" });
+      }
+
+      await storage.saveTtsSettings(req.user.claims.sub, "custom", audioBase64);
+      res.json({ ok: true, message: "Voice reference uploaded successfully" });
+    } catch (err) {
+      console.error("TTS voice upload error:", err);
+      res.status(500).json({ error: "Failed to upload voice reference" });
+    }
+  });
+
+  app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const schema = z.object({
+        unitId: z.number().int().positive(),
+        forceRegenerate: z.boolean().optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) return res.status(400).json({ error: "Invalid request" });
+
+      const { unitId, forceRegenerate } = parsed.data;
+      const userId = req.user.claims.sub;
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit?.contentJson) {
+        return res.status(404).json({ error: "Lesson content not found. Load the lesson first." });
+      }
+
+      const ttsSettings = await storage.getTtsSettings(userId);
+      const { voicePreset, referenceAudio, playbackSpeed } = ttsSettings;
+
+      if (voicePreset === "browser") {
+        return res.json({ fallback: true, message: "Browser TTS is selected" });
+      }
+
+      const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
+      const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
+      const configHash = hashVoiceConfig(voicePreset, refHash);
+
+      if (!forceRegenerate) {
+        const cached = await storage.getTtsAudioCache(unitId, configHash);
+        if (cached) {
+          return res.json({ 
+            audioData: cached.audioData, 
+            audioFormat: cached.audioFormat,
+            fromCache: true,
+            fallback: false,
+            playbackSpeed,
+          });
+        }
+      }
+
+      const userProfile = await storage.getUserProfile(userId);
+      const { generateTTSAudio } = await import("./tts-service");
+      const result = await generateTTSAudio({
+        unitId,
+        content: unit.contentJson,
+        isNextGen: unit.difficulty === "nextgen",
+        voicePreset,
+        referenceAudio: referenceAudio || undefined,
+        hfToken: userProfile?.huggingFaceToken || undefined,
+      });
+
+      if (!result) {
+        return res.json({ fallback: true, message: "TTS generation failed — browser fallback" });
+      }
+
+      await storage.saveTtsAudioCache(unitId, configHash, result.audioData, result.audioFormat);
+
+      res.json({ ...result, playbackSpeed });
+    } catch (err) {
+      console.error("TTS generate error:", err);
+      res.status(500).json({ fallback: true, error: "TTS service unavailable" });
+    }
+  });
+
+  app.get("/api/tts/presets", (_req, res) => {
+    import("./tts-service").then(({ VOICE_PRESETS }) => res.json(VOICE_PRESETS));
+  });
+
+  app.get("/api/tts/cache-status/:unitId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const unitId = parseInt(req.params.unitId);
+      if (isNaN(unitId)) return res.status(400).json({ error: "Invalid unit ID" });
+      const ttsSettings = await storage.getTtsSettings(req.user.claims.sub);
+      const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
+      const refHash = ttsSettings.referenceAudio ? hashBase64(ttsSettings.referenceAudio) : undefined;
+      const configHash = hashVoiceConfig(ttsSettings.voicePreset, refHash);
+      const cached = await storage.getTtsAudioCache(unitId, configHash);
+      res.json({ cached: !!cached, voicePreset: ttsSettings.voicePreset });
+    } catch (err) {
+      res.json({ cached: false });
     }
   });
 
@@ -2794,6 +2956,106 @@ Help the student understand why their answer was wrong and why the correct answe
   return httpServer;
 }
 
+// ============================================
+// PREDICTIVE PRE-GENERATION HELPERS
+// ============================================
+
+const DIFFICULTY_ORDER = ["beginner", "intermediate", "advanced", "nextgen"];
+
+async function predictivelyGenerateNextUnit(
+  currentUnit: { topicId: number; difficulty: string; unitIndex: number },
+  topic: { title: string; description: string },
+  masteredTopics: { topicId: number; topicTitle: string }[],
+  userId: string,
+  categoryName?: string
+): Promise<void> {
+  try {
+    const allUnits = await storage.getLessonUnits(currentUnit.topicId);
+    const diffUnits = allUnits
+      .filter(u => u.difficulty === currentUnit.difficulty)
+      .sort((a, b) => a.unitIndex - b.unitIndex);
+
+    let nextUnit: typeof allUnits[0] | undefined;
+
+    // Try next unit in same difficulty
+    const nextInDiff = diffUnits.find(u => u.unitIndex === currentUnit.unitIndex + 1);
+    if (nextInDiff) {
+      nextUnit = nextInDiff;
+    } else {
+      // Try first unit of next difficulty
+      const currentDiffIdx = DIFFICULTY_ORDER.indexOf(currentUnit.difficulty);
+      if (currentDiffIdx >= 0 && currentDiffIdx < DIFFICULTY_ORDER.length - 1) {
+        const nextDiff = DIFFICULTY_ORDER[currentDiffIdx + 1];
+        const nextDiffUnits = allUnits
+          .filter(u => u.difficulty === nextDiff)
+          .sort((a, b) => a.unitIndex - b.unitIndex);
+        nextUnit = nextDiffUnits[0];
+      }
+    }
+
+    if (!nextUnit || nextUnit.contentJson) return;
+
+    console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} (${nextUnit.difficulty} #${nextUnit.unitIndex})`);
+    const isNextGen = nextUnit.difficulty === "nextgen";
+    const content = isNextGen
+      ? await generateNextGenContent(topic, nextUnit, masteredTopics)
+      : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
+
+    if (!(content as any)._isPlaceholder) {
+      await storage.updateLessonContent(nextUnit.id, content);
+      console.log(`[Predictive] Saved content for unit ${nextUnit.id}`);
+      // Also pre-generate TTS for the next unit
+      await preTTSForUnit(userId, nextUnit.id, content, isNextGen);
+    }
+  } catch (err) {
+    console.warn("[Predictive] Pre-generation error:", (err as any)?.message || err);
+  }
+}
+
+async function revalidateUnitLinks(unitId: number, content: any): Promise<void> {
+  try {
+    const { revalidateStoredContent } = await import("./link-validator");
+    const { content: updatedContent, changed } = await revalidateStoredContent(content);
+    if (changed) {
+      await storage.updateLessonContent(unitId, updatedContent);
+      console.log(`[LinkValidator] Updated stale links for unit ${unitId}`);
+    }
+  } catch (err) {
+    console.warn("[LinkValidator] Revalidation error:", (err as any)?.message || err);
+  }
+}
+
+async function preTTSForUnit(userId: string, unitId: number, content: any, isNextGen: boolean): Promise<void> {
+  try {
+    const ttsSettings = await storage.getTtsSettings(userId);
+    if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
+
+    const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("./tts-service");
+    const refHash = ttsSettings.referenceAudio ? hashBase64(ttsSettings.referenceAudio) : undefined;
+    const configHash = hashVoiceConfig(ttsSettings.voicePreset, refHash);
+
+    const existing = await storage.getTtsAudioCache(unitId, configHash);
+    if (existing) return;
+
+    const userProfile = await storage.getUserProfile(userId);
+    const result = await generateTTSAudio({
+      unitId,
+      content,
+      isNextGen,
+      voicePreset: ttsSettings.voicePreset,
+      referenceAudio: ttsSettings.referenceAudio || undefined,
+      hfToken: userProfile?.huggingFaceToken || undefined,
+    });
+
+    if (result) {
+      await storage.saveTtsAudioCache(unitId, configHash, result.audioData, result.audioFormat);
+      console.log(`[PreTTS] Cached TTS audio for unit ${unitId}`);
+    }
+  } catch (err) {
+    console.warn("[PreTTS] Pre-generation error:", (err as any)?.message || err);
+  }
+}
+
 // Generate custom topic content using AI
 async function generateCustomTopicContent(customTopicId: number, title: string, description: string) {
   try {
@@ -3064,11 +3326,16 @@ Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanc
 async function generateLessonContent(
   topic: { title: string; description: string },
   unit: { title: string; difficulty: string; outline?: string | null },
-  masteredTopics: { topicId: number; topicTitle: string }[]
+  masteredTopics: { topicId: number; topicTitle: string }[],
+  categoryName?: string
 ): Promise<any> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
     : "";
+
+  const topicContext = categoryName
+    ? `Topic Domain: ${categoryName} → "${topic.title}"`
+    : `Topic: "${topic.title}"`;
 
   const difficultyGuidelines = unit.difficulty === "beginner"
     ? `BEGINNER TIER REQUIREMENTS:
@@ -3125,9 +3392,19 @@ async function generateLessonContent(
   * Relevant Discord servers or academic Slack communities
   * Preprint servers and working papers`;
 
+  const resourceSpecificityInstruction = `
+CRITICAL RESOURCE SPECIFICITY RULES:
+- Every URL must be hyper-specific to "${topic.title}"${categoryName ? ` within the domain of ${categoryName}` : ""}.
+- DO NOT link to generic homepages (e.g. khanacademy.org, youtube.com alone) — link to specific pages, videos, or articles.
+- For YouTube: include the full /watch?v=... URL to a specific video about THIS topic.
+- For OCW/Coursera: link to a specific course or module page about THIS topic.
+- For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX) directly related to THIS topic.
+- Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
+- Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
+
   const prompt = `You are an expert curriculum designer creating a deep, engaging lesson for:
 
-Topic: ${topic.title}
+${topicContext}
 Unit: ${unit.title}
 Difficulty Level: ${unit.difficulty.toUpperCase()}
 Unit Description: ${unit.outline || ""}
@@ -3135,6 +3412,8 @@ Unit Description: ${unit.outline || ""}
 ${crossTopicContext}
 
 ${difficultyGuidelines}
+
+${resourceSpecificityInstruction}
 
 Create the lesson content in this JSON format:
 {
@@ -3181,7 +3460,34 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
       { responseFormat: "json", temperature: 0.7 }
     ) || "{}";
 
-    return JSON.parse(content);
+    const parsed = JSON.parse(content);
+
+    // Validate and clean up external resource URLs
+    if (parsed.externalResources?.length) {
+      const { validateAndRefreshResources } = await import("./link-validator");
+      parsed.externalResources = await validateAndRefreshResources(
+        parsed.externalResources,
+        topic.title,
+        categoryName || "general",
+        unit.difficulty,
+        async (count) => {
+          const retryPrompt = `The following URLs for the lesson "${unit.title}" on topic "${topic.title}" (${categoryName || "general"}, ${unit.difficulty} level) failed validation. Generate ${count} alternative external resource links that are real, live, and specific to this exact topic and difficulty level. Return JSON array only:
+[{"title":"...","url":"https://...","type":"video|course|paper|book","description":"..."}]`;
+          try {
+            const alt = await generateCourseContent(
+              [{ role: "user", content: retryPrompt }],
+              { responseFormat: "json", temperature: 0.5 }
+            ) || "[]";
+            const altParsed = JSON.parse(alt);
+            return Array.isArray(altParsed) ? altParsed : (altParsed.externalResources || []);
+          } catch {
+            return [];
+          }
+        }
+      );
+    }
+
+    return parsed;
   } catch (error) {
     console.error("Error generating lesson content:", error);
     // Return placeholder content with marker - DO NOT save this to DB

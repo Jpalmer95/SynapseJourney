@@ -8,6 +8,13 @@ Synapse is an open-source learning platform designed to transform passive conten
 
 Preferred communication style: Simple, everyday language.
 
+## Recent Changes (March 2026)
+
+- **AI TTS (Text-to-Speech) Upgrade**: Replaced browser-only Web Speech API with server-side TTS via Qwen3-TTS (HuggingFace Spaces Gradio API). Fallback chain: Qwen3-TTS → HF Inference API (facebook/mms-tts-eng) → browser speechSynthesis. Fixes Tesla browser incompatibility. Audio cached in new `ttsAudioCache` DB table (base64, keyed by unitId+voiceConfigHash). 6 AI voice presets: Aria, Nova, Lyra (female), Echo, Sage, Orion (male). Custom voice cloning: upload audio reference (<5MB) via POST `/api/tts/voice-upload`. Playback uses HTML5 `<audio>` element for server-generated audio. `use-tts.ts` hook updated for server TTS, `tts-button.tsx` redesigned with 3-tab UI (AI Voices, Browser, Clone).
+- **TTS Voice Settings Storage**: New columns on `userProfiles`: `ttsVoicePreset`, `ttsReferenceAudio`, `ttsPlaybackSpeed`. New `ttsAudioCache` table with unitId, voiceConfigHash, audioData, audioFormat. API: `GET/PUT /api/tts/settings`, `POST /api/tts/voice-upload`, `POST /api/tts/generate`, `GET /api/tts/presets`, `GET /api/tts/cache-status/:unitId`.
+- **Predictive Pre-Generation**: When a lesson unit is loaded, the server asynchronously generates the next unit's content and TTS audio in the background (fire-and-forget). Helper functions `predictivelyGenerateNextUnit()` and `preTTSForUnit()` in `server/routes.ts`.
+- **Link Validation & Relevance**: New `server/link-validator.ts` validates each `externalResources` URL after AI generation (HEAD request, 8s timeout). Dead links are removed; if fewer than 2 survive, a retry prompt asks the AI for alternatives. AI content generation prompts updated with `CRITICAL RESOURCE SPECIFICITY RULES` to force topic/domain-specific URLs. Category name is now fetched and passed to `generateLessonContent()`. Background staleness re-validation: content older than 30 days gets links re-checked on next access (`revalidateUnitLinks()`).
+
 ## Recent Changes (February 2026)
 
 - **Admin Unlock Bypass**: Admin user (jpkorstad@gmail.com) can now access all difficulty levels without progression requirements. The `isAdmin` flag is passed through lesson endpoints and used both server-side and client-side to bypass lock checks.

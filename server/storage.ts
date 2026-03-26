@@ -8,6 +8,7 @@ import {
   practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
   unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
   ideaContributions, novaCoins,
+  ttsAudioCache,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -267,6 +268,12 @@ export interface IStorage {
   // Nova Coins
   getUserNovaCoins(userId: string): Promise<NovaCoin>;
   awardNovaCoin(userId: string): Promise<NovaCoin>;
+
+  // TTS Settings
+  getTtsSettings(userId: string): Promise<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }>;
+  saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void>;
+  getTtsAudioCache(unitId: number, voiceConfigHash: string): Promise<{ audioData: string; audioFormat: string } | null>;
+  saveTtsAudioCache(unitId: number, voiceConfigHash: string, audioData: string, audioFormat: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1787,6 +1794,41 @@ export class DatabaseStorage implements IStorage {
       .where(eq(novaCoins.userId, userId))
       .returning();
     return updated || existing;
+  }
+
+  async getTtsSettings(userId: string): Promise<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }> {
+    const profile = await this.getUserProfile(userId);
+    return {
+      voicePreset: profile?.ttsVoicePreset || "browser",
+      referenceAudio: profile?.ttsReferenceAudio || null,
+      playbackSpeed: parseFloat(profile?.ttsPlaybackSpeed || "1.0") || 1.0,
+    };
+  }
+
+  async saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void> {
+    const updates: Record<string, any> = {
+      ttsVoicePreset: voicePreset,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    };
+    if (referenceAudio !== undefined) updates.ttsReferenceAudio = referenceAudio;
+    if (playbackSpeed !== undefined) updates.ttsPlaybackSpeed = String(playbackSpeed);
+    await this.createOrUpdateUserProfile(userId, updates as any);
+  }
+
+  async getTtsAudioCache(unitId: number, voiceConfigHash: string): Promise<{ audioData: string; audioFormat: string } | null> {
+    const [cached] = await db.select()
+      .from(ttsAudioCache)
+      .where(and(eq(ttsAudioCache.unitId, unitId), eq(ttsAudioCache.voiceConfigHash, voiceConfigHash)));
+    if (!cached) return null;
+    return { audioData: cached.audioData, audioFormat: cached.audioFormat || "wav" };
+  }
+
+  async saveTtsAudioCache(unitId: number, voiceConfigHash: string, audioData: string, audioFormat: string): Promise<void> {
+    try {
+      await db.insert(ttsAudioCache).values({ unitId, voiceConfigHash, audioData, audioFormat });
+    } catch {
+      // Ignore duplicate key errors
+    }
   }
 }
 

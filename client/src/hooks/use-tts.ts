@@ -1,4 +1,13 @@
 import { useState, useRef, useCallback, useEffect } from "react";
+import { useQuery } from "@tanstack/react-query";
+
+export interface VoicePreset {
+  id: string;
+  name: string;
+  description: string;
+  gender: "female" | "male" | "neutral";
+  style: string;
+}
 
 interface TTSState {
   isLoading: boolean;
@@ -7,10 +16,11 @@ interface TTSState {
   error: string | null;
   progress: number;
   availableVoices: SpeechSynthesisVoice[];
+  usingServerTTS: boolean;
 }
 
 interface UseTTSReturn extends TTSState {
-  speak: (text: string) => Promise<void>;
+  speak: (text: string, unitId?: number) => Promise<void>;
   stop: () => void;
   pause: () => void;
   resume: () => void;
@@ -18,6 +28,39 @@ interface UseTTSReturn extends TTSState {
   setSelectedVoice: (voiceName: string) => void;
   rate: number;
   selectedVoiceName: string | null;
+  serverVoicePreset: string;
+  setServerVoicePreset: (preset: string) => Promise<void>;
+  isAudioCached: (unitId: number) => Promise<boolean>;
+}
+
+const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
+
+async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number; fallback: boolean } | null> {
+  try {
+    const res = await fetch("/api/tts/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ unitId }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data.fallback) return null;
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+function base64ToAudioUrl(base64: string, format: string): string {
+  const mimeMap: Record<string, string> = {
+    wav: "audio/wav",
+    mp3: "audio/mpeg",
+    flac: "audio/flac",
+    ogg: "audio/ogg",
+  };
+  const mime = mimeMap[format] || "audio/wav";
+  return `data:${mime};base64,${base64}`;
 }
 
 export function useTTS(): UseTTSReturn {
@@ -28,10 +71,12 @@ export function useTTS(): UseTTSReturn {
     error: null,
     progress: 0,
     availableVoices: [],
+    usingServerTTS: false,
   });
 
   const [rate, setRateState] = useState(1.0);
   const [selectedVoiceName, setSelectedVoiceState] = useState<string | null>(null);
+  const [serverVoicePreset, setServerVoicePresetState] = useState<string>("browser");
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -41,56 +86,55 @@ export function useTTS(): UseTTSReturn {
   const rateRef = useRef(rate);
   const voiceRef = useRef<string | null>(selectedVoiceName);
 
-  useEffect(() => {
-    rateRef.current = rate;
-  }, [rate]);
+  useEffect(() => { rateRef.current = rate; }, [rate]);
+  useEffect(() => { voiceRef.current = selectedVoiceName; }, [selectedVoiceName]);
+
+  const { data: ttsSettings } = useQuery<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }>({
+    queryKey: ["/api/tts/settings"],
+    staleTime: 60000,
+    retry: false,
+  });
 
   useEffect(() => {
-    voiceRef.current = selectedVoiceName;
-  }, [selectedVoiceName]);
+    if (ttsSettings) {
+      setServerVoicePresetState(ttsSettings.voicePreset || "browser");
+      if (ttsSettings.playbackSpeed) {
+        setRateState(ttsSettings.playbackSpeed);
+      }
+    }
+  }, [ttsSettings]);
 
   useEffect(() => {
-    if (typeof window === "undefined" || !window.speechSynthesis) {
-      setState((prev) => ({ ...prev, isSupported: false }));
+    if (!BROWSER_SPEECH_SUPPORTED) {
+      setState(prev => ({ ...prev, isSupported: true }));
       return;
     }
 
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
       if (voices.length > 0) {
-        setState((prev) => ({ ...prev, availableVoices: voices }));
+        setState(prev => ({ ...prev, availableVoices: voices }));
         if (!selectedVoiceName) {
-          const samantha = voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")
-          );
-          const fallbackVoice = voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen")
-          ) || voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria")
-          ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
-          
-          const defaultVoice = samantha || fallbackVoice;
-          if (defaultVoice) {
-            setSelectedVoiceState(defaultVoice.name);
-          }
+          const preferred = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
+            || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen"))
+            || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria"))
+            || voices.find(v => v.lang.startsWith("en")) || voices[0];
+          if (preferred) setSelectedVoiceState(preferred.name);
         }
       }
     };
 
     loadVoices();
     window.speechSynthesis.addEventListener("voiceschanged", loadVoices);
-
     return () => {
       window.speechSynthesis.removeEventListener("voiceschanged", loadVoices);
-      stop();
     };
   }, []);
 
-  const splitIntoChunks = (text: string, maxLength: number = 200): string[] => {
+  const splitIntoChunks = (text: string, maxLength = 200): string[] => {
     const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
     const chunks: string[] = [];
     let currentChunk = "";
-
     for (const sentence of sentences) {
       if (currentChunk.length + sentence.length <= maxLength) {
         currentChunk += sentence;
@@ -103,149 +147,164 @@ export function useTTS(): UseTTSReturn {
     return chunks;
   };
 
-  const speakChunk = useCallback(
-    (text: string): Promise<void> => {
-      return new Promise((resolve, reject) => {
-        if (cancelledRef.current) {
-          reject(new Error("cancelled"));
-          return;
-        }
-        
-        if (!window.speechSynthesis) {
-          reject(new Error("Speech synthesis not supported"));
-          return;
-        }
+  const speakChunk = useCallback((text: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+      if (!BROWSER_SPEECH_SUPPORTED) { reject(new Error("not_supported")); return; }
 
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.rate = rateRef.current;
-        utterance.pitch = 1;
-        utterance.volume = 1;
+      const utterance = new SpeechSynthesisUtterance(text);
+      utterance.rate = rateRef.current;
+      utterance.pitch = 1;
+      utterance.volume = 1;
 
-        const voices = window.speechSynthesis.getVoices();
-        let selectedVoice: SpeechSynthesisVoice | undefined;
-        
-        if (voiceRef.current) {
-          selectedVoice = voices.find((v) => v.name === voiceRef.current);
-        }
-        
-        if (!selectedVoice) {
-          selectedVoice = voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")
-          ) || voices.find(
-            (v) => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen")
-          ) || voices.find((v) => v.lang.startsWith("en")) || voices[0];
-        }
-
-        if (selectedVoice) {
-          utterance.voice = selectedVoice;
-        }
-
-        utterance.onend = () => {
-          if (cancelledRef.current) {
-            reject(new Error("cancelled"));
-          } else {
-            resolve();
-          }
-        };
-        utterance.onerror = (event) => {
-          if (event.error === "interrupted" || cancelledRef.current) {
-            reject(new Error("cancelled"));
-          } else {
-            reject(new Error(event.error));
-          }
-        };
-
-        utteranceRef.current = utterance;
-        window.speechSynthesis.speak(utterance);
-      });
-    },
-    []
-  );
-
-  const speak = useCallback(
-    async (text: string) => {
-      if (!text.trim()) return;
-
-      cancelledRef.current = false;
-      setState((prev) => ({ ...prev, isLoading: true, error: null }));
-
-      try {
-        window.speechSynthesis.cancel();
-
-        chunksRef.current = splitIntoChunks(text);
-        currentChunkRef.current = 0;
-
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          isSpeaking: true,
-          progress: 0,
-        }));
-
-        for (let i = 0; i < chunksRef.current.length; i++) {
-          if (cancelledRef.current) {
-            break;
-          }
-          
-          currentChunkRef.current = i;
-          const progress = Math.round(((i + 1) / chunksRef.current.length) * 100);
-          setState((prev) => ({ ...prev, progress }));
-
-          await speakChunk(chunksRef.current[i]);
-        }
-
-        if (!cancelledRef.current) {
-          setState((prev) => ({ ...prev, isSpeaking: false, progress: 100 }));
-        }
-      } catch (error) {
-        if (error instanceof Error && error.message === "cancelled") {
-          return;
-        }
-        console.error("TTS error:", error);
-        setState((prev) => ({
-          ...prev,
-          isLoading: false,
-          isSpeaking: false,
-          error: error instanceof Error ? error.message : "TTS failed",
-        }));
+      const voices = window.speechSynthesis.getVoices();
+      let selectedVoice = voiceRef.current ? voices.find(v => v.name === voiceRef.current) : undefined;
+      if (!selectedVoice) {
+        selectedVoice = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
+          || voices.find(v => v.lang.startsWith("en")) || voices[0];
       }
-    },
-    [speakChunk]
-  );
+      if (selectedVoice) utterance.voice = selectedVoice;
+
+      utterance.onend = () => cancelledRef.current ? reject(new Error("cancelled")) : resolve();
+      utterance.onerror = (e) => {
+        if (e.error === "interrupted" || cancelledRef.current) reject(new Error("cancelled"));
+        else reject(new Error(e.error));
+      };
+      utteranceRef.current = utterance;
+      window.speechSynthesis.speak(utterance);
+    });
+  }, []);
+
+  const playServerAudio = useCallback(async (audioData: string, audioFormat: string, speed: number): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+
+      const audioUrl = base64ToAudioUrl(audioData, audioFormat);
+      const audio = new Audio(audioUrl);
+      audio.playbackRate = Math.max(0.5, Math.min(4, speed));
+      audioRef.current = audio;
+
+      audio.onended = () => {
+        audioRef.current = null;
+        resolve();
+      };
+      audio.onerror = () => {
+        audioRef.current = null;
+        reject(new Error("audio_error"));
+      };
+      audio.onpause = () => {
+        if (cancelledRef.current) reject(new Error("cancelled"));
+      };
+
+      audio.play().catch(reject);
+    });
+  }, []);
+
+  const speak = useCallback(async (text: string, unitId?: number) => {
+    if (!text.trim()) return;
+
+    cancelledRef.current = false;
+    setState(prev => ({ ...prev, isLoading: true, error: null, usingServerTTS: false }));
+
+    const currentPreset = serverVoicePreset;
+
+    try {
+      if (unitId && currentPreset !== "browser") {
+        const serverResult = await fetchServerTTSAudio(unitId);
+        if (serverResult && !cancelledRef.current) {
+          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+          try {
+            await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
+            if (!cancelledRef.current) {
+              setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+            }
+            return;
+          } catch (audioErr: any) {
+            if (audioErr?.message === "cancelled") return;
+          }
+        }
+      }
+
+      if (!BROWSER_SPEECH_SUPPORTED) {
+        setState(prev => ({ ...prev, isLoading: false, error: "Text-to-speech is not available on this device.", isSupported: false }));
+        return;
+      }
+
+      if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.cancel();
+      chunksRef.current = splitIntoChunks(text);
+      currentChunkRef.current = 0;
+      setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0 }));
+
+      for (let i = 0; i < chunksRef.current.length; i++) {
+        if (cancelledRef.current) break;
+        currentChunkRef.current = i;
+        setState(prev => ({ ...prev, progress: Math.round(((i + 1) / chunksRef.current.length) * 100) }));
+        await speakChunk(chunksRef.current[i]);
+      }
+      if (!cancelledRef.current) {
+        setState(prev => ({ ...prev, isSpeaking: false, progress: 100 }));
+      }
+    } catch (error: any) {
+      if (error?.message === "cancelled") return;
+      console.error("TTS error:", error);
+      setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
+    }
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio]);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
-    if (window.speechSynthesis) {
-      window.speechSynthesis.cancel();
-    }
+    if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.cancel();
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
     }
-    setState((prev) => ({ ...prev, isSpeaking: false, isLoading: false }));
+    setState(prev => ({ ...prev, isSpeaking: false, isLoading: false, usingServerTTS: false }));
   }, []);
 
   const pause = useCallback(() => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.pause();
-    }
-    setState((prev) => ({ ...prev, isSpeaking: false }));
+    if (audioRef.current) audioRef.current.pause();
+    else if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.pause();
+    setState(prev => ({ ...prev, isSpeaking: false }));
   }, []);
 
   const resume = useCallback(() => {
-    if (window.speechSynthesis) {
-      window.speechSynthesis.resume();
-    }
-    setState((prev) => ({ ...prev, isSpeaking: true }));
+    if (audioRef.current) audioRef.current.play().catch(console.error);
+    else if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.resume();
+    setState(prev => ({ ...prev, isSpeaking: true }));
   }, []);
 
   const setRate = useCallback((newRate: number) => {
-    const clampedRate = Math.max(0.5, Math.min(3, newRate));
-    setRateState(clampedRate);
+    const clamped = Math.max(0.5, Math.min(3, newRate));
+    setRateState(clamped);
+    if (audioRef.current) audioRef.current.playbackRate = clamped;
   }, []);
 
   const setSelectedVoice = useCallback((voiceName: string) => {
     setSelectedVoiceState(voiceName);
+  }, []);
+
+  const setServerVoicePreset = useCallback(async (preset: string) => {
+    setServerVoicePresetState(preset);
+    try {
+      await fetch("/api/tts/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ voicePreset: preset, playbackSpeed: rate }),
+      });
+    } catch (e) {
+      console.warn("Failed to save TTS preset:", e);
+    }
+  }, [rate]);
+
+  const isAudioCached = useCallback(async (unitId: number): Promise<boolean> => {
+    try {
+      const res = await fetch(`/api/tts/cache-status/${unitId}`, { credentials: "include" });
+      const data = await res.json();
+      return data.cached === true;
+    } catch {
+      return false;
+    }
   }, []);
 
   return {
@@ -258,5 +317,8 @@ export function useTTS(): UseTTSReturn {
     setSelectedVoice,
     rate,
     selectedVoiceName,
+    serverVoicePreset,
+    setServerVoicePreset,
+    isAudioCached,
   };
 }

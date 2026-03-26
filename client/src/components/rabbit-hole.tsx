@@ -650,6 +650,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </Badge>
                   <TTSButton
                     text={`${selectedUnit.title}. Research Context: ${nextGenContent.researchContext}. ${nextGenContent.industryChallenge ? `Industry Challenge: ${nextGenContent.industryChallenge.title}. ${nextGenContent.industryChallenge.description}` : ''}`}
+                    unitId={selectedUnit.id}
                     showLabel
                     variant="outline"
                     size="sm"
@@ -1048,6 +1049,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 <div className="flex justify-center">
                   <TTSButton
                     text={`${selectedUnit.title}. ${lessonContent.concept}. Think of it like this: ${lessonContent.analogy}. ${lessonContent.example.title}. ${lessonContent.example.content}`}
+                    unitId={selectedUnit.id}
                     showLabel
                     variant="outline"
                     size="default"

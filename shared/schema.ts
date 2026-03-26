@@ -204,8 +204,21 @@ export const userProfiles = pgTable("user_profiles", {
   openRouterKey: text("open_router_key"), // Optional OpenRouter API key for paid models
   preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
   preferredModel: text("preferred_model"), // Specific model name for the provider
+  ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS preset: "browser", or a Qwen3-TTS preset name
+  ttsReferenceAudio: text("tts_reference_audio"), // base64-encoded reference audio for voice cloning
+  ttsPlaybackSpeed: text("tts_playback_speed").default("1.0"), // playback speed as string to avoid float issues
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// TTS Audio Cache (server-generated audio for lessons)
+export const ttsAudioCache = pgTable("tts_audio_cache", {
+  id: serial("id").primaryKey(),
+  unitId: integer("unit_id").references(() => lessonUnits.id).notNull(),
+  voiceConfigHash: text("voice_config_hash").notNull(), // hash of voice preset + reference audio
+  audioData: text("audio_data").notNull(), // base64-encoded audio (wav/mp3)
+  audioFormat: text("audio_format").default("wav").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Learning Pathways (curated groupings like Physics, Engineering, etc.)
@@ -535,6 +548,7 @@ export const insertPracticeTestAttemptSchema = createInsertSchema(practiceTestAt
 export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecommendations).omit({ id: true, createdAt: true });
 export const insertIdeaContributionSchema = createInsertSchema(ideaContributions).omit({ id: true, submittedAt: true });
 export const insertNovaCoinSchema = createInsertSchema(novaCoins).omit({ id: true, updatedAt: true });
+export const insertTtsAudioCacheSchema = createInsertSchema(ttsAudioCache).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -615,6 +629,8 @@ export type IdeaContribution = typeof ideaContributions.$inferSelect;
 export type InsertIdeaContribution = z.infer<typeof insertIdeaContributionSchema>;
 export type NovaCoin = typeof novaCoins.$inferSelect;
 export type InsertNovaCoin = z.infer<typeof insertNovaCoinSchema>;
+export type TtsAudioCache = typeof ttsAudioCache.$inferSelect;
+export type InsertTtsAudioCache = z.infer<typeof insertTtsAudioCacheSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
