@@ -68,42 +68,160 @@ function buildLessonText(content: any, isNextGen: boolean): string {
   return parts.join(" ").replace(/\n+/g, " ").trim();
 }
 
-async function callQwen3TTS(_text: string, _voicePresetId: string, _referenceAudio?: string): Promise<Buffer | null> {
-  // Qwen3-TTS Gradio Space integration is pending a stable HTTP REST endpoint.
-  // The @gradio/client library uses WebSocket-based streaming that emits errors outside
-  // standard Promise chains, making them impossible to catch with try/catch alone.
-  // Until a REST-based TTS endpoint is configured, this path returns null so the system
-  // falls through to HF Inference API (if user has an HF token) or browser TTS.
-  console.info("[TTS] Qwen3-TTS: Gradio integration awaiting REST endpoint configuration");
-  return null;
-}
+/**
+ * Call Qwen3-TTS via the Gradio 5.x HTTP REST API (no WebSocket, pure fetch).
+ * The Gradio REST protocol:
+ *   1. POST /call/{api_name} → { event_id }
+ *   2. GET  /call/{api_name}/{event_id} → SSE stream with "event: complete" + "data: [...]"
+ * All errors and timeouts are caught locally; no process-level listeners are used.
+ */
+async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
+  const spaceHost = process.env.QWEN_TTS_SPACE_HOST || "qwen-qwen3-tts.hf.space";
+  const apiName = process.env.QWEN_TTS_API_NAME || "synthesize";
 
-async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {
   try {
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/facebook/mms-tts-eng",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${hfToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ inputs: text }),
-        signal: AbortSignal.timeout(30000),
-      }
-    );
+    // Apply voice style as a text prefix (Qwen3-TTS supports style prompts)
+    const preset = getVoicePreset(voicePresetId);
+    const styledText = preset ? `[${preset.style}] ${text}` : text;
 
-    if (!response.ok) {
-      console.warn("[TTS] HF Inference TTS failed:", response.status, await response.text());
+    // Build request payload — include reference audio blob if custom voice clone
+    const requestPayload: Record<string, unknown> = { data: [styledText] };
+    if (referenceAudio) {
+      // Pass base64-encoded reference audio as the second argument
+      requestPayload.data = [styledText, { data: referenceAudio, mime_type: "audio/wav" }];
+    }
+
+    // Step 1: Submit prediction job and get event_id
+    const postRes = await fetch(`https://${spaceHost}/call/${apiName}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!postRes.ok) {
+      console.info(`[TTS] Qwen3-TTS: /call/${apiName} returned ${postRes.status} — skipping`);
       return null;
     }
 
-    const arrayBuf = await response.arrayBuffer();
-    return Buffer.from(arrayBuf);
+    const postBody = await postRes.json() as { event_id?: string };
+    const eventId = postBody.event_id;
+    if (!eventId) {
+      console.info("[TTS] Qwen3-TTS: No event_id in response — skipping");
+      return null;
+    }
+
+    // Step 2: Stream SSE result (timeout: 45s to allow for slow TTS generation)
+    const sseRes = await fetch(`https://${spaceHost}/call/${apiName}/${eventId}`, {
+      signal: AbortSignal.timeout(45000),
+    });
+
+    if (!sseRes.ok || !sseRes.body) {
+      console.info(`[TTS] Qwen3-TTS: SSE stream returned ${sseRes.status} — skipping`);
+      return null;
+    }
+
+    const reader = sseRes.body.getReader();
+    const decoder = new TextDecoder();
+    let sseBuffer = "";
+    let audioUrl: string | null = null;
+    let currentEvent = "";
+
+    try {
+      outer: while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        sseBuffer += decoder.decode(value, { stream: true });
+
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (line.startsWith("event: ")) {
+            currentEvent = line.slice(7).trim();
+          } else if (line.startsWith("data: ") && currentEvent === "complete") {
+            try {
+              const parsed = JSON.parse(line.slice(6)) as unknown;
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                const first = parsed[0] as Record<string, unknown>;
+                if (typeof first?.url === "string") {
+                  audioUrl = first.url;
+                  break outer;
+                }
+              }
+            } catch {
+              // malformed JSON line — skip
+            }
+          } else if (line.startsWith("data: ") && currentEvent === "error") {
+            console.info("[TTS] Qwen3-TTS: Space returned an error event — skipping");
+            break outer;
+          }
+        }
+      }
+    } finally {
+      reader.cancel().catch(() => {});
+    }
+
+    if (!audioUrl) return null;
+
+    // Step 3: Fetch the generated audio file (may be hosted on the Space itself)
+    const audioRes = await fetch(audioUrl, { signal: AbortSignal.timeout(15000) });
+    if (!audioRes.ok) {
+      console.info(`[TTS] Qwen3-TTS: Audio fetch returned ${audioRes.status}`);
+      return null;
+    }
+
+    return Buffer.from(await audioRes.arrayBuffer());
   } catch (err: any) {
-    console.warn("[TTS] HF Inference TTS error:", err?.message || err);
+    // AbortError = timeout; TypeError = network error — both handled gracefully
+    const name = err?.name as string | undefined;
+    if (name === "AbortError" || name === "TimeoutError") {
+      console.info("[TTS] Qwen3-TTS: Request timed out — falling back");
+    } else {
+      console.info("[TTS] Qwen3-TTS:", err?.message || String(err), "— falling back");
+    }
     return null;
   }
+}
+
+/**
+ * Call HF Inference API for TTS.
+ * Uses the provided token (may be server-side HF_API_TOKEN or user's personal token).
+ * First attempts Qwen3-TTS on the Inference API; falls back to facebook/mms-tts-eng.
+ */
+async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {
+  // Attempt Qwen3-TTS via HF Inference API (available for paid inference)
+  const models = ["Qwen/Qwen3-TTS", "facebook/mms-tts-eng"];
+  for (const model of models) {
+    try {
+      const response = await fetch(
+        `https://api-inference.huggingface.co/models/${model}`,
+        {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${hfToken}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ inputs: text }),
+          signal: AbortSignal.timeout(30000),
+        }
+      );
+
+      if (!response.ok) {
+        const errText = await response.text().catch(() => "");
+        console.info(`[TTS] HF Inference (${model}): ${response.status} — ${errText.slice(0, 100)}`);
+        continue;
+      }
+
+      const arrayBuf = await response.arrayBuffer();
+      if (arrayBuf.byteLength > 0) {
+        return Buffer.from(arrayBuf);
+      }
+    } catch (err: any) {
+      console.info(`[TTS] HF Inference (${model}): ${err?.message || err}`);
+    }
+  }
+  return null;
 }
 
 export interface TTSGenerateOptions {
@@ -144,12 +262,17 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   let fallback = false;
 
   if (voicePreset !== "browser") {
+    // 1. Try Qwen3-TTS via Gradio Space REST (public, no auth required)
     audioBuffer = await callQwen3TTS(truncatedText, voicePreset, referenceAudio);
 
-    if (!audioBuffer && hfToken) {
-      audioBuffer = await callHFInferenceTTS(truncatedText, hfToken);
-      audioFormat = "flac";
-      fallback = true;
+    // 2. Fall back to HF Inference API — prefer server env token, then user personal token
+    if (!audioBuffer) {
+      const effectiveToken = process.env.HF_API_TOKEN || hfToken;
+      if (effectiveToken) {
+        audioBuffer = await callHFInferenceTTS(truncatedText, effectiveToken);
+        audioFormat = "flac";
+        fallback = true;
+      }
     }
   }
 
@@ -164,8 +287,8 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
 }
 
 /**
- * Generate TTS audio for arbitrary text without caching.
- * Use this for free-form text requests where there is no stable unit-based cache key.
+ * Generate TTS audio for arbitrary text without DB caching.
+ * Used for free-form text requests where there is no stable unit-based cache key.
  */
 export async function callTTSDirect(text: string, voicePreset: string, referenceAudio?: string, hfToken?: string): Promise<Buffer | null> {
   if (!text || text.length < 3) return null;
@@ -174,8 +297,11 @@ export async function callTTSDirect(text: string, voicePreset: string, reference
 
   let audioBuffer = await callQwen3TTS(truncated, voicePreset, referenceAudio);
 
-  if (!audioBuffer && hfToken) {
-    audioBuffer = await callHFInferenceTTS(truncated, hfToken);
+  if (!audioBuffer) {
+    const effectiveToken = process.env.HF_API_TOKEN || hfToken;
+    if (effectiveToken) {
+      audioBuffer = await callHFInferenceTTS(truncated, effectiveToken);
+    }
   }
 
   return audioBuffer;
@@ -193,4 +319,3 @@ export async function preGenerateTTSForUnit(
   generateTTSAudio({ unitId, content, isNextGen, voicePreset, referenceAudio, hfToken })
     .catch(err => console.warn("[TTS] Background pre-generation failed:", err?.message || err));
 }
-

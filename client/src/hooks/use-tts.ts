@@ -46,7 +46,25 @@ async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string;
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
     const data = await res.json();
-    // Only use server TTS if audio data is actually present
+    if (!data.audioData) return null;
+    return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
+  } catch {
+    return null;
+  }
+}
+
+// Server TTS for arbitrary text (no unit — e.g. vocabulary cards, tooltips, Tesla with no browser TTS)
+async function fetchServerTTSText(text: string): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
+  try {
+    const res = await fetch("/api/tts/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ text }),
+    });
+    if (res.status === 403 || res.status === 401) return null;
+    if (!res.ok) return null;
+    const data = await res.json();
     if (!data.audioData) return null;
     return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
   } catch {
@@ -210,8 +228,12 @@ export function useTTS(): UseTTSReturn {
     const currentPreset = serverVoicePreset;
 
     try {
-      if (unitId && currentPreset !== "browser") {
-        const serverResult = await fetchServerTTSAudio(unitId);
+      if (currentPreset !== "browser") {
+        // Try server-side TTS for all presets — works on Tesla (no browser speechSynthesis needed)
+        const serverResult = unitId
+          ? await fetchServerTTSAudio(unitId)
+          : await fetchServerTTSText(text);
+
         if (serverResult && !cancelledRef.current) {
           setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
           try {
@@ -222,6 +244,7 @@ export function useTTS(): UseTTSReturn {
             return;
           } catch (audioErr: any) {
             if (audioErr?.message === "cancelled") return;
+            // Server audio playback failed — fall through to browser TTS
           }
         }
       }
