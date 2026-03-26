@@ -274,8 +274,8 @@ export function useTTS(): UseTTSReturn {
       if (!cancelledRef.current) {
         setState(prev => ({ ...prev, isSpeaking: false, progress: 100 }));
       }
-    } catch (error: any) {
-      if (error?.message === "cancelled") return;
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "cancelled") return;
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }

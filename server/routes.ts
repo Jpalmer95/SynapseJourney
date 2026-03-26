@@ -3099,8 +3099,8 @@ async function predictivelyGenerateNextUnit(
     if (content) {
       await preTTSForUnit(userId, nextUnit.id, content, isNextGen);
     }
-  } catch (err) {
-    console.warn("[Predictive] Pre-generation error:", (err as any)?.message || err);
+  } catch (err: unknown) {
+    console.warn("[Predictive] Pre-generation error:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -3112,8 +3112,8 @@ async function revalidateUnitLinks(unitId: number, content: any): Promise<void> 
       await storage.updateLessonContent(unitId, updatedContent);
       console.log(`[LinkValidator] Updated stale links for unit ${unitId}`);
     }
-  } catch (err) {
-    console.warn("[LinkValidator] Revalidation error:", (err as any)?.message || err);
+  } catch (err: unknown) {
+    console.warn("[LinkValidator] Revalidation error:", err instanceof Error ? err.message : String(err));
   }
 }
 
@@ -3146,8 +3146,8 @@ async function preTTSForUnit(userId: string, unitId: number, content: any, isNex
       console.log(`[PreTTS] Cached TTS audio for unit ${unitId}`);
     }
     // Note: generateTTSAudio() already writes to cache internally — no double-save needed here
-  } catch (err) {
-    console.warn("[PreTTS] Pre-generation error:", (err as any)?.message || err);
+  } catch (err: unknown) {
+    console.warn("[PreTTS] Pre-generation error:", err instanceof Error ? err.message : String(err));
   }
 }
 

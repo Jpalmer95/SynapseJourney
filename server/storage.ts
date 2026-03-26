@@ -1806,13 +1806,13 @@ export class DatabaseStorage implements IStorage {
   }
 
   async saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void> {
-    const updates: Record<string, any> = {
+    const updates: Partial<InsertUserProfile> = {
       ttsVoicePreset: voicePreset,
-      updatedAt: sql`CURRENT_TIMESTAMP`,
     };
     if (referenceAudio !== undefined) updates.ttsReferenceAudio = referenceAudio;
     if (playbackSpeed !== undefined) updates.ttsPlaybackSpeed = String(playbackSpeed);
-    await this.createOrUpdateUserProfile(userId, updates as any);
+    // createOrUpdateUserProfile appends updatedAt internally
+    await this.createOrUpdateUserProfile(userId, updates);
   }
 
   async getTtsAudioCache(unitId: number, voiceConfigHash: string): Promise<{ audioData: string; audioFormat: string } | null> {
