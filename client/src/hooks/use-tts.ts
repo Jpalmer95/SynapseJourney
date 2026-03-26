@@ -106,11 +106,10 @@ export function useTTS(): UseTTSReturn {
     }
   }, [ttsSettings]);
 
+  // isSupported is always true — server TTS works even without browser speechSynthesis (e.g. Tesla)
+  // The button is always shown; error state is surfaced when both server and browser fail.
   useEffect(() => {
-    if (!BROWSER_SPEECH_SUPPORTED) {
-      setState(prev => ({ ...prev, isSupported: true }));
-      return;
-    }
+    if (!BROWSER_SPEECH_SUPPORTED) return;
 
     const loadVoices = () => {
       const voices = window.speechSynthesis.getVoices();
@@ -228,7 +227,8 @@ export function useTTS(): UseTTSReturn {
       }
 
       if (!BROWSER_SPEECH_SUPPORTED) {
-        setState(prev => ({ ...prev, isLoading: false, error: "Text-to-speech is not available on this device.", isSupported: false }));
+        // Both server TTS and browser TTS have failed (e.g. Tesla browser without AI preset)
+        setState(prev => ({ ...prev, isLoading: false, error: "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.", isSupported: true }));
         return;
       }
 

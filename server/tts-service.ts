@@ -69,43 +69,49 @@ function buildLessonText(content: any, isNextGen: boolean): string {
 }
 
 async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
-  try {
-    const { Client } = await import("@gradio/client");
-    const client = await Client.connect("Qwen/Qwen3-TTS", { hf_token: undefined });
+  // Wrap with a hard timeout so a slow Gradio connection never hangs the server
+  const TIMEOUT_MS = 25000;
+  const raceTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS));
+  const attempt = (async () => {
+    try {
+      const { Client } = await import("@gradio/client");
+      const client = await Client.connect("Qwen/Qwen3-TTS", { hf_token: undefined });
 
-    const voicePreset = getVoicePreset(voicePresetId);
-    const promptText = voicePreset
-      ? `[${voicePreset.style}] ${text}`
-      : text;
+      const voicePreset = getVoicePreset(voicePresetId);
+      const promptText = voicePreset
+        ? `[${voicePreset.style}] ${text}`
+        : text;
 
-    let referenceBlob: Blob | undefined;
-    if (referenceAudio) {
-      const audioBuffer = Buffer.from(referenceAudio, "base64");
-      referenceBlob = new Blob([audioBuffer], { type: "audio/wav" });
-    }
-
-    const inputArgs: any[] = [promptText];
-    if (referenceBlob) inputArgs.push(referenceBlob);
-
-    const result = await client.predict("/synthesize", inputArgs);
-
-    if (result?.data?.[0]) {
-      const audioOutput = result.data[0];
-      if (audioOutput?.url) {
-        const audioRes = await fetch(audioOutput.url);
-        const arrayBuf = await audioRes.arrayBuffer();
-        return Buffer.from(arrayBuf);
+      let referenceBlob: Blob | undefined;
+      if (referenceAudio) {
+        const audioBuffer = Buffer.from(referenceAudio, "base64");
+        referenceBlob = new Blob([audioBuffer], { type: "audio/wav" });
       }
-      if (audioOutput instanceof Blob) {
-        const arrayBuf = await audioOutput.arrayBuffer();
-        return Buffer.from(arrayBuf);
+
+      const inputArgs: any[] = [promptText];
+      if (referenceBlob) inputArgs.push(referenceBlob);
+
+      const result = await client.predict("/synthesize", inputArgs);
+
+      if (result?.data?.[0]) {
+        const audioOutput = result.data[0];
+        if (audioOutput?.url) {
+          const audioRes = await fetch(audioOutput.url, { signal: AbortSignal.timeout(10000) });
+          const arrayBuf = await audioRes.arrayBuffer();
+          return Buffer.from(arrayBuf);
+        }
+        if (audioOutput instanceof Blob) {
+          const arrayBuf = await audioOutput.arrayBuffer();
+          return Buffer.from(arrayBuf);
+        }
       }
+      return null;
+    } catch (err: any) {
+      console.warn("[TTS] Qwen3-TTS failed:", err?.message || err);
+      return null;
     }
-    return null;
-  } catch (err: any) {
-    console.warn("[TTS] Qwen3-TTS failed:", err?.message || err);
-    return null;
-  }
+  })();
+  return Promise.race([attempt, raceTimeout]);
 }
 
 async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {

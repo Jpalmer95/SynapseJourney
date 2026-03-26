@@ -48,7 +48,7 @@ export function TTSButton({
   const {
     isLoading,
     isSpeaking,
-    isSupported,
+    error: ttsError,
     usingServerTTS,
     rate,
     speak,
@@ -74,7 +74,8 @@ export function TTSButton({
     retry: false,
   });
 
-  if (!isSupported) return null;
+  // Always render TTS button — server TTS works on all devices (including Tesla browsers)
+  // isSupported is always true; error state is surfaced inline when both server+browser fail
 
   const handleClick = () => {
     if (isLoading) return;
@@ -104,7 +105,7 @@ export function TTSButton({
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 5 * 1024 * 1024) {
+    if (file.size > 2 * 1024 * 1024) {
       setUploadStatus("error");
       return;
     }
@@ -176,13 +177,18 @@ export function TTSButton({
           </Button>
         </TooltipTrigger>
         <TooltipContent>
-          <div className="flex items-center gap-1.5">
-            {getTooltip()}
-            {isAIPreset && isCached && !isSpeaking && (
-              <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
-            )}
-            {usingServerTTS && (
-              <Badge variant="secondary" className="text-xs px-1 py-0 h-4 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">AI</Badge>
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-1.5">
+              {getTooltip()}
+              {isAIPreset && isCached && !isSpeaking && (
+                <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
+              )}
+              {usingServerTTS && (
+                <Badge variant="secondary" className="text-xs px-1 py-0 h-4 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">AI</Badge>
+              )}
+            </div>
+            {ttsError && (
+              <p className="text-xs text-red-400 max-w-[200px]">{ttsError}</p>
             )}
           </div>
         </TooltipContent>
@@ -292,7 +298,7 @@ export function TTSButton({
 
               <TabsContent value="clone" className="mt-2 space-y-2">
                 <p className="text-xs text-muted-foreground">
-                  Upload a voice sample (up to 30s) to clone it. Supported formats: WAV, MP3, M4A. Max 5MB.
+                  Upload a voice sample (up to 30 seconds) to clone it. Supported formats: WAV, MP3, M4A. Max 2MB.
                 </p>
                 <div
                   className={cn(
@@ -324,13 +330,13 @@ export function TTSButton({
                   ) : uploadStatus === "error" ? (
                     <div className="flex flex-col items-center gap-1.5">
                       <VolumeX className="h-5 w-5 text-red-500" />
-                      <p className="text-xs text-red-500">Upload failed. Check file size (max 5MB).</p>
+                      <p className="text-xs text-red-500">Upload failed. Audio must be ≤30 seconds (max 2MB).</p>
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-1.5">
                       <Mic className="h-5 w-5 text-muted-foreground" />
                       <p className="text-xs text-muted-foreground">Click to upload voice sample</p>
-                      <p className="text-xs text-muted-foreground/60">WAV, MP3, M4A · Max 5MB</p>
+                      <p className="text-xs text-muted-foreground/60">WAV, MP3, M4A · Max 2MB · ≤30 sec</p>
                     </div>
                   )}
                 </div>
