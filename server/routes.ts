@@ -865,14 +865,20 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       if (!parsed.success) return res.status(400).json({ error: "Invalid audio data" });
 
       const { audioBase64 } = parsed.data;
-      const sizeBytes = Buffer.from(audioBase64, "base64").length;
+      const audioBuffer = Buffer.from(audioBase64, "base64");
+      const sizeBytes = audioBuffer.length;
       // 2MB max ~= 30s of voice-quality mono audio (16kHz 16-bit WAV ≈ 960KB/30s; 128kbps MP3 ≈ 480KB/30s)
-      // This enforces the ≤30s reference audio requirement via size proxy
       if (sizeBytes > 2 * 1024 * 1024) {
         return res.status(400).json({ error: "Reference audio must be 30 seconds or less (max 2MB). Please trim your recording." });
       }
 
-      const { hashBase64 } = await import("./tts-service");
+      const { hashBase64, getWavDurationSeconds } = await import("./tts-service");
+
+      // For WAV files, validate exact duration from header (more accurate than size proxy)
+      const wavDuration = getWavDurationSeconds(audioBuffer);
+      if (wavDuration !== null && wavDuration > 30) {
+        return res.status(400).json({ error: `Reference audio is ${Math.round(wavDuration)}s — must be 30 seconds or less. Please trim your recording.` });
+      }
       const referenceAudioPath = `ref-${hashBase64(audioBase64)}`;
       await storage.saveTtsSettings(req.user.claims.sub, "custom", audioBase64);
       res.json({ ok: true, referenceAudioPath, message: "Voice reference uploaded successfully" });
@@ -943,11 +949,17 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Free-text requests: generate without caching (no stable key; different texts would collide at unitId=0)
       if (freeText && !unitIdForCache) {
         const userProfile = await storage.getUserProfile(userId);
-        const audioBuffer = await callTTSDirect(freeText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
-        if (!audioBuffer) {
+        const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+        if (!directResult) {
           return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
         }
-        return res.json({ audioData: audioBuffer.toString("base64"), audioFormat: "wav", fromCache: false, fallback: false, playbackSpeed });
+        return res.json({
+          audioData: directResult.buffer.toString("base64"),
+          audioFormat: directResult.format,
+          fromCache: false,
+          fallback: false,
+          playbackSpeed,
+        });
       }
 
       // Unit-based requests: use cache

@@ -24,6 +24,48 @@ export function getVoicePreset(id: string): VoicePreset | undefined {
   return VOICE_PRESETS.find(v => v.id === id);
 }
 
+/**
+ * Detect audio format from buffer magic bytes.
+ * Avoids hardcoding "wav" when provider may return flac/mp3/ogg.
+ */
+export function detectAudioFormat(buffer: Buffer): string {
+  if (buffer.length < 4) return "wav";
+  // RIFF…WAVE = WAV
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46) return "wav";
+  // fLaC = FLAC
+  if (buffer[0] === 0x66 && buffer[1] === 0x4C && buffer[2] === 0x61 && buffer[3] === 0x43) return "flac";
+  // OggS = OGG
+  if (buffer[0] === 0x4F && buffer[1] === 0x67 && buffer[2] === 0x67 && buffer[3] === 0x53) return "ogg";
+  // ID3 or 0xFF 0xFB/0xF3/0xF2 = MP3
+  if ((buffer[0] === 0x49 && buffer[1] === 0x44 && buffer[2] === 0x33) ||
+      (buffer[0] === 0xFF && (buffer[1] & 0xE0) === 0xE0)) return "mp3";
+  return "wav";
+}
+
+/**
+ * Attempt to read WAV duration in seconds from its header.
+ * Returns null for non-WAV or malformed files.
+ */
+export function getWavDurationSeconds(buffer: Buffer): number | null {
+  if (buffer.length < 44) return null;
+  if (buffer.toString("ascii", 0, 4) !== "RIFF") return null;
+  if (buffer.toString("ascii", 8, 12) !== "WAVE") return null;
+  const byteRate = buffer.readUInt32LE(28);
+  if (!byteRate) return null;
+  // Scan for 'data' chunk (may not be at fixed offset in all encoders)
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString("ascii", offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    if (chunkId === "data") {
+      return chunkSize / byteRate;
+    }
+    offset += 8 + chunkSize;
+    if (chunkSize === 0 || chunkSize > buffer.length) break;
+  }
+  return null;
+}
+
 export function hashVoiceConfig(preset: string, referenceAudioHash?: string): string {
   const input = `${preset}:${referenceAudioHash || ""}`;
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
@@ -258,7 +300,6 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   const truncatedText = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
 
   let audioBuffer: Buffer | null = null;
-  let audioFormat = "wav";
   let fallback = false;
 
   if (voicePreset !== "browser") {
@@ -270,7 +311,6 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
       const effectiveToken = process.env.HF_API_TOKEN || hfToken;
       if (effectiveToken) {
         audioBuffer = await callHFInferenceTTS(truncatedText, effectiveToken);
-        audioFormat = "flac";
         fallback = true;
       }
     }
@@ -280,6 +320,8 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
     return null;
   }
 
+  // Detect actual format from magic bytes — never assume the provider returned WAV
+  const audioFormat = detectAudioFormat(audioBuffer);
   const audioData = audioBuffer.toString("base64");
   await saveCachedAudio(unitId, configHash, audioData, audioFormat).catch(console.error);
 
@@ -289,13 +331,19 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
 /**
  * Generate TTS audio for arbitrary text without DB caching.
  * Used for free-form text requests where there is no stable unit-based cache key.
+ * Returns the buffer AND its detected audio format (never hardcodes "wav").
  */
-export async function callTTSDirect(text: string, voicePreset: string, referenceAudio?: string, hfToken?: string): Promise<Buffer | null> {
+export async function callTTSDirect(
+  text: string,
+  voicePreset: string,
+  referenceAudio?: string,
+  hfToken?: string
+): Promise<{ buffer: Buffer; format: string } | null> {
   if (!text || text.length < 3) return null;
   const MAX_CHARS = 3000;
   const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
 
-  let audioBuffer = await callQwen3TTS(truncated, voicePreset, referenceAudio);
+  let audioBuffer: Buffer | null = await callQwen3TTS(truncated, voicePreset, referenceAudio);
 
   if (!audioBuffer) {
     const effectiveToken = process.env.HF_API_TOKEN || hfToken;
@@ -304,7 +352,8 @@ export async function callTTSDirect(text: string, voicePreset: string, reference
     }
   }
 
-  return audioBuffer;
+  if (!audioBuffer) return null;
+  return { buffer: audioBuffer, format: detectAudioFormat(audioBuffer) };
 }
 
 export async function preGenerateTTSForUnit(
