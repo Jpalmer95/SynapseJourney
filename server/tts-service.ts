@@ -70,7 +70,7 @@ function buildLessonText(content: any, isNextGen: boolean): string {
 
 async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
   // Wrap with a hard timeout so a slow Gradio connection never hangs the server
-  const TIMEOUT_MS = 25000;
+  const TIMEOUT_MS = 5000;
   const raceTimeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS));
   const attempt = (async () => {
     try {
@@ -198,6 +198,24 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   await saveCachedAudio(unitId, configHash, audioData, audioFormat).catch(console.error);
 
   return { audioData, audioFormat, fromCache: false, fallback };
+}
+
+/**
+ * Generate TTS audio for arbitrary text without caching.
+ * Use this for free-form text requests where there is no stable unit-based cache key.
+ */
+export async function callTTSDirect(text: string, voicePreset: string, referenceAudio?: string, hfToken?: string): Promise<Buffer | null> {
+  if (!text || text.length < 3) return null;
+  const MAX_CHARS = 3000;
+  const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
+
+  let audioBuffer = await callQwen3TTS(truncated, voicePreset, referenceAudio);
+
+  if (!audioBuffer && hfToken) {
+    audioBuffer = await callHFInferenceTTS(truncated, hfToken);
+  }
+
+  return audioBuffer;
 }
 
 export async function preGenerateTTSForUnit(

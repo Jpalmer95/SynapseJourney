@@ -275,10 +275,22 @@ export function useTTS(): UseTTSReturn {
     setState(prev => ({ ...prev, isSpeaking: true }));
   }, []);
 
+  const persistSpeedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const setRate = useCallback((newRate: number) => {
     const clamped = Math.max(0.5, Math.min(3, newRate));
     setRateState(clamped);
     if (audioRef.current) audioRef.current.playbackRate = clamped;
+    // Persist speed to server (debounced 600ms so slider drag doesn't spam API)
+    if (persistSpeedTimerRef.current) clearTimeout(persistSpeedTimerRef.current);
+    persistSpeedTimerRef.current = setTimeout(() => {
+      fetch("/api/tts/settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ playbackSpeed: clamped }),
+      }).catch(e => console.warn("Failed to persist TTS speed:", e));
+    }, 600);
   }, []);
 
   const setSelectedVoice = useCallback((voiceName: string) => {

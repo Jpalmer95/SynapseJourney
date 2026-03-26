@@ -5,6 +5,15 @@ import { createServer } from "http";
 import { seedQuestionBank } from "./seedQuestionBank";
 import { populateMissingLessonUnits, regeneratePlaceholderContent } from "./populateLessonUnits";
 
+// Prevent Gradio/WebSocket library errors from crashing the server process
+process.on("unhandledRejection", (reason: unknown) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error("[Server] Unhandled rejection (suppressed to prevent crash):", msg);
+});
+process.on("uncaughtException", (err: Error) => {
+  console.error("[Server] Uncaught exception (suppressed):", err.message);
+});
+
 const app = express();
 const httpServer = createServer(app);
 

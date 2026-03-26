@@ -833,13 +833,15 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
     try {
       const schema = z.object({
-        voicePreset: z.string().min(1),
+        voicePreset: z.string().min(1).optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
-      });
+      }).refine(d => d.voicePreset || d.playbackSpeed !== undefined, { message: "At least one setting must be provided" });
       const parsed = schema.safeParse(req.body);
       if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
       const { voicePreset, playbackSpeed } = parsed.data;
-      await storage.saveTtsSettings(req.user.claims.sub, voicePreset, undefined, playbackSpeed);
+      // Fetch current settings to fill in any unspecified fields (partial update)
+      const current = await storage.getTtsSettings(req.user.claims.sub);
+      await storage.saveTtsSettings(req.user.claims.sub, voicePreset || current.voicePreset, undefined, playbackSpeed ?? current.playbackSpeed);
       res.json({ ok: true });
     } catch (err) {
       console.error("TTS settings save error:", err);
@@ -916,18 +918,31 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Load TTS settings (user's saved preferences, overridable by voiceConfig)
       const ttsSettings = await storage.getTtsSettings(userId);
       const voicePreset = voiceConfig?.preset || ttsSettings.voicePreset;
-      const referenceAudio = voiceConfig?.referenceAudio || ttsSettings.referenceAudio;
+      // Only apply stored reference audio when preset is "custom"; other presets must not use it
+      const referenceAudio = (voicePreset === "custom")
+        ? (voiceConfig?.referenceAudio || ttsSettings.referenceAudio || undefined)
+        : (voiceConfig?.referenceAudio || undefined);
       const playbackSpeed = voiceConfig?.playbackSpeed || ttsSettings.playbackSpeed;
 
       if (voicePreset === "browser") {
         return res.json({ fallback: true, message: "Browser TTS is selected" });
       }
 
-      const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("./tts-service");
+      const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect } = await import("./tts-service");
       const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
       const configHash = hashVoiceConfig(voicePreset, refHash);
 
-      // Check cache for unit-based requests after we know it's an AI preset
+      // Free-text requests: generate without caching (no stable key; different texts would collide at unitId=0)
+      if (freeText && !unitIdForCache) {
+        const userProfile = await storage.getUserProfile(userId);
+        const audioBuffer = await callTTSDirect(freeText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+        if (!audioBuffer) {
+          return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
+        }
+        return res.json({ audioData: audioBuffer.toString("base64"), audioFormat: "wav", fromCache: false, fallback: false, playbackSpeed });
+      }
+
+      // Unit-based requests: use cache
       if (unitIdForCache && !forceRegenerate) {
         const cached = await storage.getTtsAudioCache(unitIdForCache, configHash);
         if (cached) {
@@ -936,31 +951,18 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       }
 
       const userProfile = await storage.getUserProfile(userId);
-      const result = freeText
-        ? await generateTTSAudio({
-            unitId: 0,
-            content: { concept: freeText },
-            isNextGen: false,
-            voicePreset,
-            referenceAudio: referenceAudio || undefined,
-            hfToken: userProfile?.huggingFaceToken || undefined,
-          })
-        : await generateTTSAudio({
-            unitId: unitIdForCache!,
-            content: contentForTTS,
-            isNextGen: false,
-            voicePreset,
-            referenceAudio: referenceAudio || undefined,
-            hfToken: userProfile?.huggingFaceToken || undefined,
-          });
+      const result = await generateTTSAudio({
+        unitId: unitIdForCache!,
+        content: contentForTTS,
+        isNextGen: false,
+        voicePreset,
+        referenceAudio,
+        hfToken: userProfile?.huggingFaceToken || undefined,
+      });
 
       if (!result) {
         // No audio data available — client should fall back to browser TTS
         return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
-      }
-
-      if (unitIdForCache) {
-        await storage.saveTtsAudioCache(unitIdForCache, configHash, result.audioData, result.audioFormat);
       }
 
       res.json({ ...result, playbackSpeed });
