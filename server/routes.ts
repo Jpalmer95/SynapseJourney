@@ -3102,9 +3102,9 @@ async function preTTSForUnit(userId: string, unitId: number, content: any, isNex
     });
 
     if (result) {
-      await storage.saveTtsAudioCache(unitId, configHash, result.audioData, result.audioFormat);
       console.log(`[PreTTS] Cached TTS audio for unit ${unitId}`);
     }
+    // Note: generateTTSAudio() already writes to cache internally — no double-save needed here
   } catch (err) {
     console.warn("[PreTTS] Pre-generation error:", (err as any)?.message || err);
   }

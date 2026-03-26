@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -219,7 +219,9 @@ export const ttsAudioCache = pgTable("tts_audio_cache", {
   audioData: text("audio_data").notNull(), // base64-encoded audio (wav/mp3)
   audioFormat: text("audio_format").default("wav").notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
-});
+}, (table) => ({
+  unitVoiceUnique: uniqueIndex("tts_audio_cache_unit_voice_unique").on(table.unitId, table.voiceConfigHash),
+}));
 
 // Learning Pathways (curated groupings like Physics, Engineering, etc.)
 export const pathways = pgTable("pathways", {

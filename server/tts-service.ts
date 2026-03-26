@@ -68,57 +68,14 @@ function buildLessonText(content: any, isNextGen: boolean): string {
   return parts.join(" ").replace(/\n+/g, " ").trim();
 }
 
-async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
-  // Use a local unhandledRejection listener scoped to this call only,
-  // so Gradio WebSocket errors don't propagate as global process crashes.
-  // This is intentionally local (not a global handler) — only active during the Gradio call.
-  const onRejection = (_reason: unknown) => { /* suppress — logged below */ };
-  process.on("unhandledRejection", onRejection);
-
-  const TIMEOUT_MS = 5000;
-  try {
-    const result = await Promise.race([
-      (async () => {
-        try {
-          const { Client } = await import("@gradio/client");
-          const client = await (Client as any).connect("Qwen/Qwen3-TTS");
-
-          const voicePreset = getVoicePreset(voicePresetId);
-          const promptText = voicePreset ? `[${voicePreset.style}] ${text}` : text;
-
-          let referenceBlob: Blob | undefined;
-          if (referenceAudio) {
-            referenceBlob = new Blob([Buffer.from(referenceAudio, "base64")], { type: "audio/wav" });
-          }
-
-          const inputArgs: unknown[] = [promptText];
-          if (referenceBlob) inputArgs.push(referenceBlob);
-
-          const res = await client.predict("/synthesize", inputArgs) as { data: unknown[] };
-          const audioOutput = res?.data?.[0] as { url?: string } | Blob | null | undefined;
-
-          if (audioOutput) {
-            if (typeof (audioOutput as { url?: string }).url === "string") {
-              const audioRes = await fetch((audioOutput as { url: string }).url, { signal: AbortSignal.timeout(10000) });
-              return Buffer.from(await audioRes.arrayBuffer());
-            }
-            if (audioOutput instanceof Blob) {
-              return Buffer.from(await audioOutput.arrayBuffer());
-            }
-          }
-          return null;
-        } catch (err: any) {
-          console.warn("[TTS] Qwen3-TTS predict failed:", err?.message || err);
-          return null;
-        }
-      })(),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), TIMEOUT_MS)),
-    ]);
-    return result;
-  } finally {
-    // Always remove the local listener once the call completes
-    process.off("unhandledRejection", onRejection);
-  }
+async function callQwen3TTS(_text: string, _voicePresetId: string, _referenceAudio?: string): Promise<Buffer | null> {
+  // Qwen3-TTS Gradio Space integration is pending a stable HTTP REST endpoint.
+  // The @gradio/client library uses WebSocket-based streaming that emits errors outside
+  // standard Promise chains, making them impossible to catch with try/catch alone.
+  // Until a REST-based TTS endpoint is configured, this path returns null so the system
+  // falls through to HF Inference API (if user has an HF token) or browser TTS.
+  console.info("[TTS] Qwen3-TTS: Gradio integration awaiting REST endpoint configuration");
+  return null;
 }
 
 async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {
