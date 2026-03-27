@@ -156,16 +156,20 @@ export function useTTS(): UseTTSReturn {
     if (!BROWSER_SPEECH_SUPPORTED) return;
 
     const loadVoices = () => {
-      const voices = window.speechSynthesis.getVoices();
-      if (voices.length > 0) {
-        setState(prev => ({ ...prev, availableVoices: voices }));
-        if (!selectedVoiceName) {
-          const preferred = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
-            || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen"))
-            || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria"))
-            || voices.find(v => v.lang.startsWith("en")) || voices[0];
-          if (preferred) setSelectedVoiceState(preferred.name);
+      try {
+        const voices = Array.from(window.speechSynthesis.getVoices());
+        if (voices.length > 0) {
+          setState(prev => ({ ...prev, availableVoices: voices }));
+          if (!selectedVoiceName) {
+            const preferred = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
+              || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen"))
+              || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria"))
+              || voices.find(v => v.lang.startsWith("en")) || voices[0];
+            if (preferred) setSelectedVoiceState(preferred.name);
+          }
         }
+      } catch {
+        // iOS WebKit may throw during voice list initialization — ignore and continue
       }
     };
 
@@ -202,13 +206,19 @@ export function useTTS(): UseTTSReturn {
       utterance.pitch = 1;
       utterance.volume = 1;
 
-      const voices = window.speechSynthesis.getVoices();
+      const voices = Array.from(window.speechSynthesis.getVoices());
       let selectedVoice = voiceRef.current ? voices.find(v => v.name === voiceRef.current) : undefined;
       if (!selectedVoice) {
         selectedVoice = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
           || voices.find(v => v.lang.startsWith("en")) || voices[0];
       }
-      if (selectedVoice) utterance.voice = selectedVoice;
+      // iOS WebKit throws Object.getPrototypeOf(voice) if the voice object is stale/detached.
+      // Wrap in try/catch so a bad voice silently falls back to the browser default.
+      try {
+        if (selectedVoice) utterance.voice = selectedVoice;
+      } catch {
+        // ignore — proceed with default voice
+      }
 
       utterance.onend = () => cancelledRef.current ? reject(new Error("cancelled")) : resolve();
       utterance.onerror = (e) => {
@@ -216,7 +226,12 @@ export function useTTS(): UseTTSReturn {
         else reject(new Error(e.error));
       };
       utteranceRef.current = utterance;
-      window.speechSynthesis.speak(utterance);
+      try {
+        window.speechSynthesis.speak(utterance);
+      } catch {
+        reject(new Error("speech_synthesis_error"));
+        return;
+      }
     });
   }, []);
 
