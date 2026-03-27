@@ -45,6 +45,20 @@ export interface ValidatedResource {
   description: string;
 }
 
+// Community forum items use `name` instead of `title`; this union covers both shapes
+export type RawLinkItem = ValidatedResource | {
+  name: string;
+  url: string;
+  description?: string;
+  [key: string]: unknown;
+};
+
+function normalizeItem(item: RawLinkItem): ValidatedResource {
+  if ("title" in item && typeof item.title === "string") return item as ValidatedResource;
+  const { name, url, description, ...rest } = item as { name: string; url: string; description?: string; [key: string]: unknown };
+  return { title: name, url, type: (rest.type as string | undefined) ?? "community", description: description ?? "" };
+}
+
 interface ValidationResult {
   url: string;
   live: boolean;
@@ -113,19 +127,22 @@ async function checkUrl(url: string): Promise<ValidationResult> {
   }
 }
 
-export async function validateResources(resources: ValidatedResource[]): Promise<ValidatedResource[]> {
+export async function validateResources(resources: RawLinkItem[]): Promise<ValidatedResource[]> {
   if (!resources || resources.length === 0) return [];
 
-  const results = await Promise.allSettled(resources.map(r => checkUrl(r.url)));
+  // Normalize all items to ValidatedResource (handles both title/name shapes)
+  const normalized = resources.map(normalizeItem);
+
+  const results = await Promise.allSettled(normalized.map(r => checkUrl(r.url)));
   const filtered: ValidatedResource[] = [];
 
-  for (let i = 0; i < resources.length; i++) {
+  for (let i = 0; i < normalized.length; i++) {
     const result = results[i];
     if (result.status === "fulfilled" && result.value.live) {
-      filtered.push(resources[i]);
+      filtered.push(normalized[i]);
     } else {
       const reason = result.status === "rejected" ? result.reason : result.value.error || `HTTP ${result.value.status}`;
-      console.log(`[LinkValidator] Dead link removed: ${resources[i].url} (${reason})`);
+      console.log(`[LinkValidator] Dead link removed: ${normalized[i].url} (${reason})`);
     }
   }
 
@@ -133,7 +150,7 @@ export async function validateResources(resources: ValidatedResource[]): Promise
 }
 
 export async function validateAndRefreshResources(
-  resources: ValidatedResource[],
+  resources: RawLinkItem[],
   topicTitle: string,
   categoryName: string,
   difficulty: string,
@@ -159,11 +176,11 @@ export async function validateAndRefreshResources(
   return validated;
 }
 
-function extractResources(contentJson: Record<string, unknown>, field: string): ValidatedResource[] {
+function extractResources(contentJson: Record<string, unknown>, field: string): RawLinkItem[] {
   const value = contentJson[field];
   if (!Array.isArray(value) || value.length === 0) return [];
   return value.filter(
-    (r): r is ValidatedResource =>
+    (r): r is RawLinkItem =>
       typeof r === "object" && r !== null &&
       typeof (r as Record<string, unknown>).url === "string"
   );

@@ -3746,8 +3746,8 @@ Requirements:
 
     // Validate and filter resources + communityForums for dead links
     const { validateResources } = await import("./link-validator");
-    type LinkItem = { title: string; url: string; type: string; description: string };
-    const isLinkArray = (v: unknown): v is LinkItem[] =>
+    type RawLinkItem = import("./link-validator").RawLinkItem;
+    const isLinkArray = (v: unknown): v is RawLinkItem[] =>
       Array.isArray(v) && v.length > 0 && typeof (v[0] as Record<string, unknown>)?.url === "string";
 
     if (isLinkArray(parsed.resources)) {
