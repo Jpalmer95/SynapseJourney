@@ -267,14 +267,14 @@ export function useTTS(): UseTTSReturn {
     setState(prev => ({ ...prev, isLoading: true, error: null, usingServerTTS: false }));
 
     const currentPreset = serverVoicePreset;
+    // Always attempt server TTS when:
+    // (a) an AI preset is selected, OR
+    // (b) browser speechSynthesis is unavailable (e.g. Tesla, web views, headless)
+    // This makes audio work on unsupported browsers regardless of the saved preset.
+    // Declared before the try block so it's accessible in the catch for iOS fallback logic.
+    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
 
     try {
-      // Always attempt server TTS when:
-      // (a) an AI preset is selected, OR
-      // (b) browser speechSynthesis is unavailable (e.g. Tesla, web views, headless)
-      // This makes audio work on unsupported browsers regardless of the saved preset.
-      const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
-
       if (shouldTryServer) {
         // Paragraph-first fast play: if a unitId is given, check if audio is cached.
         // Cached → play immediately (normal path). Uncached → play intro quickly,
@@ -390,6 +390,19 @@ export function useTTS(): UseTTSReturn {
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "cancelled") return;
+      // If the browser speech synthesizer threw (e.g. iOS WebKit stale-voice bug) and
+      // the caller was in browser-only mode, silently retry via server TTS before giving up.
+      if (!shouldTryServer && error instanceof Error && error.message === "speech_synthesis_error") {
+        try {
+          const fallback = unitId ? await fetchServerTTSAudio(unitId) : await fetchServerTTSText(text);
+          if (fallback && !cancelledRef.current) {
+            setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+            await playServerAudio(fallback.audioData, fallback.audioFormat, fallback.playbackSpeed || rate);
+            if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+            return;
+          }
+        } catch { /* server TTS also failed — fall through to error state */ }
+      }
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
