@@ -18,15 +18,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useTTS } from "@/hooks/use-tts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-
-const AI_VOICE_PRESETS = [
-  { id: "aria", name: "Aria", description: "Warm educator", gender: "female", color: "text-pink-500 dark:text-pink-400" },
-  { id: "nova", name: "Nova", description: "Energetic", gender: "female", color: "text-violet-500 dark:text-violet-400" },
-  { id: "lyra", name: "Lyra", description: "Calm & soothing", gender: "female", color: "text-blue-500 dark:text-blue-400" },
-  { id: "echo", name: "Echo", description: "Professional", gender: "male", color: "text-green-600 dark:text-green-400" },
-  { id: "sage", name: "Sage", description: "Authoritative", gender: "male", color: "text-amber-600 dark:text-amber-400" },
-  { id: "orion", name: "Orion", description: "Thoughtful", gender: "male", color: "text-cyan-600 dark:text-cyan-400" },
-];
+import { AI_VOICE_PRESETS } from "@/lib/tts-constants";
 
 interface TTSButtonProps {
   text: string;

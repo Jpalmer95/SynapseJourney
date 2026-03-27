@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet, Volume2, Mic, Upload } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -11,10 +11,13 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { AI_VOICE_PRESETS } from "@/lib/tts-constants";
+import { cn } from "@/lib/utils";
 
 interface CategoryPreference {
   categoryId: number;
@@ -458,7 +461,82 @@ export default function SettingsPage() {
 
   const [localProfile, setLocalProfile] = useState<UserProfile>({});
   const [hasChanges, setHasChanges] = useState(false);
-  
+
+  const { data: ttsSettings, isLoading: ttsLoading } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
+    queryKey: ["/api/tts/settings"],
+    staleTime: 30000,
+    retry: false,
+  });
+
+  const [localVoicePreset, setLocalVoicePreset] = useState<string>("aria");
+  const [localSpeed, setLocalSpeed] = useState<number>(1.0);
+  const [ttsUploading, setTtsUploading] = useState(false);
+  const [ttsUploadStatus, setTtsUploadStatus] = useState<"idle" | "success" | "error">("idle");
+  const ttsFileRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (ttsSettings) {
+      setLocalVoicePreset(ttsSettings.voicePreset || "aria");
+      setLocalSpeed(ttsSettings.playbackSpeed || 1.0);
+    }
+  }, [ttsSettings]);
+
+  const setPresetMutation = useMutation({
+    mutationFn: async (preset: string) => {
+      return apiRequest("PUT", "/api/tts/settings", { voicePreset: preset, playbackSpeed: localSpeed });
+    },
+    onSuccess: (_data, preset) => {
+      setLocalVoicePreset(preset);
+      queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+      toast({ title: "Voice updated", description: `Default voice set to ${AI_VOICE_PRESETS.find(p => p.id === preset)?.name ?? preset}.` });
+    },
+    onError: () => toast({ title: "Error", description: "Failed to save voice preference.", variant: "destructive" }),
+  });
+
+  const setSpeedMutation = useMutation({
+    mutationFn: async (speed: number) => {
+      return apiRequest("PUT", "/api/tts/settings", { playbackSpeed: speed });
+    },
+    onSuccess: (_data, speed) => {
+      setLocalSpeed(speed);
+      queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+    },
+  });
+
+  const handleTtsVoiceUpload = async (file: File) => {
+    if (!file) return;
+    setTtsUploading(true);
+    setTtsUploadStatus("idle");
+    try {
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/tts/voice-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ audio: base64, filename: file.name }),
+      });
+      if (res.ok) {
+        setTtsUploadStatus("success");
+        setLocalVoicePreset("custom");
+        queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+        toast({ title: "Voice uploaded", description: "Your custom voice has been saved as your default." });
+      } else {
+        setTtsUploadStatus("error");
+        toast({ title: "Upload failed", description: "Could not process voice sample.", variant: "destructive" });
+      }
+    } catch {
+      setTtsUploadStatus("error");
+      toast({ title: "Upload failed", description: "Could not read the audio file.", variant: "destructive" });
+    } finally {
+      setTtsUploading(false);
+    }
+  };
+
   const [showFeedDialog, setShowFeedDialog] = useState(false);
   const [editingFeed, setEditingFeed] = useState<CustomFeed | null>(null);
   const [feedName, setFeedName] = useState("");
@@ -867,6 +945,165 @@ export default function SettingsPage() {
                     data-testid="switch-test-out"
                   />
                 </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Voice & Audio Section */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.13 }}
+            className="mb-6"
+          >
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Volume2 className="h-5 w-5 text-primary" />
+                  <CardTitle>Voice &amp; Audio</CardTitle>
+                </div>
+                <CardDescription>
+                  Choose a default AI voice for lesson narration. Your selection is saved and applied to every lesson automatically.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {ttsLoading ? (
+                  <div className="space-y-3">
+                    <Skeleton className="h-10 w-full" />
+                    <Skeleton className="h-10 w-full" />
+                  </div>
+                ) : (
+                  <>
+                    {/* AI Voice Presets */}
+                    <div className="space-y-2">
+                      <Label>AI Voices</Label>
+                      <p className="text-xs text-muted-foreground">
+                        High-quality AI voices generated server-side. Works on all devices including Tesla browsers.
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+                        {AI_VOICE_PRESETS.map(preset => (
+                          <button
+                            key={preset.id}
+                            onClick={() => setPresetMutation.mutate(preset.id)}
+                            disabled={setPresetMutation.isPending}
+                            className={cn(
+                              "flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                              localVoicePreset === preset.id
+                                ? "border-primary bg-primary/10"
+                                : "border-border hover:border-primary/50 hover:bg-muted/50"
+                            )}
+                            data-testid={`button-settings-voice-${preset.id}`}
+                          >
+                            <div className="flex items-center gap-2 w-full">
+                              <span className={cn("font-semibold text-sm", preset.color)}>{preset.name}</span>
+                              {localVoicePreset === preset.id && <Check className="h-3.5 w-3.5 text-primary ml-auto" />}
+                            </div>
+                            <div className="flex items-center justify-between w-full">
+                              <span className="text-xs text-muted-foreground leading-tight">{preset.description}</span>
+                              <span className="text-xs text-muted-foreground/60 capitalize ml-2">{preset.gender}</span>
+                            </div>
+                          </button>
+                        ))}
+
+                        {/* Browser TTS option */}
+                        <button
+                          onClick={() => setPresetMutation.mutate("browser")}
+                          disabled={setPresetMutation.isPending}
+                          className={cn(
+                            "flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                            localVoicePreset === "browser"
+                              ? "border-primary bg-primary/10"
+                              : "border-border hover:border-primary/50 hover:bg-muted/50"
+                          )}
+                          data-testid="button-settings-voice-browser"
+                        >
+                          <div className="flex items-center gap-2 w-full">
+                            <span className="font-semibold text-sm">Browser TTS</span>
+                            {localVoicePreset === "browser" && <Check className="h-3.5 w-3.5 text-primary ml-auto" />}
+                          </div>
+                          <span className="text-xs text-muted-foreground leading-tight">Uses your device's built-in voice</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Custom Voice Clone */}
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2">
+                        <Mic className="h-4 w-4" />
+                        Custom Voice Clone
+                      </Label>
+                      <p className="text-xs text-muted-foreground">
+                        Upload a voice sample (up to 30 seconds) to clone it. Supported: WAV, MP3, M4A (max 2MB).
+                      </p>
+                      <div
+                        className={cn(
+                          "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer transition-colors",
+                          ttsUploading ? "opacity-50 pointer-events-none" : "hover:border-primary/50 hover:bg-muted/30"
+                        )}
+                        onClick={() => ttsFileRef.current?.click()}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          const f = e.dataTransfer.files[0];
+                          if (f) handleTtsVoiceUpload(f);
+                        }}
+                        data-testid="dropzone-settings-voice-upload"
+                      >
+                        <input
+                          ref={ttsFileRef}
+                          type="file"
+                          accept="audio/wav,audio/mp3,audio/mpeg,audio/m4a,audio/x-m4a"
+                          className="hidden"
+                          onChange={(e) => { const f = e.target.files?.[0]; if (f) handleTtsVoiceUpload(f); }}
+                          data-testid="input-settings-voice-file"
+                        />
+                        {ttsUploading ? (
+                          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Uploading voice sample...
+                          </div>
+                        ) : ttsUploadStatus === "success" || (localVoicePreset === "custom" && ttsSettings?.hasReferenceAudio) ? (
+                          <div className="flex items-center justify-center gap-2 text-sm text-green-600 dark:text-green-400">
+                            <Check className="h-4 w-4" />
+                            Custom voice active — click to replace
+                          </div>
+                        ) : (
+                          <div className="flex flex-col items-center gap-1.5">
+                            <Upload className="h-5 w-5 text-muted-foreground" />
+                            <span className="text-sm text-muted-foreground">Click or drag to upload voice sample</span>
+                          </div>
+                        )}
+                      </div>
+                      {ttsUploadStatus === "error" && (
+                        <p className="text-xs text-red-500">Upload failed. Please try a shorter WAV or MP3 file.</p>
+                      )}
+                    </div>
+
+                    {/* Playback Speed */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label>Playback Speed</Label>
+                        <span className="text-sm font-medium text-muted-foreground" data-testid="text-settings-tts-speed">{localSpeed.toFixed(1)}×</span>
+                      </div>
+                      <Slider
+                        min={0.5}
+                        max={3}
+                        step={0.1}
+                        value={[localSpeed]}
+                        onValueChange={([v]) => setLocalSpeed(v)}
+                        onValueCommit={([v]) => setSpeedMutation.mutate(v)}
+                        className="w-full"
+                        data-testid="slider-settings-tts-speed"
+                      />
+                      <div className="flex justify-between text-xs text-muted-foreground">
+                        <span>0.5×</span>
+                        <span>1×</span>
+                        <span>2×</span>
+                        <span>3×</span>
+                      </div>
+                    </div>
+                  </>
+                )}
               </CardContent>
             </Card>
           </motion.div>

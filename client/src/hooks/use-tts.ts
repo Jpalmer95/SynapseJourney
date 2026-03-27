@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { splitIntroRest } from "@/lib/tts-constants";
 
 export interface VoicePreset {
   id: string;
@@ -235,21 +236,86 @@ export function useTTS(): UseTTSReturn {
       const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
 
       if (shouldTryServer) {
-        const serverResult = unitId
-          ? await fetchServerTTSAudio(unitId)
-          : await fetchServerTTSText(text);
-
-        if (serverResult && !cancelledRef.current) {
-          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+        // Paragraph-first fast play: if a unitId is given, check if audio is cached.
+        // Cached → play immediately (normal path). Uncached → play intro quickly,
+        // then rest, while background-caching the full audio for future listens.
+        if (unitId) {
+          let isCached = false;
           try {
-            await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
-            if (!cancelledRef.current) {
-              setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+            const statusRes = await fetch(`/api/tts/cache-status/${unitId}`, { credentials: "include" });
+            if (statusRes.ok) {
+              const statusData = await statusRes.json() as { cached: boolean };
+              isCached = statusData.cached === true;
             }
-            return;
-          } catch (audioErr: unknown) {
-            if (audioErr instanceof Error && audioErr.message === "cancelled") return;
-            // Server audio playback failed — fall through to browser TTS
+          } catch { /* ignore — treat as uncached */ }
+
+          if (isCached) {
+            // Fast path: serve from cache immediately
+            const serverResult = await fetchServerTTSAudio(unitId);
+            if (serverResult && !cancelledRef.current) {
+              setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+              try {
+                await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
+                if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                return;
+              } catch (audioErr: unknown) {
+                if (audioErr instanceof Error && audioErr.message === "cancelled") return;
+                // Fall through to browser TTS
+              }
+            }
+          } else {
+            // Intro-first path: play intro immediately, rest after, cache full in background
+            const { intro, rest } = splitIntroRest(text);
+            const introResult = await fetchServerTTSText(intro);
+
+            // Kick off background caching of full audio (fire-and-forget)
+            fetchServerTTSAudio(unitId).catch(() => { /* background caching, ignore errors */ });
+
+            if (introResult && !cancelledRef.current) {
+              setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+              try {
+                await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
+                if (!cancelledRef.current && rest) {
+                  // Play the rest of the content as a separate TTS request
+                  const restResult = await fetchServerTTSText(rest);
+                  if (restResult && !cancelledRef.current) {
+                    await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rate);
+                  }
+                }
+                if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                return;
+              } catch (audioErr: unknown) {
+                if (audioErr instanceof Error && audioErr.message === "cancelled") return;
+                // Fall through to browser TTS
+              }
+            } else if (!introResult) {
+              // Intro TTS failed — try full audio as normal fallback
+              const serverResult = await fetchServerTTSAudio(unitId);
+              if (serverResult && !cancelledRef.current) {
+                setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+                try {
+                  await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
+                  if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                  return;
+                } catch (audioErr: unknown) {
+                  if (audioErr instanceof Error && audioErr.message === "cancelled") return;
+                }
+              }
+            }
+          }
+        } else {
+          // No unitId — plain text request (vocabulary cards, tooltips, etc.)
+          const serverResult = await fetchServerTTSText(text);
+          if (serverResult && !cancelledRef.current) {
+            setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+            try {
+              await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
+              if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+              return;
+            } catch (audioErr: unknown) {
+              if (audioErr instanceof Error && audioErr.message === "cancelled") return;
+              // Fall through to browser TTS
+            }
           }
         }
       }
