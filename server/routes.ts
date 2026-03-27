@@ -878,13 +878,16 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       const { hashBase64, getAudioDurationSeconds } = await import("./tts-service");
 
       // Validate duration for all audio formats (WAV via header, others via music-metadata)
+      // Reject if duration cannot be determined (unknown/unsupported format) to enforce the 30s limit strictly
       const duration = await getAudioDurationSeconds(audioBuffer);
-      if (duration !== null && duration > 30) {
+      if (duration === null) {
+        return res.status(400).json({ error: "Could not determine audio duration. Please use WAV, MP3, or OGG format (max 30 seconds)." });
+      }
+      if (duration > 30) {
         return res.status(400).json({ error: `Reference audio is ${Math.round(duration)}s — must be 30 seconds or less. Please trim your recording.` });
       }
-      const referenceAudioPath = `ref-${hashBase64(audioBase64)}`;
       await storage.saveTtsSettings(req.user.claims.sub, "custom", audioBase64);
-      res.json({ ok: true, referenceAudioPath, message: "Voice reference uploaded successfully" });
+      res.json({ ok: true, hasReferenceAudio: true, message: "Voice reference uploaded successfully" });
     } catch (err) {
       console.error("TTS voice upload error:", err);
       res.status(500).json({ error: "Failed to upload voice reference" });
@@ -912,7 +915,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       const { unitId, text: freeText, voiceConfig, forceRegenerate } = parsed.data;
       const userId = req.user.claims.sub;
 
-      let contentForTTS: any;
+      let contentForTTS: unknown;
       let unitIdForCache: number | undefined;
       let isNextGenUnit = false;
 
@@ -3088,7 +3091,9 @@ async function predictivelyGenerateNextUnit(
         ? await generateNextGenContent(topic, nextUnit, masteredTopics)
         : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
 
-      if (!(generated as any)._isPlaceholder) {
+      const isPlaceholder = typeof generated === "object" && generated !== null &&
+        "_isPlaceholder" in generated && Boolean((generated as Record<string, unknown>)._isPlaceholder);
+      if (!isPlaceholder) {
         await storage.updateLessonContent(nextUnit.id, generated);
         console.log(`[Predictive] Saved content for unit ${nextUnit.id}`);
         content = generated;
@@ -3104,7 +3109,7 @@ async function predictivelyGenerateNextUnit(
   }
 }
 
-async function revalidateUnitLinks(unitId: number, content: any): Promise<void> {
+async function revalidateUnitLinks(unitId: number, content: unknown): Promise<void> {
   try {
     const { revalidateStoredContent } = await import("./link-validator");
     const { content: updatedContent, changed } = await revalidateStoredContent(content);
@@ -3117,7 +3122,7 @@ async function revalidateUnitLinks(unitId: number, content: any): Promise<void> 
   }
 }
 
-async function preTTSForUnit(userId: string, unitId: number, content: any, isNextGen: boolean): Promise<void> {
+async function preTTSForUnit(userId: string, unitId: number, content: unknown, isNextGen: boolean): Promise<void> {
   try {
     const ttsSettings = await storage.getTtsSettings(userId);
     if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
