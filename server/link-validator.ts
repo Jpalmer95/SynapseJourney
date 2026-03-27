@@ -38,7 +38,7 @@ async function isSafeHost(hostname: string): Promise<boolean> {
   return true;
 }
 
-interface ValidatedResource {
+export interface ValidatedResource {
   title: string;
   url: string;
   type: string;
@@ -106,10 +106,10 @@ async function checkUrl(url: string): Promise<ValidationResult> {
     }
 
     return { url, live: res.status < 400, status: res.status };
-  } catch (err: any) {
+  } catch (err: unknown) {
     clearTimeout(timeoutId);
-    if (err?.name === "AbortError") return { url, live: false, error: "timeout" };
-    return { url, live: false, error: err?.message || "network_error" };
+    if (err instanceof Error && err.name === "AbortError") return { url, live: false, error: "timeout" };
+    return { url, live: false, error: err instanceof Error ? err.message : "network_error" };
   }
 }
 
@@ -159,16 +159,52 @@ export async function validateAndRefreshResources(
   return validated;
 }
 
-export async function revalidateStoredContent(contentJson: any): Promise<{ content: any; changed: boolean }> {
-  if (!contentJson?.externalResources?.length) return { content: contentJson, changed: false };
+function extractResources(contentJson: Record<string, unknown>, field: string): ValidatedResource[] {
+  const value = contentJson[field];
+  if (!Array.isArray(value) || value.length === 0) return [];
+  return value.filter(
+    (r): r is ValidatedResource =>
+      typeof r === "object" && r !== null &&
+      typeof (r as Record<string, unknown>).url === "string"
+  );
+}
 
-  const original = contentJson.externalResources;
-  const validated = await validateResources(original);
+export async function revalidateStoredContent(contentJson: unknown): Promise<{ content: unknown; changed: boolean }> {
+  if (!contentJson || typeof contentJson !== "object") return { content: contentJson, changed: false };
 
-  if (validated.length === original.length) return { content: contentJson, changed: false };
+  const c = contentJson as Record<string, unknown>;
+  let changed = false;
+  const updated = { ...c };
 
-  return {
-    content: { ...contentJson, externalResources: validated },
-    changed: true,
-  };
+  // Regular lesson format: externalResources
+  const extResources = extractResources(c, "externalResources");
+  if (extResources.length > 0) {
+    const validated = await validateResources(extResources);
+    if (validated.length < extResources.length) {
+      updated.externalResources = validated;
+      changed = true;
+    }
+  }
+
+  // NextGen format: resources
+  const resources = extractResources(c, "resources");
+  if (resources.length > 0) {
+    const validated = await validateResources(resources);
+    if (validated.length < resources.length) {
+      updated.resources = validated;
+      changed = true;
+    }
+  }
+
+  // NextGen format: communityForums (same shape)
+  const forums = extractResources(c, "communityForums");
+  if (forums.length > 0) {
+    const validated = await validateResources(forums);
+    if (validated.length < forums.length) {
+      updated.communityForums = validated;
+      changed = true;
+    }
+  }
+
+  return { content: changed ? updated : contentJson, changed };
 }

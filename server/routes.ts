@@ -776,7 +776,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       if (!content) {
         // Generate content using AI - use different generator for Next Gen
         const generatedContent = isNextGen 
-          ? await generateNextGenContent(topic, unit, masteredTopics)
+          ? await generateNextGenContent(topic, unit, masteredTopics, categoryName)
           : await generateLessonContent(topic, unit, masteredTopics, categoryName);
         
         // Only save real AI-generated content, NOT placeholder fallbacks
@@ -1389,15 +1389,19 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // This ensures regenerated content is suitable for all learners
       const masteredTopics: { topicId: number; topicTitle: string }[] = [];
       const isNextGen = unit.difficulty === "nextgen";
+      const adminCategory = topic.categoryId ? await storage.getCategoryById(topic.categoryId) : null;
+      const adminCategoryName = adminCategory?.name;
       
       console.log(`[Admin] Generating new content for unit ${unitId} (${unit.difficulty} level)...`);
       
       const content = isNextGen 
-        ? await generateNextGenContent(topic, unit, masteredTopics)
-        : await generateLessonContent(topic, unit, masteredTopics);
+        ? await generateNextGenContent(topic, unit, masteredTopics, adminCategoryName)
+        : await generateLessonContent(topic, unit, masteredTopics, adminCategoryName);
       
       // Check if content generation succeeded
-      if (content._isPlaceholder) {
+      const isContentPlaceholder = typeof content === "object" && content !== null &&
+        "_isPlaceholder" in content && Boolean((content as Record<string, unknown>)._isPlaceholder);
+      if (isContentPlaceholder) {
         console.log(`[Admin] Content generation failed for unit ${unitId}, keeping original content`);
         // Don't clear content - keep original so users aren't left with empty lessons
         return res.json({ 
@@ -3096,7 +3100,7 @@ async function predictivelyGenerateNextUnit(
     if (!content) {
       console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} (${nextUnit.difficulty} #${nextUnit.unitIndex})`);
       const generated = isNextGen
-        ? await generateNextGenContent(topic, nextUnit, masteredTopics)
+        ? await generateNextGenContent(topic, nextUnit, masteredTopics, categoryName)
         : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
 
       const isPlaceholder = typeof generated === "object" && generated !== null &&
@@ -3122,7 +3126,7 @@ async function revalidateUnitLinks(unitId: number, content: unknown): Promise<vo
     const { revalidateStoredContent } = await import("./link-validator");
     const { content: updatedContent, changed } = await revalidateStoredContent(content);
     if (changed) {
-      await storage.updateLessonContent(unitId, updatedContent);
+      await storage.updateLessonContent(unitId, updatedContent as import("@shared/schema").LessonContent | import("@shared/schema").NextGenContent);
       console.log(`[LinkValidator] Updated stale links for unit ${unitId}`);
     }
   } catch (err: unknown) {
@@ -3638,20 +3642,37 @@ async function getDefaultLessonUnits(topicId: number, topicTitle: string) {
 async function generateNextGenContent(
   topic: { title: string; description: string },
   unit: { title: string; outline?: string | null },
-  masteredTopics: { topicId: number; topicTitle: string }[]
-): Promise<any> {
+  masteredTopics: { topicId: number; topicTitle: string }[],
+  categoryName?: string
+): Promise<unknown> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has mastered these topics and can draw connections: ${masteredTopics.map(t => t.topicTitle).join(", ")}.`
     : "";
 
+  const domainContext = categoryName
+    ? `Domain: ${categoryName} → "${topic.title}"`
+    : `Topic: "${topic.title}"`;
+
+  const resourceSpecificity = `
+CRITICAL RESOURCE SPECIFICITY RULES:
+- All URLs must be hyper-specific to "${topic.title}"${categoryName ? ` within ${categoryName}` : ""}.
+- For arXiv: link to a specific preprint (https://arxiv.org/abs/XXXX.XXXXX) — not the arXiv homepage.
+- For journals: link to a specific paper DOI or journal page — not a journal homepage.
+- For communities: include the actual URL (subreddit, Discord invite, mailing list archive, etc.).
+- For YouTube: include the full /watch?v=... URL to a specific expert lecture on this frontier topic.
+- DO NOT use placeholder URLs or link to generic homepages.`;
+
   const prompt = `You are a research mentor and frontier scientist helping advanced learners engage with the bleeding edge of "${topic.title}".
 
+${domainContext}
 Unit: ${unit.title}
 Unit Focus: ${unit.outline || "Frontier exploration and creative thinking"}
 
 ${crossTopicContext}
 
 This is a NEXT GEN unit — the final frontier of learning. The learner has already mastered beginner, intermediate, and advanced content. Now they step into the unknown alongside working researchers. Write as if briefing a smart, curious person at the start of a PhD program.
+
+${resourceSpecificity}
 
 Respond with JSON in this EXACT format:
 {
@@ -3721,7 +3742,30 @@ Requirements:
       { responseFormat: "json", temperature: 0.8 }
     ) || "{}";
 
-    return JSON.parse(content);
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+
+    // Validate and filter resources + communityForums for dead links
+    const { validateResources } = await import("./link-validator");
+    type LinkItem = { title: string; url: string; type: string; description: string };
+    const isLinkArray = (v: unknown): v is LinkItem[] =>
+      Array.isArray(v) && v.length > 0 && typeof (v[0] as Record<string, unknown>)?.url === "string";
+
+    if (isLinkArray(parsed.resources)) {
+      const validated = await validateResources(parsed.resources);
+      if (validated.length < parsed.resources.length) {
+        console.log(`[LinkValidator] NextGen: removed ${parsed.resources.length - validated.length} dead resources for "${topic.title}"`);
+        parsed.resources = validated;
+      }
+    }
+    if (isLinkArray(parsed.communityForums)) {
+      const validated = await validateResources(parsed.communityForums);
+      if (validated.length < parsed.communityForums.length) {
+        console.log(`[LinkValidator] NextGen: removed ${parsed.communityForums.length - validated.length} dead forums for "${topic.title}"`);
+        parsed.communityForums = validated;
+      }
+    }
+
+    return parsed;
   } catch (error) {
     console.error("Error generating Next Gen content:", error);
     // Return placeholder content with marker - DO NOT save this to DB
