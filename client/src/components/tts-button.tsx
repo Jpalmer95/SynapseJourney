@@ -47,7 +47,6 @@ export function TTSButton({
     usingServerTTS,
     rate,
     speak,
-    speakSections,
     stop,
     pause,
     resume,
@@ -82,14 +81,10 @@ export function TTSButton({
     if (isPaused) { resume(); return; }
     // Playing state: pause current stream
     if (isSpeaking) { pause(); return; }
-    // Idle state: when sections are provided, use section-by-section playback
-    // so the audio bar and per-section highlights work. Otherwise use the
-    // full-text cached path (e.g. NextGen content, no sections prop).
-    if (sections && sections.length > 0) {
-      speakSections(sections, 0);
-    } else {
-      speak(text, unitId);
-    }
+    // Idle state: always use speak(text, unitId) to preserve the unit-level
+    // cached-audio fast path. Per-section ▶ buttons in rabbit-hole.tsx call
+    // speakSections() directly, which is what activates the section bar UI.
+    speak(text, unitId);
   };
 
   const handleStop = (e: React.MouseEvent) => {

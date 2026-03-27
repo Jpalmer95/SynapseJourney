@@ -497,6 +497,14 @@ function useTTSImpl(): UseTTSReturn {
                   if (cancelledRef.current) break;
                   await speakChunk(chunk);
                 }
+              } else {
+                // No fallback available — surface error and abort
+                setState(prev => ({
+                  ...prev, isLoading: false, isSpeaking: false, isPaused: false,
+                  usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
+                  currentSectionIndex: -1, totalSections: 0,
+                }));
+                return;
               }
             }
           } else if (!cancelledRef.current) {
@@ -508,6 +516,14 @@ function useTTSImpl(): UseTTSReturn {
                 if (cancelledRef.current) break;
                 await speakChunk(chunk);
               }
+            } else {
+              // No audio available at all — surface error and abort
+              setState(prev => ({
+                ...prev, isLoading: false, isSpeaking: false, isPaused: false,
+                usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
+                currentSectionIndex: -1, totalSections: 0,
+              }));
+              return;
             }
           }
         } else {
