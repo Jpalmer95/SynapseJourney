@@ -47,6 +47,7 @@ export function TTSButton({
     usingServerTTS,
     rate,
     speak,
+    speakSections,
     stop,
     pause,
     resume,
@@ -81,8 +82,14 @@ export function TTSButton({
     if (isPaused) { resume(); return; }
     // Playing state: pause current stream
     if (isSpeaking) { pause(); return; }
-    // Idle state: start playback using the full-text cached path
-    speak(text, unitId);
+    // Idle state: when sections are provided, use section-by-section playback
+    // so the audio bar and per-section highlights work. Otherwise use the
+    // full-text cached path (e.g. NextGen content, no sections prop).
+    if (sections && sections.length > 0) {
+      speakSections(sections, 0);
+    } else {
+      speak(text, unitId);
+    }
   };
 
   const handleStop = (e: React.MouseEvent) => {

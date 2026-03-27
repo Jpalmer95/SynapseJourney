@@ -387,7 +387,7 @@ function useTTSImpl(): UseTTSReturn {
       }
 
       if (!BROWSER_SPEECH_SUPPORTED) {
-        setState(prev => ({ ...prev, isLoading: false, error: "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.", isSupported: true }));
+        setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, error: "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.", isSupported: true }));
         return;
       }
 
@@ -419,7 +419,7 @@ function useTTSImpl(): UseTTSReturn {
         } catch { /* server TTS also failed */ }
       }
       console.error("TTS error:", error);
-      setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
+      setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
   }, [serverVoicePreset, rate, speakChunk, playServerAudio]);
 
@@ -541,6 +541,7 @@ function useTTSImpl(): UseTTSReturn {
         ...prev,
         isLoading: false,
         isSpeaking: false,
+        isPaused: false,
         usingServerTTS: false,
         error: error instanceof Error ? error.message : "TTS failed",
         currentSectionIndex: -1,
