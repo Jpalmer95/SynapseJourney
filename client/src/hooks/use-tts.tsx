@@ -498,11 +498,12 @@ function useTTSImpl(): UseTTSReturn {
                   await speakChunk(chunk);
                 }
               } else {
-                // No fallback available — surface error and abort
+                // No fallback available — surface error; keep totalSections > 0
+                // so the section bar stays visible with the error message until
+                // the user explicitly stops or retries.
                 setState(prev => ({
                   ...prev, isLoading: false, isSpeaking: false, isPaused: false,
                   usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
-                  currentSectionIndex: -1, totalSections: 0,
                 }));
                 return;
               }
@@ -517,11 +518,11 @@ function useTTSImpl(): UseTTSReturn {
                 await speakChunk(chunk);
               }
             } else {
-              // No audio available at all — surface error and abort
+              // No audio available at all — surface error; keep totalSections > 0
+              // so the section bar stays visible until user stops or retries.
               setState(prev => ({
                 ...prev, isLoading: false, isSpeaking: false, isPaused: false,
                 usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
-                currentSectionIndex: -1, totalSections: 0,
               }));
               return;
             }

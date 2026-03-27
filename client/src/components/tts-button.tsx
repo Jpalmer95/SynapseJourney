@@ -72,8 +72,10 @@ export function TTSButton({
   });
 
   // Section mode: audio bar is visible when section playback is active (loading, playing, or paused)
-  // totalSections > 0 only when speakSections() started from rabbit-hole.tsx; plain speak() leaves it 0.
-  const isInSectionMode = sections && sections.length > 0 && (isSpeaking || isPaused || isLoading) && totalSections > 0;
+  // Section bar shows while playing/paused/loading AND also while showing a section-mode error
+  // (totalSections stays > 0 on error so bar remains visible until user stops or retries).
+  const isInSectionMode = !!(sections && sections.length > 0 && totalSections > 0 &&
+    ((isSpeaking || isPaused || isLoading) || !!ttsError));
   const currentLabel = isInSectionMode && currentSectionIndex >= 0 ? sections[currentSectionIndex]?.label : null;
 
   const handleClick = () => {
