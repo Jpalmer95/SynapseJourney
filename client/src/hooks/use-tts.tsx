@@ -18,6 +18,7 @@ export interface TTSSection {
 interface TTSState {
   isLoading: boolean;
   isSpeaking: boolean;
+  isPaused: boolean;
   isSupported: boolean;
   error: string | null;
   progress: number;
@@ -125,6 +126,7 @@ function useTTSImpl(): UseTTSReturn {
   const [state, setState] = useState<TTSState>({
     isLoading: false,
     isSpeaking: false,
+    isPaused: false,
     isSupported: true,
     error: null,
     progress: 0,
@@ -298,6 +300,7 @@ function useTTSImpl(): UseTTSReturn {
     setState(prev => ({
       ...prev,
       isLoading: true,
+      isPaused: false,
       error: null,
       usingServerTTS: false,
       currentSectionIndex: -1,
@@ -425,12 +428,20 @@ function useTTSImpl(): UseTTSReturn {
   const speakSections = useCallback(async (sections: TTSSection[], startIndex = 0) => {
     if (sections.length === 0) return;
 
+    // Cancel any currently running playback before starting new section sequence
+    cancelledRef.current = true;
+    if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
+    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    // Yield one tick so pending promise rejections from old playback settle
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+
     cancelledRef.current = false;
     const start = Math.max(0, Math.min(startIndex, sections.length - 1));
 
     setState(prev => ({
       ...prev,
       isLoading: true,
+      isPaused: false,
       error: null,
       usingServerTTS: false,
       currentSectionIndex: start,
@@ -540,7 +551,7 @@ function useTTSImpl(): UseTTSReturn {
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
-    if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.cancel();
+    if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
@@ -548,6 +559,7 @@ function useTTSImpl(): UseTTSReturn {
     setState(prev => ({
       ...prev,
       isSpeaking: false,
+      isPaused: false,
       isLoading: false,
       usingServerTTS: false,
       currentSectionIndex: -1,
@@ -555,16 +567,19 @@ function useTTSImpl(): UseTTSReturn {
     }));
   }, []);
 
+  // pause: suspend playback without cancelling the session.
+  // isSpeaking stays true so the async loop continues to wait on the audio element.
+  // isPaused flag is set true so UI knows we're in a paused-but-active state.
   const pause = useCallback(() => {
     if (audioRef.current) audioRef.current.pause();
-    else if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.pause();
-    setState(prev => ({ ...prev, isSpeaking: false }));
+    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.pause(); } catch { /* ignore */ } }
+    setState(prev => ({ ...prev, isPaused: true }));
   }, []);
 
   const resume = useCallback(() => {
     if (audioRef.current) audioRef.current.play().catch(console.error);
-    else if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.resume();
-    setState(prev => ({ ...prev, isSpeaking: true }));
+    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.resume(); } catch { /* ignore */ } }
+    setState(prev => ({ ...prev, isPaused: false }));
   }, []);
 
   const persistSpeedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);

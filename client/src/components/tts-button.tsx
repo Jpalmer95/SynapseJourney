@@ -42,11 +42,11 @@ export function TTSButton({
   const {
     isLoading,
     isSpeaking,
+    isPaused,
     error: ttsError,
     usingServerTTS,
     rate,
     speak,
-    speakSections,
     stop,
     pause,
     resume,
@@ -58,7 +58,6 @@ export function TTSButton({
   } = useTTS();
 
   const queryClient = useQueryClient();
-  const [isPaused, setIsPaused] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
@@ -71,28 +70,24 @@ export function TTSButton({
     retry: false,
   });
 
-  const isInSectionMode = sections && sections.length > 0 && (isSpeaking || isLoading || isPaused) && totalSections > 0;
+  // Section mode: audio bar is visible when section playback is active (loading, playing, or paused)
+  // totalSections > 0 only when speakSections() started from rabbit-hole.tsx; plain speak() leaves it 0.
+  const isInSectionMode = sections && sections.length > 0 && (isSpeaking || isPaused || isLoading) && totalSections > 0;
   const currentLabel = isInSectionMode && currentSectionIndex >= 0 ? sections[currentSectionIndex]?.label : null;
 
   const handleClick = () => {
     if (isLoading) return;
-    if (isSpeaking) {
-      if (isPaused) { resume(); setIsPaused(false); }
-      else { pause(); setIsPaused(true); }
-    } else {
-      setIsPaused(false);
-      if (sections && sections.length > 0) {
-        speakSections(sections, 0);
-      } else {
-        speak(text, unitId);
-      }
-    }
+    // Paused state: resume current stream (don't restart)
+    if (isPaused) { resume(); return; }
+    // Playing state: pause current stream
+    if (isSpeaking) { pause(); return; }
+    // Idle state: start playback using the full-text cached path
+    speak(text, unitId);
   };
 
   const handleStop = (e: React.MouseEvent) => {
     e.stopPropagation();
     stop();
-    setIsPaused(false);
   };
 
   const handlePresetSelect = async (presetId: string) => {
