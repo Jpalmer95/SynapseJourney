@@ -1060,11 +1060,19 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         await storage.addXp(userId, 5);
       }
 
-      // Predictive pre-generation: warm TTS cache for the current unit on lesson start.
-      // Only attempted when content already exists (generated lazily, may be null for brand-new units).
+      // Predictive pre-generation: warm TTS cache for the current unit on lesson start, and
+      // pre-generate next-unit content+TTS so it's ready before the user finishes this lesson.
+      // Both are fire-and-forget (non-blocking).
       if (unit.contentJson) {
         const isNextGenUnit = unit.difficulty === "nextgen";
         preTTSForUnit(userId, unitId, unit.contentJson, isNextGenUnit).catch(console.error);
+      }
+      const startTopic = await storage.getTopicById(unit.topicId);
+      if (startTopic) {
+        const startMasteredTopics = await storage.getUserMasteredTopics(userId);
+        const startCategory = startTopic.categoryId ? await storage.getCategoryById(startTopic.categoryId) : null;
+        const startCategoryName = startCategory?.name;
+        predictivelyGenerateNextUnit(unit, startTopic, startMasteredTopics, userId, startCategoryName).catch(console.error);
       }
 
       res.json({ progress, xpAwarded: isFirstStart ? 5 : 0 });
