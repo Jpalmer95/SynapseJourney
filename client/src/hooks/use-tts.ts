@@ -283,19 +283,25 @@ export function useTTS(): UseTTSReturn {
               }
             }
           } else {
-            // Intro-first path: server extracts intro, kicks off full-audio caching in background.
-            // Simultaneously pre-fetch the "rest" text so it's ready as soon as intro finishes (no gap).
-            const { rest } = splitIntroRest(text);
-            const introResult = await fetchServerTTSIntro(unitId);
+            // Intro-first path: use the same client-side splitIntroRest for BOTH intro and rest
+            // so the boundary is deterministic and consistent (no overlap or skipped content).
+            // All three fetches fire concurrently:
+            //   1. introPromise  — intro text TTS (fast, first audio to play)
+            //   2. restPromise   — rest text TTS (pre-fetched so it's ready when intro ends)
+            //   3. background    — full unit audio cache so next listen is instant
+            const { intro, rest } = splitIntroRest(text);
+            const introPromise = fetchServerTTSText(intro);
+            const restPromise = rest ? fetchServerTTSText(rest) : Promise.resolve(null);
+            // Fire-and-forget background caching so subsequent listens hit the cache
+            fetchServerTTSAudio(unitId).catch(() => { /* background caching, ignore errors */ });
 
+            const introResult = await introPromise;
             if (introResult && !cancelledRef.current) {
-              // Pre-fetch rest audio WHILE intro is playing to eliminate the gap
-              const restPromise = rest ? fetchServerTTSText(rest) : Promise.resolve(null);
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
               try {
                 await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
                 if (!cancelledRef.current && rest) {
-                  // Rest audio should already be ready (pre-fetched during intro playback)
+                  // restPromise was started concurrently with intro — it should already be resolved
                   const restResult = await restPromise;
                   if (restResult && !cancelledRef.current) {
                     await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rate);
