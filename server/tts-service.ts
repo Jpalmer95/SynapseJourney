@@ -131,6 +131,30 @@ function buildLessonText(content: any, isNextGen: boolean): string {
 }
 
 /**
+ * Extract only the intro (first 1–2 sections) of lesson content for fast TTS generation.
+ * Returns a string of ≤ 800 chars: just enough to start audio within 2–5s.
+ */
+export function buildIntroText(content: any, isNextGen: boolean): string {
+  if (!content) return "";
+  const MAX = 800;
+  let intro = "";
+  if (isNextGen) {
+    intro = content.researchContext || "";
+  } else {
+    const parts: string[] = [];
+    if (content.concept) parts.push(content.concept);
+    if (content.analogy) parts.push(`Think of it this way: ${content.analogy}`);
+    intro = parts.join(" ");
+  }
+  intro = intro.replace(/\n+/g, " ").trim();
+  if (intro.length <= MAX) return intro;
+  // Truncate at a sentence boundary near MAX
+  const cutSearch = intro.slice(MAX - 200, MAX + 100).search(/[.!?]\s/);
+  if (cutSearch >= 0) return intro.slice(0, MAX - 200 + cutSearch + 1).trim();
+  return intro.slice(0, MAX).trim();
+}
+
+/**
  * Call Qwen3-TTS via the Gradio 5.x HTTP REST API (no WebSocket, pure fetch).
  * The Gradio REST protocol:
  *   1. POST /call/{api_name} → { event_id }

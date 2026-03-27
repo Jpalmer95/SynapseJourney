@@ -907,6 +907,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
           playbackSpeed: z.number().min(0.5).max(3).optional(),
         }).optional(),
         forceRegenerate: z.boolean().optional(),
+        firstParagraphOnly: z.boolean().optional(),
       }).refine(d => d.unitId || d.text, { message: "Either unitId or text is required" });
 
       const parsed = schema.safeParse(req.body);
@@ -949,9 +950,42 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.json({ fallback: true, message: "Browser TTS is selected" });
       }
 
-      const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect } = await import("./tts-service");
+      const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText } = await import("./tts-service");
       const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
       const configHash = hashVoiceConfig(voicePreset, refHash);
+
+      // Intro-only fast path: generate just the opening section for immediate play,
+      // then kick off background full-audio caching so subsequent listens are instant.
+      if (parsed.data.firstParagraphOnly && unitIdForCache && contentForTTS) {
+        const introText = buildIntroText(contentForTTS, isNextGenUnit);
+        if (!introText || introText.length < 10) {
+          return res.status(503).json({ error: "Intro text unavailable", fallbackToBrowser: true });
+        }
+        const userProfile = await storage.getUserProfile(userId);
+        const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+        if (!introResult) {
+          return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
+        }
+        // Non-blocking: cache the full audio in the background so the next listen is instant
+        generateTTSAudio({
+          unitId: unitIdForCache,
+          content: contentForTTS,
+          isNextGen: isNextGenUnit,
+          voicePreset,
+          referenceAudio,
+          hfToken: userProfile?.huggingFaceToken || undefined,
+        }).catch((err: unknown) => {
+          console.warn("[TTS] Background full-audio caching failed:", err instanceof Error ? err.message : String(err));
+        });
+        return res.json({
+          audioData: introResult.buffer.toString("base64"),
+          audioFormat: introResult.format,
+          fromCache: false,
+          fallback: false,
+          firstParagraphOnly: true,
+          playbackSpeed,
+        });
+      }
 
       // Free-text requests: generate without caching (no stable key; different texts would collide at unitId=0)
       if (freeText && !unitIdForCache) {

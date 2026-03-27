@@ -514,11 +514,12 @@ export default function SettingsPage() {
         reader.onerror = reject;
         reader.readAsDataURL(file);
       });
+      const mimeType = file.type || "audio/wav";
       const res = await fetch("/api/tts/voice-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ audio: base64, filename: file.name }),
+        body: JSON.stringify({ audioBase64: base64, mimeType }),
       });
       if (res.ok) {
         setTtsUploadStatus("success");

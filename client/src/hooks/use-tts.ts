@@ -54,6 +54,25 @@ async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string;
   }
 }
 
+// Fetch only the first paragraph of a lesson unit (fast play; full audio cached in background by server)
+async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
+  try {
+    const res = await fetch("/api/tts/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ unitId, firstParagraphOnly: true }),
+    });
+    if (res.status === 403 || res.status === 401) return null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.audioData) return null;
+    return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
+  } catch {
+    return null;
+  }
+}
+
 // Server TTS for arbitrary text (no unit — e.g. vocabulary cards, tooltips, Tesla with no browser TTS)
 async function fetchServerTTSText(text: string): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
   try {
@@ -264,20 +283,20 @@ export function useTTS(): UseTTSReturn {
               }
             }
           } else {
-            // Intro-first path: play intro immediately, rest after, cache full in background
-            const { intro, rest } = splitIntroRest(text);
-            const introResult = await fetchServerTTSText(intro);
-
-            // Kick off background caching of full audio (fire-and-forget)
-            fetchServerTTSAudio(unitId).catch(() => { /* background caching, ignore errors */ });
+            // Intro-first path: server extracts intro, kicks off full-audio caching in background.
+            // Simultaneously pre-fetch the "rest" text so it's ready as soon as intro finishes (no gap).
+            const { rest } = splitIntroRest(text);
+            const introResult = await fetchServerTTSIntro(unitId);
 
             if (introResult && !cancelledRef.current) {
+              // Pre-fetch rest audio WHILE intro is playing to eliminate the gap
+              const restPromise = rest ? fetchServerTTSText(rest) : Promise.resolve(null);
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
               try {
                 await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
                 if (!cancelledRef.current && rest) {
-                  // Play the rest of the content as a separate TTS request
-                  const restResult = await fetchServerTTSText(rest);
+                  // Rest audio should already be ready (pre-fetched during intro playback)
+                  const restResult = await restPromise;
                   if (restResult && !cancelledRef.current) {
                     await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rate);
                   }
