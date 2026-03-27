@@ -131,6 +131,25 @@ function buildLessonText(content: any, isNextGen: boolean): string {
 }
 
 /**
+ * Build the "rest" portion of lesson text (full text minus the intro section).
+ * Used with buildIntroText to segment first-listen fast play with no overlap or gap.
+ */
+export function buildRestText(content: any, isNextGen: boolean): string {
+  const fullText = buildLessonText(content, isNextGen);
+  const introText = buildIntroText(content, isNextGen);
+  if (!introText || !fullText.startsWith(introText)) {
+    // If intro is truncated mid-text, find the nearest sentence boundary
+    const idx = fullText.indexOf(introText.slice(-20));
+    if (idx < 0) return fullText; // fallback: return everything
+    const afterIntro = fullText.slice(idx + 20).trimStart();
+    // Skip to next sentence start
+    const sentStart = afterIntro.search(/[A-Z]/);
+    return sentStart >= 0 ? afterIntro.slice(sentStart) : afterIntro;
+  }
+  return fullText.slice(introText.length).trimStart();
+}
+
+/**
  * Extract only the intro (first 1–2 sections) of lesson content for fast TTS generation.
  * Returns a string of ≤ 800 chars: just enough to start audio within 2–5s.
  */

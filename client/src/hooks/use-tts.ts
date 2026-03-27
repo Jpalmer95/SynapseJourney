@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryClient } from "@/lib/queryClient";
 import { splitIntroRest } from "@/lib/tts-constants";
 
 export interface VoicePreset {
@@ -54,8 +55,9 @@ async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string;
   }
 }
 
-// Fetch only the first paragraph of a lesson unit (fast play; full audio cached in background by server)
-async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
+// Fetch only the first paragraph of a lesson unit (fast play; full audio cached in background by server).
+// Also returns restText — the server-canonical remainder text for seamless continuation with no content gap.
+async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number; restText: string | null } | null> {
   try {
     const res = await fetch("/api/tts/generate", {
       method: "POST",
@@ -67,7 +69,12 @@ async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string;
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.audioData) return null;
-    return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
+    return {
+      audioData: data.audioData,
+      audioFormat: data.audioFormat || "wav",
+      playbackSpeed: data.playbackSpeed || 1.0,
+      restText: data.restText || null,
+    };
   } catch {
     return null;
   }
@@ -283,31 +290,33 @@ export function useTTS(): UseTTSReturn {
               }
             }
           } else {
-            // Intro-first path: use the same client-side splitIntroRest for BOTH intro and rest
-            // so the boundary is deterministic and consistent (no overlap or skipped content).
-            // All three fetches fire concurrently:
-            //   1. introPromise  — intro text TTS (fast, first audio to play)
-            //   2. restPromise   — rest text TTS (pre-fetched so it's ready when intro ends)
-            //   3. background    — full unit audio cache so next listen is instant
-            const { intro, rest } = splitIntroRest(text);
-            const introPromise = fetchServerTTSText(intro);
-            const restPromise = rest ? fetchServerTTSText(rest) : Promise.resolve(null);
-            // Fire-and-forget background caching so subsequent listens hit the cache
-            fetchServerTTSAudio(unitId).catch(() => { /* background caching, ignore errors */ });
+            // Intro-first fast-play path for uncached units.
+            // fetchServerTTSIntro uses firstParagraphOnly=true which:
+            //   - returns server-extracted intro audio immediately (~2-5s)
+            //   - also returns restText (server-canonical remainder, no overlap/gap)
+            //   - fires background full-audio caching non-blocking
+            const introResult = await fetchServerTTSIntro(unitId);
 
-            const introResult = await introPromise;
             if (introResult && !cancelledRef.current) {
+              const { restText } = introResult;
+              // Pre-fetch rest audio immediately so it's ready when intro finishes (no gap).
+              // restText comes from the server (same content extraction), ensuring boundary consistency.
+              const restPromise = restText ? fetchServerTTSText(restText) : Promise.resolve(null);
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
               try {
                 await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
-                if (!cancelledRef.current && rest) {
-                  // restPromise was started concurrently with intro — it should already be resolved
+                if (!cancelledRef.current && restText) {
+                  // restPromise was pre-fetched during intro playback — should already be resolved
                   const restResult = await restPromise;
                   if (restResult && !cancelledRef.current) {
                     await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rate);
                   }
                 }
-                if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                if (!cancelledRef.current) {
+                  setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                  // Invalidate cache-status so the listen badge reflects that full audio is now cached
+                  queryClient.invalidateQueries({ queryKey: [`/api/tts/cache-status/${unitId}`] });
+                }
                 return;
               } catch (audioErr: unknown) {
                 if (audioErr instanceof Error && audioErr.message === "cancelled") return;

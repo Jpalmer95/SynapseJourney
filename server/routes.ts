@@ -950,7 +950,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.json({ fallback: true, message: "Browser TTS is selected" });
       }
 
-      const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText } = await import("./tts-service");
+      const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("./tts-service");
       const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
       const configHash = hashVoiceConfig(voicePreset, refHash);
 
@@ -977,12 +977,14 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         }).catch((err: unknown) => {
           console.warn("[TTS] Background full-audio caching failed:", err instanceof Error ? err.message : String(err));
         });
+        const restText = buildRestText(contentForTTS, isNextGenUnit);
         return res.json({
           audioData: introResult.buffer.toString("base64"),
           audioFormat: introResult.format,
           fromCache: false,
           fallback: false,
           firstParagraphOnly: true,
+          restText: restText || null,
           playbackSpeed,
         });
       }
