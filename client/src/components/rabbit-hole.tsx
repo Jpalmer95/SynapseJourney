@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -44,6 +44,7 @@ import {
   Wrench,
   AlertTriangle,
   Coins,
+  Play,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -57,6 +58,7 @@ import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { AiChat } from "@/components/ai-chat";
 import { TTSButton } from "@/components/tts-button";
+import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -553,6 +555,33 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     }
   };
 
+  // TTS section-level state shared with TTSButton via context
+  const { currentSectionIndex, speakSections } = useTTS();
+
+  // Build ordered sections from lesson content for section-by-section listening
+  const lessonSections = useMemo((): TTSSection[] => {
+    const content = unitContent?.content;
+    if (!content || unitContent?.isNextGen) return [];
+    const lc = content as LessonContent;
+    const sects: TTSSection[] = [];
+    if (lc.keyTakeaways?.length) {
+      sects.push({ label: "Key Takeaways", text: lc.keyTakeaways.join(". ") });
+    }
+    if (lc.concept) sects.push({ label: "Concept", text: lc.concept });
+    if (lc.analogy) sects.push({ label: "Analogy", text: lc.analogy });
+    if (lc.example?.content) {
+      sects.push({ label: lc.example.title || "Example", text: lc.example.content });
+    }
+    return sects;
+  }, [unitContent]);
+
+  // Map section labels to indices for quick highlight lookup
+  const sectionIndexMap = useMemo(() => {
+    const map: Record<string, number> = {};
+    lessonSections.forEach((s, i) => { map[s.label] = i; });
+    return map;
+  }, [lessonSections]);
+
   // Render content viewer
   if (selectedUnit && !selectedUnit.locked) {
     const content = unitContent?.content;
@@ -1045,7 +1074,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
             ) : lessonContent ? (
               /* Standard Lesson Content View */
               <div className="space-y-8 w-full min-w-0 max-w-full">
-                {/* Listen Button - for driving or accessibility */}
+                {/* Listen Button / Audio Player */}
                 <div className="flex justify-center">
                   <TTSButton
                     text={`${selectedUnit.title}. ${lessonContent.concept}. Think of it like this: ${lessonContent.analogy}. ${lessonContent.example.title}. ${lessonContent.example.content}`}
@@ -1053,15 +1082,33 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                     showLabel
                     variant="outline"
                     size="default"
+                    sections={lessonSections}
+                    className={lessonSections.length > 0 ? "w-full" : undefined}
                   />
                 </div>
 
                 {/* Key Takeaways Section */}
-                {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (
-                  <section className="min-w-0 w-full" data-testid="section-key-takeaways">
+                {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (() => {
+                  const ktIdx = sectionIndexMap["Key Takeaways"] ?? -1;
+                  const ktActive = ktIdx >= 0 && currentSectionIndex === ktIdx;
+                  return (
+                  <section
+                    className={cn("min-w-0 w-full group transition-all", ktActive && "border-l-2 border-primary pl-3 -ml-3")}
+                    data-testid="section-key-takeaways"
+                  >
                     <div className="flex items-center gap-2 mb-3">
                       <Star className="h-5 w-5 text-amber-500 shrink-0" />
-                      <h2 className="text-xl font-semibold">Key Takeaways</h2>
+                      <h2 className="text-xl font-semibold flex-1">Key Takeaways</h2>
+                      {lessonSections.length > 0 && ktIdx >= 0 && (
+                        <button
+                          onClick={() => speakSections(lessonSections, ktIdx)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          title="Listen from here"
+                          data-testid="button-tts-section-takeaways"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                     <Card className="border-amber-500/20 bg-amber-500/5 overflow-hidden w-full">
                       <CardContent className="p-4 sm:p-5 overflow-hidden">
@@ -1076,59 +1123,109 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                       </CardContent>
                     </Card>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* Concept Section */}
-                <section className="min-w-0 w-full">
-                  <div className="flex items-center gap-2 mb-4">
-                    <BookOpen className="h-5 w-5 text-primary shrink-0" />
-                    <h2 className="text-xl font-semibold">Concept</h2>
-                  </div>
-                  <Card className="overflow-hidden w-full">
-                    <CardContent className="p-4 sm:p-6 overflow-hidden">
-                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                        {lessonContent.concept}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </section>
+                {(() => {
+                  const cIdx = sectionIndexMap["Concept"] ?? -1;
+                  const cActive = cIdx >= 0 && currentSectionIndex === cIdx;
+                  return (
+                  <section className={cn("min-w-0 w-full group transition-all", cActive && "border-l-2 border-primary pl-3 -ml-3")}>
+                    <div className="flex items-center gap-2 mb-4">
+                      <BookOpen className="h-5 w-5 text-primary shrink-0" />
+                      <h2 className="text-xl font-semibold flex-1">Concept</h2>
+                      {lessonSections.length > 0 && cIdx >= 0 && (
+                        <button
+                          onClick={() => speakSections(lessonSections, cIdx)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          title="Listen from here"
+                          data-testid="button-tts-section-concept"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <Card className="overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-6 overflow-hidden">
+                        <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                          {lessonContent.concept}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </section>
+                  );
+                })()}
 
                 {/* Analogy Section */}
-                <section className="min-w-0 w-full">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Lightbulb className="h-5 w-5 text-yellow-500 shrink-0" />
-                    <h2 className="text-xl font-semibold">Think of it like...</h2>
-                  </div>
-                  <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden w-full">
-                    <CardContent className="p-4 sm:p-6 overflow-hidden">
-                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                        {lessonContent.analogy}
-                      </p>
-                    </CardContent>
-                  </Card>
-                </section>
+                {(() => {
+                  const aIdx = sectionIndexMap["Analogy"] ?? -1;
+                  const aActive = aIdx >= 0 && currentSectionIndex === aIdx;
+                  return (
+                  <section className={cn("min-w-0 w-full group transition-all", aActive && "border-l-2 border-primary pl-3 -ml-3")}>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Lightbulb className="h-5 w-5 text-yellow-500 shrink-0" />
+                      <h2 className="text-xl font-semibold flex-1">Think of it like...</h2>
+                      {lessonSections.length > 0 && aIdx >= 0 && (
+                        <button
+                          onClick={() => speakSections(lessonSections, aIdx)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          title="Listen from here"
+                          data-testid="button-tts-section-analogy"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </div>
+                    <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-6 overflow-hidden">
+                        <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                          {lessonContent.analogy}
+                        </p>
+                      </CardContent>
+                    </Card>
+                  </section>
+                  );
+                })()}
 
                 {/* Example Section */}
-                <section className="min-w-0 w-full">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Sparkles className="h-5 w-5 text-blue-500 shrink-0" />
-                    <h2 className="text-xl font-semibold break-words [overflow-wrap:anywhere]">{lessonContent.example.title}</h2>
-                  </div>
-                  <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden w-full">
-                    <CardContent className="p-4 sm:p-6 space-y-4 overflow-hidden">
-                      <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                        {lessonContent.example.content}
-                      </p>
-                      {lessonContent.example.code && (
-                        <div className="overflow-x-auto max-w-full">
-                          <pre className="bg-muted p-3 sm:p-4 rounded-md text-xs sm:text-sm font-mono min-w-0">
-                            {lessonContent.example.code}
-                          </pre>
-                        </div>
+                {(() => {
+                  const exLabel = lessonContent.example.title || "Example";
+                  const exIdx = sectionIndexMap[exLabel] ?? -1;
+                  const exActive = exIdx >= 0 && currentSectionIndex === exIdx;
+                  return (
+                  <section className={cn("min-w-0 w-full group transition-all", exActive && "border-l-2 border-primary pl-3 -ml-3")}>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="h-5 w-5 text-blue-500 shrink-0" />
+                      <h2 className="text-xl font-semibold break-words [overflow-wrap:anywhere] flex-1">{lessonContent.example.title}</h2>
+                      {lessonSections.length > 0 && exIdx >= 0 && (
+                        <button
+                          onClick={() => speakSections(lessonSections, exIdx)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"
+                          title="Listen from here"
+                          data-testid="button-tts-section-example"
+                        >
+                          <Play className="h-3.5 w-3.5" />
+                        </button>
                       )}
-                    </CardContent>
-                  </Card>
-                </section>
+                    </div>
+                    <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-6 space-y-4 overflow-hidden">
+                        <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
+                          {lessonContent.example.content}
+                        </p>
+                        {lessonContent.example.code && (
+                          <div className="overflow-x-auto max-w-full">
+                            <pre className="bg-muted p-3 sm:p-4 rounded-md text-xs sm:text-sm font-mono min-w-0">
+                              {lessonContent.example.code}
+                            </pre>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </section>
+                  );
+                })()}
 
                 {/* Cross-links Section */}
                 {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (

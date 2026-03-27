@@ -21,6 +21,7 @@ import CollectionPage from "@/pages/collection";
 import PracticeTestPage from "@/pages/practice-test";
 import PracticeTestResultsPage from "@/pages/practice-test-results";
 import { Loader2 } from "lucide-react";
+import { TTSProvider } from "@/hooks/use-tts";
 
 function AppContent() {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -65,8 +66,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
-          <Toaster />
-          <AppContent />
+          <TTSProvider>
+            <Toaster />
+            <AppContent />
+          </TTSProvider>
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
