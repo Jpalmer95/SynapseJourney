@@ -114,21 +114,26 @@ export function TTSButton({
     try {
       const reader = new FileReader();
       reader.onload = async () => {
-        const base64 = (reader.result as string).split(",")[1];
-        const res = await fetch("/api/tts/voice-upload", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
-        });
-        if (res.ok) {
-          setUploadStatus("success");
-          await setServerVoicePreset("custom");
-          queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
-        } else {
+        try {
+          const base64 = (reader.result as string).split(",")[1];
+          const res = await fetch("/api/tts/voice-upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
+          });
+          if (res.ok) {
+            setUploadStatus("success");
+            await setServerVoicePreset("custom");
+            queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+          } else {
+            setUploadStatus("error");
+          }
+        } catch {
           setUploadStatus("error");
+        } finally {
+          setUploading(false);
         }
-        setUploading(false);
       };
       reader.onerror = () => { setUploadStatus("error"); setUploading(false); };
       reader.readAsDataURL(file);

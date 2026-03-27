@@ -995,7 +995,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       res.json({ ...result, playbackSpeed });
     } catch (err) {
       console.error("TTS generate error:", err);
-      res.status(500).json({ fallback: true, error: "TTS service unavailable" });
+      res.status(500).json({ fallbackToBrowser: true, error: "TTS service unavailable" });
     }
   });
 
