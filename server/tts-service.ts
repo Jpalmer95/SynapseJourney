@@ -189,18 +189,24 @@ const OPENAI_VOICE_MAP: Record<string, "alloy" | "echo" | "fable" | "onyx" | "no
 
 /**
  * Call OpenAI TTS API (/audio/speech).
- * Uses the OPENAI_API_KEY env var (set via the Replit OpenAI integration).
+ * Uses Replit's AI integration env vars first (AI_INTEGRATIONS_OPENAI_API_KEY +
+ * AI_INTEGRATIONS_OPENAI_BASE_URL), falling back to the standard OPENAI_API_KEY.
+ * Only handles the 6 named AI presets — not "browser" or "custom".
  * Returns MP3 audio as a Buffer, or null on any failure.
  */
 async function callOpenAITTS(text: string, voicePresetId: string): Promise<Buffer | null> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  // Only handle the six named AI voice presets — custom/browser go to other providers
+  if (!OPENAI_VOICE_MAP[voicePresetId]) return null;
+
+  const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
   if (!apiKey) {
-    console.info("[TTS] OpenAI TTS: OPENAI_API_KEY not set — skipping");
+    console.info("[TTS] OpenAI TTS: no API key configured — skipping");
     return null;
   }
+  const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;
   try {
-    const openai = new OpenAI({ apiKey });
-    const voice = OPENAI_VOICE_MAP[voicePresetId] || "alloy";
+    const openai = new OpenAI({ apiKey, ...(baseURL ? { baseURL } : {}) });
+    const voice = OPENAI_VOICE_MAP[voicePresetId];
     const MAX_CHARS = 4096;
     const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
     const response = await openai.audio.speech.create({
