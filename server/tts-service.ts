@@ -2,6 +2,7 @@ import { createHash } from "crypto";
 import { db } from "./db";
 import { ttsAudioCache } from "@shared/schema";
 import { and, eq } from "drizzle-orm";
+import OpenAI from "openai";
 
 export interface VoicePreset {
   id: string;
@@ -171,6 +172,49 @@ export function buildIntroText(content: any, isNextGen: boolean): string {
   const cutSearch = intro.slice(MAX - 200, MAX + 100).search(/[.!?]\s/);
   if (cutSearch >= 0) return intro.slice(0, MAX - 200 + cutSearch + 1).trim();
   return intro.slice(0, MAX).trim();
+}
+
+/**
+ * Map Synapse voice preset IDs to OpenAI built-in voice names.
+ * OpenAI voices: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer
+ */
+const OPENAI_VOICE_MAP: Record<string, "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"> = {
+  aria: "shimmer",
+  nova: "nova",
+  lyra: "fable",
+  echo: "echo",
+  sage: "onyx",
+  orion: "alloy",
+};
+
+/**
+ * Call OpenAI TTS API (/audio/speech).
+ * Uses the OPENAI_API_KEY env var (set via the Replit OpenAI integration).
+ * Returns MP3 audio as a Buffer, or null on any failure.
+ */
+async function callOpenAITTS(text: string, voicePresetId: string): Promise<Buffer | null> {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
+    console.info("[TTS] OpenAI TTS: OPENAI_API_KEY not set — skipping");
+    return null;
+  }
+  try {
+    const openai = new OpenAI({ apiKey });
+    const voice = OPENAI_VOICE_MAP[voicePresetId] || "alloy";
+    const MAX_CHARS = 4096;
+    const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) : text;
+    const response = await openai.audio.speech.create({
+      model: "tts-1",
+      voice,
+      input: truncated,
+      response_format: "mp3",
+    });
+    return Buffer.from(await response.arrayBuffer());
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.info("[TTS] OpenAI TTS:", message, "— falling back");
+    return null;
+  }
 }
 
 /**
@@ -368,15 +412,21 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   let fallback = false;
 
   if (voicePreset !== "browser") {
-    // 1. Try Qwen3-TTS via Gradio Space REST (public, no auth required)
-    audioBuffer = await callQwen3TTS(truncatedText, voicePreset, referenceAudio);
+    // 1. Try OpenAI TTS (reliable, fast, high quality) — primary provider
+    audioBuffer = await callOpenAITTS(truncatedText, voicePreset);
 
-    // 2. Fall back to HF Inference API — prefer server env token, then user personal token
+    // 2. Fall back to Qwen3-TTS via Gradio Space REST (public, no auth)
+    if (!audioBuffer) {
+      audioBuffer = await callQwen3TTS(truncatedText, voicePreset, referenceAudio);
+      if (audioBuffer) fallback = true;
+    }
+
+    // 3. Fall back to HF Inference API — prefer server env token, then user personal token
     if (!audioBuffer) {
       const effectiveToken = process.env.HF_API_TOKEN || hfToken;
       if (effectiveToken) {
         audioBuffer = await callHFInferenceTTS(truncatedText, effectiveToken);
-        fallback = true;
+        if (audioBuffer) fallback = true;
       }
     }
   }
@@ -408,8 +458,15 @@ export async function callTTSDirect(
   const MAX_CHARS = 3000;
   const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
 
-  let audioBuffer: Buffer | null = await callQwen3TTS(truncated, voicePreset, referenceAudio);
+  // 1. OpenAI TTS — primary provider
+  let audioBuffer: Buffer | null = await callOpenAITTS(truncated, voicePreset);
 
+  // 2. Qwen3-TTS via Gradio Space — first fallback
+  if (!audioBuffer) {
+    audioBuffer = await callQwen3TTS(truncated, voicePreset, referenceAudio);
+  }
+
+  // 3. HF Inference API — last fallback
   if (!audioBuffer) {
     const effectiveToken = process.env.HF_API_TOKEN || hfToken;
     if (effectiveToken) {

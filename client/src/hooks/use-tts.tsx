@@ -147,6 +147,7 @@ function useTTSImpl(): UseTTSReturn {
   const cancelledRef = useRef<boolean>(false);
   const rateRef = useRef(rate);
   const voiceRef = useRef<string | null>(selectedVoiceName);
+  const audioUnlockedRef = useRef<boolean>(false);
 
   useEffect(() => { rateRef.current = rate; }, [rate]);
   useEffect(() => { voiceRef.current = selectedVoiceName; }, [selectedVoiceName]);
@@ -293,8 +294,29 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, []);
 
+  const unlockAudio = useCallback(() => {
+    if (audioUnlockedRef.current) return;
+    try {
+      const ACtx = (window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
+      if (ACtx) {
+        const ctx = new ACtx();
+        const src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, 1, 22050);
+        src.connect(ctx.destination);
+        src.start(0);
+        ctx.close().catch(() => {});
+        audioUnlockedRef.current = true;
+      }
+    } catch {
+      // ignore — audio unlock is best-effort
+    }
+  }, []);
+
   const speak = useCallback(async (text: string, unitId?: number) => {
     if (!text.trim()) return;
+
+    // Unlock iOS audio context synchronously within user gesture before any await
+    unlockAudio();
 
     cancelledRef.current = false;
     setState(prev => ({
@@ -308,7 +330,12 @@ function useTTSImpl(): UseTTSReturn {
     }));
 
     const currentPreset = serverVoicePreset;
-    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
+    // Auto-use server TTS when: non-browser preset, speechSynthesis is absent,
+    // OR the browser has no voices (e.g. Tesla browser where speechSynthesis exists
+    // but the OS TTS engine is unavailable/returns zero voices).
+    const noVoicesAvailable = BROWSER_SPEECH_SUPPORTED &&
+      window.speechSynthesis.getVoices().length === 0;
+    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
 
     try {
       if (shouldTryServer) {
@@ -407,7 +434,14 @@ function useTTSImpl(): UseTTSReturn {
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "cancelled") return;
-      if (!shouldTryServer && error instanceof Error && error.message === "speech_synthesis_error") {
+      // Browser TTS failure codes that warrant a server TTS retry.
+      // "synthesis-failed" is the Tesla Chromium async onerror code;
+      // "speech_synthesis_error" is the synchronous throw path.
+      const BROWSER_TTS_FAILURES = new Set([
+        "speech_synthesis_error", "synthesis-failed", "synthesis-unavailable",
+        "audio-hardware", "network",
+      ]);
+      if (!shouldTryServer && error instanceof Error && BROWSER_TTS_FAILURES.has(error.message)) {
         try {
           const fallback = unitId ? await fetchServerTTSAudio(unitId) : await fetchServerTTSText(text);
           if (fallback && !cancelledRef.current) {
@@ -416,17 +450,20 @@ function useTTSImpl(): UseTTSReturn {
             if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
             return;
           }
-        } catch { /* server TTS also failed */ }
+        } catch { /* server TTS also failed — fall through to error state */ }
       }
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
   // Pre-fetches the next section's audio while the current section plays to minimize gaps.
   const speakSections = useCallback(async (sections: TTSSection[], startIndex = 0) => {
     if (sections.length === 0) return;
+
+    // Unlock iOS audio context synchronously within user gesture before any await
+    unlockAudio();
 
     // Cancel any currently running playback before starting new section sequence
     cancelledRef.current = true;
@@ -449,7 +486,9 @@ function useTTSImpl(): UseTTSReturn {
     }));
 
     const currentPreset = serverVoicePreset;
-    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED;
+    const noVoicesAvailable = BROWSER_SPEECH_SUPPORTED &&
+      window.speechSynthesis.getVoices().length === 0;
+    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
 
     try {
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0 }));
@@ -565,7 +604,7 @@ function useTTSImpl(): UseTTSReturn {
         totalSections: 0,
       }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio]);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
