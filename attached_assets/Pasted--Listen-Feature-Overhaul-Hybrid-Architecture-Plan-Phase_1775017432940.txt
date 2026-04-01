@@ -1,0 +1,64 @@
+"Listen" Feature Overhaul: Hybrid Architecture Plan
+Phase 1: The Local Default (Kokoro 82M + WebGPU)
+This tier serves as the zero-latency, zero-cost foundation for the app. We will use the newly released Transformers.js v4 and the kokoro-js wrapper to run the 82M parameter model client-side.
+
+1. Dependency Updates & Environment Setup
+
+Install the latest WebGPU-optimized packages: npm i @huggingface/transformers kokoro-js.
+
+Configure the build tool (Webpack/Vite/Next.js) to ignore Node-specific ONNX binaries, ensuring the browser bundle remains lightweight.
+
+2. Web Worker Implementation
+To prevent UI freezing on lower-end devices or vehicle browsers, all TTS generation must be offloaded from the main thread.
+
+Create a dedicated tts.worker.js.
+
+Inside the worker, initialize KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", { dtype: "q8", device: "webgpu" }).
+
+Using the 8-bit quantized (q8) version brings the model size down to ~86MB with virtually no loss in audio fidelity, allowing it to easily bypass aggressive Chromium tab-kill limits.
+
+3. Asset Caching Strategy
+
+Utilize the browser's Cache API via Transformers.js environment variables (env.useWasmCache = true).
+
+The ~86MB model weights and WebAssembly/WebGPU runtimes will be downloaded exactly once per user. Subsequent visits will load the model instantly from the local cache, enabling full offline playback.
+
+Phase 2: The Premium Cloud Tier (Qwen TTS + ZeroGPU)
+This tier retains your current voice cloning, voice description, and preset voice options. By offloading this to Hugging Face, you avoid massive server costs while giving users access to the heavy 1.7B parameter Qwen model.
+
+1. Authentication & BYOT (Bring Your Own Token)
+
+Implement a secure settings modal where users can either paste a Hugging Face Access Token or use Hugging Face OAuth for seamless login.
+
+Store this token securely in the browser's localStorage or IndexedDB.
+
+2. Hugging Face Space Integration
+
+Host the Qwen TTS inference code in a Hugging Face Space configured with ZeroGPU. This dynamically assigns an A100 GPU to the user's request.
+
+Expose the Space via a Gradio API endpoint or a lightweight FastAPI wrapper.
+
+3. API Request Routing
+
+When a user selects a Qwen voice profile, the frontend constructs the API payload (text, target voice, clone sample).
+
+The frontend injects the user's HF Token into the Authorization: Bearer <TOKEN> header and fires the request directly to your HF Space.
+
+Because the user is authenticating with their token, the compute usage counts against their personal Hugging Face rate limits, keeping your infrastructure completely free.
+
+Phase 3: UI/UX Integration & State Management
+To make this seamless for the end user, the interface needs to clearly distinguish between the two engines without being overly technical.
+
+1. Voice Selection Dropdown
+
+"Standard Voices" (Local): List the baked-in Kokoro voices (e.g., af_bella, am_adam, etc.). Badge these with a "Lightning" or "Offline" icon to indicate instant speed.
+
+"Custom Voices" (Cloud): List the Qwen voice clones and descriptions. Badge these with a "Cloud" or "Pro" icon.
+
+2. Graceful Fallbacks & State Handling
+
+Hardware Check: On page load, briefly check for WebGPU support (navigator.gpu). If WebGPU is unavailable (e.g., on a very old iOS device), configure Transformers.js to fallback to wasm (CPU) processing seamlessly.
+
+Cold Start Handling: When a user first requests a Qwen cloud voice, display a "Warming up engine..." toast notification. ZeroGPU Spaces scale down to zero when idle, so the first request may take 15–20 seconds to boot the A100 before streaming the audio back.
+
+Token Validation: If a user tries to generate a Custom Voice but hasn't provided a token (or their token hit a rate limit), trigger a modal prompting them to connect their Hugging Face account.
