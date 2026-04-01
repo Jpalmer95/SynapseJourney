@@ -333,7 +333,8 @@ export function TTSButton({
                         <span className="font-medium text-xs">{v.name}</span>
                         {kokoroVoice === v.id && <Check className="h-2.5 w-2.5 text-primary shrink-0" />}
                       </div>
-                      <span className="text-muted-foreground/70 text-[10px] leading-tight">{v.style}</span>
+                      <span className="text-muted-foreground/70 text-[10px] leading-tight capitalize">{v.gender}</span>
+                      <span className="text-muted-foreground/50 text-[10px] leading-tight">{v.style}</span>
                     </button>
                   ))}
                 </div>

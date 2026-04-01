@@ -467,7 +467,7 @@ export default function SettingsPage() {
     retry: false,
   });
 
-  const [localVoicePreset, setLocalVoicePreset] = useState<string>("aria");
+  const [localVoicePreset, setLocalVoicePreset] = useState<string>("kokoro");
   const [localSpeed, setLocalSpeed] = useState<number>(1.0);
   const [ttsUploading, setTtsUploading] = useState(false);
   const [ttsUploadStatus, setTtsUploadStatus] = useState<"idle" | "success" | "error">("idle");

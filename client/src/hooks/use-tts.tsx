@@ -227,9 +227,8 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => {
     if (ttsSettings) {
       const raw = ttsSettings.voicePreset || "kokoro";
-      // Migrate legacy preset IDs from pre-v10 (aria/nova/echo/onyx/fable/shimmer)
-      // to the new engine model
-      const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer"]);
+      // Migrate legacy preset IDs from pre-v10 to the new engine model
+      const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
       const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
       setServerVoicePresetState(normalized);
       if (ttsSettings.playbackSpeed) {
