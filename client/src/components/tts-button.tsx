@@ -82,6 +82,7 @@ export function TTSButton({
   const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const warmDismissRef = useRef<(() => void) | null>(null);
   const warmShownRef = useRef(false);
+  const kokoroWarmShownRef = useRef(false);
 
   const activeTier = getVoiceTier(serverVoicePreset);
 
@@ -111,6 +112,21 @@ export function TTSButton({
       if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; }
     };
   }, [isLoading, isSpeaking, activeTier, hfWarming, toast]);
+
+  // Kokoro first-load toast: fires once when the model starts downloading.
+  useEffect(() => {
+    if (kokoroLoading && !kokoroWarmShownRef.current) {
+      kokoroWarmShownRef.current = true;
+      toast({
+        title: "Downloading Kokoro model…",
+        description: "First-time download (~90 MB). This only happens once — future use is instant.",
+        duration: 30000,
+      });
+    }
+    if (!kokoroLoading) {
+      kokoroWarmShownRef.current = false;
+    }
+  }, [kokoroLoading, toast]);
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
@@ -528,24 +544,39 @@ export function TTSButton({
                       </div>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => setShowTokenInput(true)}
-                      className="w-full text-left text-xs text-muted-foreground hover:text-foreground transition-colors py-1 flex items-center gap-1.5"
-                      data-testid="button-add-hf-token"
-                    >
-                      <Cloud className="h-3 w-3 shrink-0" />
-                      <span>Add HF token to enable cloud voices</span>
-                    </button>
+                    <div className="space-y-1">
+                      <button
+                        onClick={() => setShowTokenInput(true)}
+                        className="w-full text-left text-xs text-muted-foreground hover:text-foreground transition-colors py-1 flex items-center gap-1.5"
+                        data-testid="button-add-hf-token"
+                      >
+                        <Cloud className="h-3 w-3 shrink-0" />
+                        <span>Add HF token to enable cloud voices</span>
+                      </button>
+                      <p className="text-[10px] text-muted-foreground leading-snug">
+                        A free Hugging Face account is all you need. Create a read-access token at{" "}
+                        <a
+                          href="https://huggingface.co/settings/tokens/new?tokenType=read"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline hover:text-foreground transition-colors"
+                          data-testid="link-hf-tokens-inline"
+                        >
+                          huggingface.co/settings/tokens
+                        </a>
+                        .
+                      </p>
+                    </div>
                   )}
                   <a
-                    href="https://huggingface.co/settings/tokens"
+                    href="https://huggingface.co/settings/tokens/new?tokenType=read"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
                     data-testid="link-hf-tokens"
                   >
                     <ExternalLink className="h-2.5 w-2.5" />
-                    Get a token at huggingface.co
+                    Get a free read token at huggingface.co
                   </a>
                 </div>
               </div>
@@ -625,7 +656,7 @@ export function TTSButton({
             )}
             <span className="text-xs font-medium text-foreground truncate">
               {isLoading
-                ? (hfWarming ? "Warming up cloud engine…" : "Generating audio…")
+                ? (hfWarming ? "Warming up cloud engine…" : kokoroLoading ? "Downloading Kokoro model — first time only…" : "Generating audio…")
                 : currentLabel ?? "Listening…"}
             </span>
             {getTierBadge(activeTier, true)}
