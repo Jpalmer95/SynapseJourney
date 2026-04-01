@@ -45,7 +45,6 @@ export function TTSButton({
     isSpeaking,
     isPaused,
     error: ttsError,
-    usingServerTTS,
     rate,
     speak,
     speakSections,
@@ -74,35 +73,48 @@ export function TTSButton({
   const [tokenInput, setTokenInput] = useState("");
   const [showTokenInput, setShowTokenInput] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
-  const warmToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const warmToastShownRef = useRef(false);
+  const warmTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmDismissRef = useRef<(() => void) | null>(null);
+  const warmShownRef = useRef(false);
 
   const activeTier = getVoiceTier(serverVoicePreset);
 
-  // Cold-start toast: if loading a cloud voice for more than 3 s, prompt the user.
-  // The hook fires its own toast on a 503, so we only fire this one when hfWarming is false.
+  // Group AI presets by voiceTier
+  const standardPresets = AI_VOICE_PRESETS.filter(p => p.voiceTier === "local");
+  const cloudPresets = AI_VOICE_PRESETS.filter(p => p.voiceTier === "cloud");
+
+  // Custom (voice-clone) is the cloud-tier "preset" alongside any cloud AI presets
+  const customIsCloud = getVoiceTier("custom") === "cloud";
+
+  // Cold-start toast: fires after 3 s when loading a cloud voice.
+  // Gated by !hfWarming to avoid duplicating the hook's 503 toast.
+  // Explicitly dismissed when audio starts (isSpeaking) or loading ends.
   useEffect(() => {
-    const isCloudVoice = activeTier === "cloud";
-    if (isLoading && isCloudVoice && !hfWarming && !warmToastShownRef.current) {
-      warmToastRef.current = setTimeout(() => {
-        if (isLoading && !hfWarming) {
-          warmToastShownRef.current = true;
-          toast({
+    if (isLoading && activeTier === "cloud" && !hfWarming && !warmShownRef.current) {
+      warmTimerRef.current = setTimeout(() => {
+        if (!warmShownRef.current) {
+          warmShownRef.current = true;
+          const { dismiss } = toast({
             title: "Warming up cloud engine…",
             description: "This may take up to 20 s on first use.",
-            duration: 20000,
+            duration: 22000,
           });
+          warmDismissRef.current = dismiss;
         }
       }, 3000);
     }
-    if (!isLoading) {
-      if (warmToastRef.current) clearTimeout(warmToastRef.current);
-      warmToastShownRef.current = false;
+
+    // Dismiss toast when audio starts playing or loading finishes
+    if (!isLoading || isSpeaking) {
+      if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; }
+      if (warmDismissRef.current) { warmDismissRef.current(); warmDismissRef.current = null; }
+      warmShownRef.current = false;
     }
+
     return () => {
-      if (warmToastRef.current) clearTimeout(warmToastRef.current);
+      if (warmTimerRef.current) { clearTimeout(warmTimerRef.current); warmTimerRef.current = null; }
     };
-  }, [isLoading, activeTier, hfWarming, toast]);
+  }, [isLoading, isSpeaking, activeTier, hfWarming, toast]);
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
@@ -201,19 +213,20 @@ export function TTSButton({
     return "Read aloud · Server";
   };
 
+  // Renders a ⚡ Offline or ☁ Pro badge with full text
   const getTierBadge = (tier: ReturnType<typeof getVoiceTier>, small = false) => {
     const cls = small ? "text-[10px] px-1 py-0 h-4" : "text-[10px] px-1.5 py-0.5 h-5";
     if (tier === "local") {
       return (
-        <Badge className={cn(cls, "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-0 font-medium")}>
-          <Zap className="h-2.5 w-2.5 mr-0.5" />Offline
+        <Badge className={cn(cls, "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-0 font-medium gap-0.5")}>
+          <Zap className="h-2.5 w-2.5" />Offline
         </Badge>
       );
     }
     if (tier === "cloud") {
       return (
-        <Badge className={cn(cls, "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-0 font-medium")}>
-          <Cloud className="h-2.5 w-2.5 mr-0.5" />Pro
+        <Badge className={cn(cls, "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-0 font-medium gap-0.5")}>
+          <Cloud className="h-2.5 w-2.5" />Pro
         </Badge>
       );
     }
@@ -221,6 +234,38 @@ export function TTSButton({
   };
 
   const isCached = cacheStatus?.cached === true;
+
+  // Preset card component (shared between Standard and Cloud sections)
+  const PresetCard = ({ presetId, name, description, gender, color, tier }: {
+    presetId: string;
+    name: string;
+    description: string;
+    gender: string;
+    color: string;
+    tier: ReturnType<typeof getVoiceTier>;
+  }) => {
+    const isActive = serverVoicePreset === presetId;
+    return (
+      <button
+        onClick={() => handlePresetSelect(presetId)}
+        className={cn(
+          "relative flex flex-col items-start rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-muted/60",
+          isActive ? "border-primary bg-primary/5" : "border-border"
+        )}
+        data-testid={`button-voice-preset-${presetId}`}
+      >
+        <div className="flex items-center justify-between w-full mb-0.5">
+          <span className={cn("font-semibold text-sm", color)}>{name}</span>
+          <div className="flex items-center gap-1">
+            {getTierBadge(tier, true)}
+            {isActive && <Check className="h-3 w-3 text-primary shrink-0" />}
+          </div>
+        </div>
+        <span className="text-muted-foreground leading-tight">{description}</span>
+        <span className="text-muted-foreground/60 capitalize mt-0.5">{gender}</span>
+      </button>
+    );
+  };
 
   const SettingsPopover = (
     <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -241,17 +286,20 @@ export function TTSButton({
       </Tooltip>
 
       <PopoverContent className="w-80 p-0" align="start">
+        {/* Header */}
         <div className="p-3 border-b">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold">Voice Settings</h4>
             {getTierBadge(activeTier)}
           </div>
-          {(kokoroLoading || (activeTier === "local" && !kokoroReady && !kokoroLoading)) && (
+          {kokoroLoading && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
-              {kokoroLoading
-                ? <><Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…</>
-                : <><Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen</>
-              }
+              <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…
+            </p>
+          )}
+          {!kokoroLoading && activeTier === "local" && !kokoroReady && (
+            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+              <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
           )}
           {kokoroReady && (
@@ -262,7 +310,7 @@ export function TTSButton({
         </div>
 
         <div className="overflow-y-auto max-h-[70vh]">
-          {/* ── Standard Voices ── */}
+          {/* ── Standard Voices (voiceTier: "local") ── */}
           <div className="p-3 pb-2">
             <div className="flex items-center gap-1.5 mb-2">
               <Zap className="h-3.5 w-3.5 text-emerald-500" />
@@ -270,28 +318,34 @@ export function TTSButton({
               <span className="text-[10px] text-muted-foreground">· offline, free</span>
             </div>
             <div className="grid grid-cols-2 gap-1.5">
-              {AI_VOICE_PRESETS.map(preset => (
-                <button
+              {standardPresets.map(preset => (
+                <PresetCard
                   key={preset.id}
-                  onClick={() => handlePresetSelect(preset.id)}
-                  className={cn(
-                    "relative flex flex-col items-start rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-muted/60",
-                    serverVoicePreset === preset.id ? "border-primary bg-primary/5" : "border-border"
-                  )}
-                  data-testid={`button-voice-preset-${preset.id}`}
-                >
-                  <div className="flex items-center justify-between w-full mb-0.5">
-                    <span className={cn("font-semibold text-sm", preset.color)}>{preset.name}</span>
-                    {serverVoicePreset === preset.id
-                      ? <Check className="h-3 w-3 text-primary" />
-                      : <Badge className="text-[9px] px-1 py-0 h-3.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-0">⚡</Badge>
-                    }
-                  </div>
-                  <span className="text-muted-foreground leading-tight">{preset.description}</span>
-                  <span className="text-muted-foreground/60 capitalize mt-0.5">{preset.gender}</span>
-                </button>
+                  presetId={preset.id}
+                  name={preset.name}
+                  description={preset.description}
+                  gender={preset.gender}
+                  color={preset.color}
+                  tier={preset.voiceTier}
+                />
               ))}
             </div>
+            {/* Optionally show any non-local AI presets (future-proofed) */}
+            {cloudPresets.length > 0 && (
+              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                {cloudPresets.map(preset => (
+                  <PresetCard
+                    key={preset.id}
+                    presetId={preset.id}
+                    name={preset.name}
+                    description={preset.description}
+                    gender={preset.gender}
+                    color={preset.color}
+                    tier={preset.voiceTier}
+                  />
+                ))}
+              </div>
+            )}
             {unitId && isCached && activeTier === "local" && (
               <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
                 <Check className="h-3 w-3" /> Audio ready for instant playback
@@ -299,7 +353,7 @@ export function TTSButton({
             )}
           </div>
 
-          {/* ── Cloud Voices ── */}
+          {/* ── Cloud Voices (voiceTier: "cloud") ── */}
           <div className="p-3 pt-1 border-t">
             <div className="flex items-center gap-1.5 mb-2">
               <Cloud className="h-3.5 w-3.5 text-blue-500" />
@@ -307,11 +361,32 @@ export function TTSButton({
               <span className="text-[10px] text-muted-foreground">· Qwen ZeroGPU, voice cloning</span>
             </div>
 
-            {/* Voice cloning upload */}
+            {/* Custom voice cloning — shown as a first-class selectable cloud preset */}
+            {customIsCloud && (
+              <button
+                onClick={() => handlePresetSelect("custom")}
+                className={cn(
+                  "w-full flex items-center gap-2.5 rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-muted/60 mb-2",
+                  serverVoicePreset === "custom" ? "border-primary bg-primary/5" : "border-border"
+                )}
+                data-testid="button-voice-preset-custom"
+              >
+                <Mic className="h-4 w-4 text-blue-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-sm text-blue-600 dark:text-blue-400">Custom</span>
+                    {getTierBadge("cloud", true)}
+                  </div>
+                  <span className="text-muted-foreground leading-tight">Your voice clone</span>
+                </div>
+                {serverVoicePreset === "custom" && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+              </button>
+            )}
+
+            {/* Voice sample upload dropzone */}
             <div
               className={cn(
                 "border-2 border-dashed rounded-lg p-3 text-center cursor-pointer hover:bg-muted/40 transition-colors",
-                serverVoicePreset === "custom" && "border-blue-400/50 bg-blue-50/30 dark:bg-blue-900/10",
                 uploadStatus === "success" && "border-green-500/50 bg-green-50/50 dark:bg-green-900/10",
                 uploadStatus === "error" && "border-red-500/50 bg-red-50/50 dark:bg-red-900/10"
               )}
@@ -349,25 +424,8 @@ export function TTSButton({
                 </div>
               )}
             </div>
-            {serverVoicePreset === "custom" && (
-              <button
-                onClick={() => handlePresetSelect("custom")}
-                className={cn(
-                  "w-full flex items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:bg-muted/60 mt-1.5",
-                  "border-primary bg-primary/5"
-                )}
-                data-testid="button-voice-preset-custom"
-              >
-                <div className="flex items-center gap-2">
-                  <Cloud className="h-3.5 w-3.5 text-blue-500" />
-                  <span className="font-medium">Custom Voice</span>
-                  <Badge className="text-[9px] px-1 py-0 h-3.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-0">☁</Badge>
-                </div>
-                <Check className="h-3 w-3 text-primary" />
-              </button>
-            )}
 
-            {/* HF Token section */}
+            {/* HF Token management */}
             <div className="mt-2.5 space-y-1.5">
               {hfToken ? (
                 <div className="flex items-center justify-between rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5">
