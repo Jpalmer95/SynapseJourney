@@ -1,5 +1,5 @@
-import { useState, useRef } from "react";
-import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Cpu, Square } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -14,11 +14,12 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
+import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { cn } from "@/lib/utils";
-import { AI_VOICE_PRESETS } from "@/lib/tts-constants";
+import { AI_VOICE_PRESETS, getVoiceTier } from "@/lib/tts-constants";
 
 interface TTSButtonProps {
   text: string;
@@ -56,13 +57,52 @@ export function TTSButton({
     setServerVoicePreset,
     currentSectionIndex,
     totalSections,
+    hfToken,
+    setHFToken,
+    clearHFToken,
+    hfWarming,
+    kokoroLoading,
+    kokoroReady,
   } = useTTS();
 
+  const { toast } = useToast();
   const queryClient = useQueryClient();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [showTokenInput, setShowTokenInput] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const warmToastRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const warmToastShownRef = useRef(false);
+
+  const activeTier = getVoiceTier(serverVoicePreset);
+
+  // Cold-start toast: if loading a cloud voice for more than 3 s, prompt the user.
+  // The hook fires its own toast on a 503, so we only fire this one when hfWarming is false.
+  useEffect(() => {
+    const isCloudVoice = activeTier === "cloud";
+    if (isLoading && isCloudVoice && !hfWarming && !warmToastShownRef.current) {
+      warmToastRef.current = setTimeout(() => {
+        if (isLoading && !hfWarming) {
+          warmToastShownRef.current = true;
+          toast({
+            title: "Warming up cloud engine…",
+            description: "This may take up to 20 s on first use.",
+            duration: 20000,
+          });
+        }
+      }, 3000);
+    }
+    if (!isLoading) {
+      if (warmToastRef.current) clearTimeout(warmToastRef.current);
+      warmToastShownRef.current = false;
+    }
+    return () => {
+      if (warmToastRef.current) clearTimeout(warmToastRef.current);
+    };
+  }, [isLoading, activeTier, hfWarming, toast]);
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
@@ -71,22 +111,14 @@ export function TTSButton({
     retry: false,
   });
 
-  // Section mode: audio bar is visible when section playback is active (loading, playing, or paused)
-  // Section bar shows while playing/paused/loading AND also while showing a section-mode error
-  // (totalSections stays > 0 on error so bar remains visible until user stops or retries).
   const isInSectionMode = !!(sections && sections.length > 0 && totalSections > 0 &&
     ((isSpeaking || isPaused || isLoading) || !!ttsError));
   const currentLabel = isInSectionMode && currentSectionIndex >= 0 ? sections[currentSectionIndex]?.label : null;
 
   const handleClick = () => {
     if (isLoading) return;
-    // Paused state: resume current stream (don't restart)
     if (isPaused) { resume(); return; }
-    // Playing state: pause current stream
     if (isSpeaking) { pause(); return; }
-    // Idle state: use section-by-section playback when sections are available
-    // so the audio bar and per-section highlights activate correctly.
-    // Fall back to speak(text, unitId) only when no sections are provided.
     if (sections && sections.length > 0) {
       speakSections(sections, 0);
     } else {
@@ -146,20 +178,49 @@ export function TTSButton({
     if (fileRef.current) fileRef.current.value = "";
   };
 
+  const handleSaveToken = () => {
+    const trimmed = tokenInput.trim();
+    if (trimmed) {
+      setHFToken(trimmed);
+      setTokenInput("");
+      setShowTokenInput(false);
+    }
+  };
+
   const getIcon = () => {
     if (isLoading) return <Loader2 className="h-4 w-4 animate-spin" />;
     if (isSpeaking) return isPaused ? <Play className="h-4 w-4" /> : <Pause className="h-4 w-4" />;
     return <Volume2 className="h-4 w-4" />;
   };
 
-  const getTooltip = () => {
-    if (isLoading) return "Generating audio...";
+  const getTooltipText = () => {
+    if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
-    return "Read aloud";
+    if (activeTier === "local") return "Read aloud · Kokoro local";
+    if (activeTier === "cloud") return "Read aloud · Qwen cloud";
+    return "Read aloud · Server";
+  };
+
+  const getTierBadge = (tier: ReturnType<typeof getVoiceTier>, small = false) => {
+    const cls = small ? "text-[10px] px-1 py-0 h-4" : "text-[10px] px-1.5 py-0.5 h-5";
+    if (tier === "local") {
+      return (
+        <Badge className={cn(cls, "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-0 font-medium")}>
+          <Zap className="h-2.5 w-2.5 mr-0.5" />Offline
+        </Badge>
+      );
+    }
+    if (tier === "cloud") {
+      return (
+        <Badge className={cn(cls, "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-0 font-medium")}>
+          <Cloud className="h-2.5 w-2.5 mr-0.5" />Pro
+        </Badge>
+      );
+    }
+    return null;
   };
 
   const isCached = cacheStatus?.cached === true;
-  const isAIPreset = serverVoicePreset !== "browser";
 
   const SettingsPopover = (
     <Popover open={settingsOpen} onOpenChange={setSettingsOpen}>
@@ -169,7 +230,7 @@ export function TTSButton({
             <Button
               variant="ghost"
               size="icon"
-              className={cn(isAIPreset && "text-violet-500 dark:text-violet-400")}
+              className={cn(serverVoicePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
               data-testid="button-tts-settings"
             >
               <Settings2 className="h-4 w-4" />
@@ -179,131 +240,207 @@ export function TTSButton({
         <TooltipContent>Voice settings</TooltipContent>
       </Tooltip>
 
-      <PopoverContent className="w-80" align="start">
-        <div className="space-y-3">
+      <PopoverContent className="w-80 p-0" align="start">
+        <div className="p-3 border-b">
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-semibold">Voice Settings</h4>
-            {serverVoicePreset !== "browser" && (
-              <Badge className="text-xs bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 border-0">
-                <Cpu className="h-3 w-3 mr-1" /> AI Voice
-              </Badge>
+            {getTierBadge(activeTier)}
+          </div>
+          {(kokoroLoading || (activeTier === "local" && !kokoroReady && !kokoroLoading)) && (
+            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
+              {kokoroLoading
+                ? <><Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…</>
+                : <><Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen</>
+              }
+            </p>
+          )}
+          {kokoroReady && (
+            <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
+              <Check className="h-2.5 w-2.5" />Kokoro ready · instant playback
+            </p>
+          )}
+        </div>
+
+        <div className="overflow-y-auto max-h-[70vh]">
+          {/* ── Standard Voices ── */}
+          <div className="p-3 pb-2">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Zap className="h-3.5 w-3.5 text-emerald-500" />
+              <span className="text-xs font-semibold text-foreground">Standard</span>
+              <span className="text-[10px] text-muted-foreground">· offline, free</span>
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {AI_VOICE_PRESETS.map(preset => (
+                <button
+                  key={preset.id}
+                  onClick={() => handlePresetSelect(preset.id)}
+                  className={cn(
+                    "relative flex flex-col items-start rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-muted/60",
+                    serverVoicePreset === preset.id ? "border-primary bg-primary/5" : "border-border"
+                  )}
+                  data-testid={`button-voice-preset-${preset.id}`}
+                >
+                  <div className="flex items-center justify-between w-full mb-0.5">
+                    <span className={cn("font-semibold text-sm", preset.color)}>{preset.name}</span>
+                    {serverVoicePreset === preset.id
+                      ? <Check className="h-3 w-3 text-primary" />
+                      : <Badge className="text-[9px] px-1 py-0 h-3.5 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 border-0">⚡</Badge>
+                    }
+                  </div>
+                  <span className="text-muted-foreground leading-tight">{preset.description}</span>
+                  <span className="text-muted-foreground/60 capitalize mt-0.5">{preset.gender}</span>
+                </button>
+              ))}
+            </div>
+            {unitId && isCached && activeTier === "local" && (
+              <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
+                <Check className="h-3 w-3" /> Audio ready for instant playback
+              </p>
             )}
           </div>
 
-          <Tabs defaultValue="presets">
-            <TabsList className="w-full h-8 text-xs">
-              <TabsTrigger value="presets" className="flex-1 text-xs">AI Voices</TabsTrigger>
-              <TabsTrigger value="browser" className="flex-1 text-xs">Browser</TabsTrigger>
-              <TabsTrigger value="clone" className="flex-1 text-xs">Clone</TabsTrigger>
-            </TabsList>
+          {/* ── Cloud Voices ── */}
+          <div className="p-3 pt-1 border-t">
+            <div className="flex items-center gap-1.5 mb-2">
+              <Cloud className="h-3.5 w-3.5 text-blue-500" />
+              <span className="text-xs font-semibold text-foreground">Cloud</span>
+              <span className="text-[10px] text-muted-foreground">· Qwen ZeroGPU, voice cloning</span>
+            </div>
 
-            <TabsContent value="presets" className="mt-2 space-y-1.5">
-              <p className="text-xs text-muted-foreground mb-2">
-                High-quality AI voices generated server-side. Works on all devices including Tesla browsers.
-              </p>
-              <div className="grid grid-cols-2 gap-1.5">
-                {AI_VOICE_PRESETS.map(preset => (
-                  <button
-                    key={preset.id}
-                    onClick={() => handlePresetSelect(preset.id)}
-                    className={cn(
-                      "relative flex flex-col items-start rounded-lg border p-2.5 text-left text-xs transition-colors hover:bg-muted/60",
-                      serverVoicePreset === preset.id ? "border-primary bg-primary/5" : "border-border"
-                    )}
-                    data-testid={`button-voice-preset-${preset.id}`}
-                  >
-                    <div className="flex items-center justify-between w-full mb-0.5">
-                      <span className={cn("font-semibold text-sm", preset.color)}>{preset.name}</span>
-                      {serverVoicePreset === preset.id && <Check className="h-3 w-3 text-primary" />}
-                    </div>
-                    <span className="text-muted-foreground leading-tight">{preset.description}</span>
-                    <span className="text-muted-foreground/60 capitalize mt-0.5">{preset.gender}</span>
-                  </button>
-                ))}
-              </div>
-              {unitId && isCached && isAIPreset && (
-                <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1">
-                  <Check className="h-3 w-3" /> Audio ready for instant playback
-                </p>
+            {/* Voice cloning upload */}
+            <div
+              className={cn(
+                "border-2 border-dashed rounded-lg p-3 text-center cursor-pointer hover:bg-muted/40 transition-colors",
+                serverVoicePreset === "custom" && "border-blue-400/50 bg-blue-50/30 dark:bg-blue-900/10",
+                uploadStatus === "success" && "border-green-500/50 bg-green-50/50 dark:bg-green-900/10",
+                uploadStatus === "error" && "border-red-500/50 bg-red-50/50 dark:bg-red-900/10"
               )}
-            </TabsContent>
-
-            <TabsContent value="browser" className="mt-2 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Uses your device's built-in text-to-speech engine. Voice quality depends on your operating system.
-              </p>
-              <button
-                onClick={() => handlePresetSelect("browser")}
-                className={cn(
-                  "w-full flex items-center gap-2 rounded-lg border p-3 text-left text-sm transition-colors hover:bg-muted/60",
-                  serverVoicePreset === "browser" ? "border-primary bg-primary/5" : "border-border"
-                )}
-                data-testid="button-voice-preset-browser"
-              >
-                <Volume2 className="h-4 w-4 text-muted-foreground" />
-                <div className="flex-1">
-                  <div className="font-medium">Browser TTS</div>
-                  <div className="text-xs text-muted-foreground">Uses device speech engine</div>
+              onClick={() => fileRef.current?.click()}
+              data-testid="dropzone-voice-upload"
+            >
+              <input
+                ref={fileRef}
+                type="file"
+                accept="audio/*"
+                className="hidden"
+                onChange={handleFileUpload}
+                data-testid="input-voice-file"
+              />
+              {uploading ? (
+                <div className="flex flex-col items-center gap-1">
+                  <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">Uploading…</p>
                 </div>
-                {serverVoicePreset === "browser" && <Check className="h-4 w-4 text-primary" />}
-              </button>
-            </TabsContent>
-
-            <TabsContent value="clone" className="mt-2 space-y-2">
-              <p className="text-xs text-muted-foreground">
-                Upload a voice sample (up to 30 seconds) to clone it. Supported formats: WAV, MP3, M4A. Max 2MB.
-              </p>
-              <div
-                className={cn(
-                  "border-2 border-dashed rounded-lg p-4 text-center cursor-pointer hover:bg-muted/40 transition-colors",
-                  uploadStatus === "success" && "border-green-500/50 bg-green-50/50 dark:bg-green-900/10",
-                  uploadStatus === "error" && "border-red-500/50 bg-red-50/50 dark:bg-red-900/10"
-                )}
-                onClick={() => fileRef.current?.click()}
-                data-testid="dropzone-voice-upload"
-              >
-                <input
-                  ref={fileRef}
-                  type="file"
-                  accept="audio/*"
-                  className="hidden"
-                  onChange={handleFileUpload}
-                  data-testid="input-voice-file"
-                />
-                {uploading ? (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                    <p className="text-xs text-muted-foreground">Uploading...</p>
-                  </div>
-                ) : uploadStatus === "success" ? (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <Check className="h-5 w-5 text-green-500" />
-                    <p className="text-xs text-green-600 dark:text-green-400">Voice uploaded — custom voice active!</p>
-                  </div>
-                ) : uploadStatus === "error" ? (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <Square className="h-5 w-5 text-red-500" />
-                    <p className="text-xs text-red-500">Upload failed. Audio must be ≤30 seconds (max 2MB).</p>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center gap-1.5">
-                    <Mic className="h-5 w-5 text-muted-foreground" />
-                    <p className="text-xs text-muted-foreground">Click to upload voice sample</p>
-                    <p className="text-xs text-muted-foreground/60">WAV, MP3, M4A · Max 2MB · ≤30 sec</p>
-                  </div>
-                )}
-              </div>
-              {serverVoicePreset === "custom" && (
-                <p className="text-xs text-violet-600 dark:text-violet-400 flex items-center gap-1">
-                  <Check className="h-3 w-3" /> Custom voice active
-                </p>
+              ) : uploadStatus === "success" ? (
+                <div className="flex flex-col items-center gap-1">
+                  <Check className="h-4 w-4 text-green-500" />
+                  <p className="text-xs text-green-600 dark:text-green-400">Voice uploaded — custom voice active!</p>
+                </div>
+              ) : uploadStatus === "error" ? (
+                <div className="flex flex-col items-center gap-1">
+                  <Square className="h-4 w-4 text-red-500" />
+                  <p className="text-xs text-red-500">Upload failed. Audio must be ≤30 s (max 2MB).</p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-1">
+                  <Mic className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-xs text-muted-foreground">Upload voice sample to clone</p>
+                  <p className="text-xs text-muted-foreground/60">WAV, MP3, M4A · Max 2MB · ≤30 s</p>
+                </div>
               )}
-            </TabsContent>
-          </Tabs>
+            </div>
+            {serverVoicePreset === "custom" && (
+              <button
+                onClick={() => handlePresetSelect("custom")}
+                className={cn(
+                  "w-full flex items-center justify-between rounded-lg border px-3 py-2 text-left text-xs transition-colors hover:bg-muted/60 mt-1.5",
+                  "border-primary bg-primary/5"
+                )}
+                data-testid="button-voice-preset-custom"
+              >
+                <div className="flex items-center gap-2">
+                  <Cloud className="h-3.5 w-3.5 text-blue-500" />
+                  <span className="font-medium">Custom Voice</span>
+                  <Badge className="text-[9px] px-1 py-0 h-3.5 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 border-0">☁</Badge>
+                </div>
+                <Check className="h-3 w-3 text-primary" />
+              </button>
+            )}
 
-          <div className="space-y-2 pt-1 border-t">
+            {/* HF Token section */}
+            <div className="mt-2.5 space-y-1.5">
+              {hfToken ? (
+                <div className="flex items-center justify-between rounded-lg bg-emerald-50 dark:bg-emerald-900/20 border border-emerald-200 dark:border-emerald-800 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1.5">
+                    <Check className="h-3 w-3 text-emerald-600 dark:text-emerald-400" />
+                    <span className="text-xs text-emerald-700 dark:text-emerald-300">HF token saved</span>
+                  </div>
+                  <button
+                    onClick={clearHFToken}
+                    className="text-emerald-600/60 hover:text-red-500 transition-colors"
+                    data-testid="button-clear-hf-token"
+                    title="Remove token"
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                </div>
+              ) : showTokenInput ? (
+                <div className="space-y-1.5">
+                  <Input
+                    placeholder="hf_…"
+                    value={tokenInput}
+                    onChange={e => setTokenInput(e.target.value)}
+                    onKeyDown={e => e.key === "Enter" && handleSaveToken()}
+                    className="h-7 text-xs font-mono"
+                    data-testid="input-hf-token"
+                  />
+                  <div className="flex items-center gap-1.5">
+                    <Button
+                      size="sm"
+                      className="h-6 text-xs flex-1"
+                      onClick={handleSaveToken}
+                      disabled={!tokenInput.trim()}
+                      data-testid="button-save-hf-token"
+                    >
+                      Save token
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-xs"
+                      onClick={() => { setShowTokenInput(false); setTokenInput(""); }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setShowTokenInput(true)}
+                  className="w-full text-left text-xs text-muted-foreground hover:text-foreground transition-colors py-1 flex items-center gap-1.5"
+                  data-testid="button-add-hf-token"
+                >
+                  <Cloud className="h-3 w-3 shrink-0" />
+                  <span>Add HF token to enable cloud voices</span>
+                </button>
+              )}
+              <a
+                href="https://huggingface.co/settings/tokens"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="link-hf-tokens"
+              >
+                <ExternalLink className="h-2.5 w-2.5" />
+                Get a token at huggingface.co
+              </a>
+            </div>
+          </div>
+
+          {/* ── Speed ── */}
+          <div className="p-3 pt-2 border-t space-y-2">
             <div className="flex items-center justify-between">
-              <Label htmlFor="speed" className="text-xs font-medium">Playback Speed</Label>
+              <Label htmlFor="speed" className="text-xs font-medium">Speed</Label>
               <span className="text-xs text-muted-foreground">{rate.toFixed(1)}x</span>
             </div>
             <Slider
@@ -320,16 +457,49 @@ export function TTSButton({
               <span>0.5x</span><span>1x</span><span>2x</span><span>3x</span>
             </div>
           </div>
+
+          {/* ── Advanced (Browser TTS) ── */}
+          <div className="border-t">
+            <button
+              onClick={() => setAdvancedOpen(v => !v)}
+              className="w-full flex items-center justify-between px-3 py-2 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              data-testid="button-advanced-toggle"
+            >
+              <span>Advanced</span>
+              <ChevronDown className={cn("h-3 w-3 transition-transform", advancedOpen && "rotate-180")} />
+            </button>
+            {advancedOpen && (
+              <div className="px-3 pb-3 space-y-2">
+                <p className="text-xs text-muted-foreground">
+                  Use your device's built-in speech engine as a fallback. Voice quality depends on your OS.
+                </p>
+                <button
+                  onClick={() => handlePresetSelect("browser")}
+                  className={cn(
+                    "w-full flex items-center gap-2 rounded-lg border p-2.5 text-left text-sm transition-colors hover:bg-muted/60",
+                    serverVoicePreset === "browser" ? "border-primary bg-primary/5" : "border-border"
+                  )}
+                  data-testid="button-voice-preset-browser"
+                >
+                  <Volume2 className="h-4 w-4 text-muted-foreground" />
+                  <div className="flex-1">
+                    <div className="font-medium text-sm">Browser TTS</div>
+                    <div className="text-xs text-muted-foreground">Device speech engine</div>
+                  </div>
+                  {serverVoicePreset === "browser" && <Check className="h-4 w-4 text-primary" />}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </PopoverContent>
     </Popover>
   );
 
-  // Section-mode audio bar: replaces the play/stop/settings row when sections are active
+  // Section-mode audio bar
   if (isInSectionMode) {
     return (
       <div className={cn("w-full rounded-xl border bg-muted/30 p-3 space-y-2.5", className)}>
-        {/* Section progress dots */}
         <div className="flex items-center gap-1.5">
           {sections!.map((_, i) => (
             <div
@@ -345,7 +515,6 @@ export function TTSButton({
             />
           ))}
         </div>
-        {/* Section label + controls */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 min-w-0">
             {isLoading ? (
@@ -354,13 +523,11 @@ export function TTSButton({
               <div className="h-1.5 w-1.5 rounded-full bg-primary shrink-0 animate-pulse" />
             )}
             <span className="text-xs font-medium text-foreground truncate">
-              {isLoading ? "Generating audio…" : currentLabel ?? "Listening…"}
+              {isLoading
+                ? (hfWarming ? "Warming up cloud engine…" : "Generating audio…")
+                : currentLabel ?? "Listening…"}
             </span>
-            {usingServerTTS && (
-              <Badge variant="secondary" className="text-[10px] px-1 py-0 h-4 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300 shrink-0">
-                AI
-              </Badge>
-            )}
+            {getTierBadge(activeTier, true)}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
             <Tooltip>
@@ -401,7 +568,7 @@ export function TTSButton({
     );
   }
 
-  // Default mode (no active section playback)
+  // Default mode
   return (
     <div className={cn("flex items-center gap-1", className)}>
       <Tooltip>
@@ -418,8 +585,9 @@ export function TTSButton({
           >
             {getIcon()}
             {showLabel && (
-              <span className="ml-2">
-                {isLoading ? "Generating..." : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
+              <span className="ml-2 flex items-center gap-1.5">
+                {isLoading ? "Generating…" : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
+                {!isLoading && !isSpeaking && getTierBadge(activeTier, true)}
               </span>
             )}
           </Button>
@@ -427,12 +595,9 @@ export function TTSButton({
         <TooltipContent>
           <div className="flex flex-col gap-1">
             <div className="flex items-center gap-1.5">
-              {getTooltip()}
-              {isAIPreset && isCached && !isSpeaking && (
+              {getTooltipText()}
+              {isCached && !isSpeaking && activeTier === "local" && (
                 <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
-              )}
-              {usingServerTTS && (
-                <Badge variant="secondary" className="text-xs px-1 py-0 h-4 bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-300">AI</Badge>
               )}
             </div>
             {ttsError && (
