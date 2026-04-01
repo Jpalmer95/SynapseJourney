@@ -113,9 +113,9 @@ export function TTSButton({
     };
   }, [isLoading, isSpeaking, activeTier, hfWarming, toast]);
 
-  // Kokoro first-load toast: fires once when the model starts downloading.
+  // Kokoro first-load toast: fires once when the Kokoro model starts downloading (only if Kokoro engine is active).
   useEffect(() => {
-    if (kokoroLoading && !kokoroWarmShownRef.current) {
+    if (kokoroLoading && serverVoicePreset === "kokoro" && !kokoroWarmShownRef.current) {
       kokoroWarmShownRef.current = true;
       toast({
         title: "Downloading Kokoro model…",
@@ -126,7 +126,7 @@ export function TTSButton({
     if (!kokoroLoading) {
       kokoroWarmShownRef.current = false;
     }
-  }, [kokoroLoading, toast]);
+  }, [kokoroLoading, serverVoicePreset, toast]);
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
@@ -218,9 +218,14 @@ export function TTSButton({
   };
 
   const getTooltipText = () => {
+    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") return "Downloading Kokoro model — first time only…";
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
-    if (serverVoicePreset === "kokoro") return "Read aloud · Kokoro local";
+    if (serverVoicePreset === "kokoro") {
+      if (kokoroLoading) return "Downloading Kokoro model — first time only…";
+      if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
+      return "Read aloud · Kokoro ready · instant playback";
+    }
     if (serverVoicePreset === "qwen" || serverVoicePreset === "custom") return "Read aloud · Qwen cloud";
     return "Read aloud · Browser";
   };
@@ -701,56 +706,75 @@ export function TTSButton({
   }
 
   // Default mode
-  return (
-    <div className={cn("flex items-center gap-1", className)}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <Button
-            variant={variant}
-            size={size}
-            onClick={handleClick}
-            disabled={isLoading}
-            className={cn(
-              isSpeaking && !isPaused && "bg-primary/10 border-primary/30"
-            )}
-            data-testid="button-tts"
-          >
-            {getIcon()}
-            {showLabel && (
-              <span className="ml-2 flex items-center gap-1.5">
-                {isLoading ? "Generating…" : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
-                {!isLoading && !isSpeaking && getTierBadge(activeTier, true)}
-              </span>
-            )}
-          </Button>
-        </TooltipTrigger>
-        <TooltipContent>
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-1.5">
-              {getTooltipText()}
-              {isCached && !isSpeaking && activeTier === "local" && (
-                <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
-              )}
-            </div>
-            {ttsError && (
-              <p className="text-xs text-red-400 max-w-[200px]">{ttsError}</p>
-            )}
-          </div>
-        </TooltipContent>
-      </Tooltip>
+  const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
+    kokoroLoading ? (
+      <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-loading">
+        <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />Loading model…
+      </p>
+    ) : !kokoroReady ? (
+      <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-idle">
+        <Zap className="h-2.5 w-2.5 text-emerald-500 shrink-0" />Loads on first Listen
+      </p>
+    ) : (
+      <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1" data-testid="status-kokoro-ready">
+        <Check className="h-2.5 w-2.5 shrink-0" />Kokoro ready
+      </p>
+    )
+  );
 
-      {isSpeaking && (
+  return (
+    <div className={cn("flex flex-col gap-0.5", className)}>
+      <div className="flex items-center gap-1">
         <Tooltip>
           <TooltipTrigger asChild>
-            <Button variant="ghost" size="icon" onClick={handleStop} data-testid="button-tts-stop">
-              <Square className="h-4 w-4" />
+            <Button
+              variant={variant}
+              size={size}
+              onClick={handleClick}
+              disabled={isLoading}
+              className={cn(
+                isSpeaking && !isPaused && "bg-primary/10 border-primary/30"
+              )}
+              data-testid="button-tts"
+            >
+              {getIcon()}
+              {showLabel && (
+                <span className="ml-2 flex items-center gap-1.5">
+                  {isLoading ? (kokoroLoading ? "Loading model…" : "Generating…") : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
+                  {!isLoading && !isSpeaking && getTierBadge(activeTier, true)}
+                </span>
+              )}
             </Button>
           </TooltipTrigger>
-          <TooltipContent>Stop</TooltipContent>
+          <TooltipContent>
+            <div className="flex flex-col gap-1">
+              <div className="flex items-center gap-1.5">
+                {getTooltipText()}
+                {isCached && !isSpeaking && activeTier === "local" && (
+                  <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
+                )}
+              </div>
+              {ttsError && (
+                <p className="text-xs text-red-400 max-w-[200px]">{ttsError}</p>
+              )}
+            </div>
+          </TooltipContent>
         </Tooltip>
-      )}
 
-      {SettingsPopover}
+        {isSpeaking && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button variant="ghost" size="icon" onClick={handleStop} data-testid="button-tts-stop">
+                <Square className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>Stop</TooltipContent>
+          </Tooltip>
+        )}
+
+        {SettingsPopover}
+      </div>
+      {kokoroStatusLine}
     </div>
   );
 }
