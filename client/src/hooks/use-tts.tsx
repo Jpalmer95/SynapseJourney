@@ -933,7 +933,16 @@ function useTTSImpl(): UseTTSReturn {
 
         // ── Tier 2: HF Cloud (voice cloning / cloud-tier presets) ─────────
         if (voiceTier === "cloud") {
-          if (hfTokenRef.current) {
+          if (!hfTokenRef.current) {
+            // Inform the user once (on the first section) that a HF token is required.
+            if (i === start) {
+              setState(prev => ({
+                ...prev,
+                error: "Add a Hugging Face token in Settings to enable cloud voice synthesis.",
+              }));
+            }
+            // Fall through to server for all sections.
+          } else {
             try {
               const blob = await fetchQwenCloudTTS(sectionText, currentPreset, hfTokenRef.current, cloudReferenceAudio);
               if (blob && !cancelledRef.current) {

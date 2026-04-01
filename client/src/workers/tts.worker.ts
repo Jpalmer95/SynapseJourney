@@ -3,8 +3,9 @@
 import { KokoroTTS } from "kokoro-js";
 import { env } from "@huggingface/transformers";
 
-// Use the Cache API so model weights persist offline after the first download.
-env.useCustomCache = true;
+// Use the browser Cache API so model weights persist offline after first download.
+// useBrowserCache maps to the browser-native Cache API (available in workers).
+env.useBrowserCache = true;
 
 let kokoroTTS: KokoroTTS | null = null;
 
