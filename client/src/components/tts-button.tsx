@@ -432,6 +432,11 @@ export function TTSButton({
                   </div>
                   {serverVoicePreset === "custom" && <Check className="h-3 w-3 text-primary shrink-0" />}
                 </button>
+                {serverVoicePreset === "custom" && uploadStatus === "idle" && (
+                  <p className="text-[10px] text-amber-600 dark:text-amber-400">
+                    Upload a voice sample below to enable custom voice cloning
+                  </p>
+                )}
 
                 {/* Voice sample upload dropzone */}
                 <div

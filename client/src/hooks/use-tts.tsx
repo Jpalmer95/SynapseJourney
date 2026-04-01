@@ -174,10 +174,18 @@ function useTTSImpl(): UseTTSReturn {
   const [serverVoicePreset, setServerVoicePresetState] = useState<string>("kokoro");
 
   const [kokoroVoice, setKokoroVoiceState] = useState<string>(() => {
-    try { return localStorage.getItem(KOKORO_VOICE_KEY) || KOKORO_DEFAULT_VOICE; } catch { return KOKORO_DEFAULT_VOICE; }
+    try {
+      const stored = localStorage.getItem(KOKORO_VOICE_KEY);
+      const valid = KOKORO_VOICES.some(v => v.id === stored);
+      return valid ? stored! : KOKORO_DEFAULT_VOICE;
+    } catch { return KOKORO_DEFAULT_VOICE; }
   });
   const [qwenVoice, setQwenVoiceState] = useState<string>(() => {
-    try { return localStorage.getItem(QWEN_VOICE_KEY) || QWEN_DEFAULT_VOICE; } catch { return QWEN_DEFAULT_VOICE; }
+    try {
+      const stored = localStorage.getItem(QWEN_VOICE_KEY);
+      const valid = QWEN_VOICES.some(v => v.id === stored);
+      return valid ? stored! : QWEN_DEFAULT_VOICE;
+    } catch { return QWEN_DEFAULT_VOICE; }
   });
   const [qwenCustomDescription, setQwenCustomDescriptionState] = useState<string>(() => {
     try { return localStorage.getItem(QWEN_CUSTOM_DESC_KEY) || ""; } catch { return ""; }
