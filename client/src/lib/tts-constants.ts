@@ -20,6 +20,19 @@ export const KOKORO_VOICE_MAP: Record<string, string> = {
   orion: "am_adam",
 };
 
+/**
+ * Per-preset voice descriptions forwarded to the Qwen3-TTS ZeroGPU Space / Inference API.
+ * Qwen3-TTS accepts a `voice_description` parameter to control speaker characteristics.
+ */
+export const QWEN_VOICE_DESCRIPTIONS: Record<string, string> = {
+  aria: "A warm, friendly female educator with a clear and welcoming voice.",
+  nova: "An energetic and enthusiastic female voice, great for science and technology topics.",
+  lyra: "A calm and soothing female voice, perfect for focused studying and meditation.",
+  echo: "A clear, confident male narrator with a professional and precise delivery.",
+  sage: "A deep and authoritative male voice, ideal for advanced academic content.",
+  orion: "A thoughtful and measured male voice, great for philosophy and reflective content.",
+};
+
 export function getVoiceTier(presetId: string): VoiceTier {
   if (presetId === "browser") return "server";
   if (presetId === "custom") return "cloud";

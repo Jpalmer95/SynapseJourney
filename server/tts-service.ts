@@ -418,16 +418,10 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   let fallback = false;
 
   if (voicePreset !== "browser") {
-    // 1. Try OpenAI TTS (reliable, fast, high quality) — primary provider
+    // 1. OpenAI TTS — primary server provider (reliable, fast, high quality)
     audioBuffer = await callOpenAITTS(truncatedText, voicePreset);
 
-    // 2. Fall back to Qwen3-TTS via Gradio Space REST (public, no auth)
-    if (!audioBuffer) {
-      audioBuffer = await callQwen3TTS(truncatedText, voicePreset, referenceAudio);
-      if (audioBuffer) fallback = true;
-    }
-
-    // 3. Fall back to HF Inference API — prefer server env token, then user personal token
+    // 2. HF Inference API — last server-side fallback (uses server env token or user token)
     if (!audioBuffer) {
       const effectiveToken = process.env.HF_API_TOKEN || hfToken;
       if (effectiveToken) {
@@ -441,7 +435,6 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
     return null;
   }
 
-  // Detect actual format from magic bytes — never assume the provider returned WAV
   const audioFormat = detectAudioFormat(audioBuffer);
   const audioData = audioBuffer.toString("base64");
   await saveCachedAudio(unitId, configHash, audioData, audioFormat).catch(console.error);
@@ -464,15 +457,10 @@ export async function callTTSDirect(
   const MAX_CHARS = 3000;
   const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
 
-  // 1. OpenAI TTS — primary provider
+  // 1. OpenAI TTS — primary server provider
   let audioBuffer: Buffer | null = await callOpenAITTS(truncated, voicePreset);
 
-  // 2. Qwen3-TTS via Gradio Space — first fallback
-  if (!audioBuffer) {
-    audioBuffer = await callQwen3TTS(truncated, voicePreset, referenceAudio);
-  }
-
-  // 3. HF Inference API — last fallback
+  // 2. HF Inference API — last server-side fallback
   if (!audioBuffer) {
     const effectiveToken = process.env.HF_API_TOKEN || hfToken;
     if (effectiveToken) {

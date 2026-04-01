@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect, createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { KOKORO_VOICE_MAP, getVoiceTier } from "@/lib/tts-constants";
+import { KOKORO_VOICE_MAP, QWEN_VOICE_DESCRIPTIONS, getVoiceTier } from "@/lib/tts-constants";
 import { useToast } from "@/hooks/use-toast";
 
 // localStorage keys used by the TTS engine (must match Task #9 settings panel)
@@ -468,9 +468,22 @@ function useTTSImpl(): UseTTSReturn {
     referenceAudioBase64?: string,
   ): Promise<Blob | null> => {
     const endpoint = getHFEndpoint();
-    const body: Record<string, unknown> = { inputs: text };
+    const parameters: Record<string, unknown> = {};
+
     if (presetId === "custom" && referenceAudioBase64) {
-      body.parameters = { reference_audio: referenceAudioBase64 };
+      // Voice cloning: forward the user's recorded reference audio to the Space.
+      parameters.reference_audio = referenceAudioBase64;
+    } else {
+      // Named presets: include the voice description so Qwen3-TTS adopts the right speaker style.
+      const voiceDescription = QWEN_VOICE_DESCRIPTIONS[presetId];
+      if (voiceDescription) {
+        parameters.voice_description = voiceDescription;
+      }
+    }
+
+    const body: Record<string, unknown> = { inputs: text };
+    if (Object.keys(parameters).length > 0) {
+      body.parameters = parameters;
     }
 
     // Retry on 503 (ZeroGPU space warming up). Maximum 12 retries, up to 60 s total.
@@ -581,25 +594,12 @@ function useTTSImpl(): UseTTSReturn {
     const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
 
     try {
-      // ── Tier 1: Local Kokoro (for named AI presets) ──────────────────────
+      // ── Tier 1: AI presets (Kokoro local or Qwen cloud depending on token) ──
       if (voiceTier === "local") {
-        let kokoroDone = false;
-        try {
-          const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
-          const blob = await kokoroSpeak(text, kokoroVoice);
-          if (cancelledRef.current) return;
-          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-          await playBlobAudio(blob);
-          if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
-          kokoroDone = true;
-          return;
-        } catch (kokoroErr) {
-          if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
-          console.warn("[TTS] Kokoro local failed:", kokoroErr);
-        }
-
-        // After Kokoro failure, try HF cloud (if the user has a token) before falling to server.
-        if (!kokoroDone && hfTokenRef.current) {
+        // When the user has an HF token, route to Qwen cloud FIRST so they get
+        // full Qwen ZeroGPU voice quality for their named preset (aria, nova, etc.).
+        // Kokoro is the free offline fallback when no token or cloud fails.
+        if (hfTokenRef.current) {
           try {
             const blob = await fetchQwenCloudTTS(text, currentPreset, hfTokenRef.current);
             if (blob && !cancelledRef.current) {
@@ -610,8 +610,22 @@ function useTTSImpl(): UseTTSReturn {
             }
           } catch (hfErr) {
             if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-            console.warn("[TTS] HF cloud fallback for local preset failed:", hfErr);
+            console.warn("[TTS] Qwen cloud primary failed for local preset, trying Kokoro:", hfErr);
           }
+        }
+
+        // Kokoro: free local inference (primary when no token, fallback when cloud fails)
+        try {
+          const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
+          const blob = await kokoroSpeak(text, kokoroVoice);
+          if (cancelledRef.current) return;
+          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
+          await playBlobAudio(blob);
+          if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+          return;
+        } catch (kokoroErr) {
+          if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
+          console.warn("[TTS] Kokoro local failed:", kokoroErr);
         }
         // Fall through to server
       }
@@ -837,8 +851,24 @@ function useTTSImpl(): UseTTSReturn {
 
         const sectionText = sections[i].text;
 
-        // ── Tier 1: Local Kokoro ───────────────────────────────────────────
+        // ── Tier 1: AI presets (Qwen cloud first if token, then Kokoro) ──────
         if (voiceTier === "local") {
+          // Primary: Qwen cloud when user has HF token
+          if (hfTokenRef.current) {
+            try {
+              const blob = await fetchQwenCloudTTS(sectionText, currentPreset, hfTokenRef.current);
+              if (blob && !cancelledRef.current) {
+                setState(prev => ({ ...prev, usingServerTTS: false }));
+                await playBlobAudio(blob);
+                continue;
+              }
+            } catch (hfErr) {
+              if (hfErr instanceof Error && hfErr.message === "cancelled") return;
+              console.warn("[TTS sections] Qwen cloud primary failed for section", i, ", trying Kokoro:", hfErr);
+            }
+          }
+
+          // Kokoro: free offline (primary when no token, fallback when cloud fails)
           let kokoroDone = false;
           try {
             const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
@@ -852,21 +882,6 @@ function useTTSImpl(): UseTTSReturn {
             console.warn("[TTS sections] Kokoro failed for section", i, ":", kokoroErr);
           }
           if (kokoroDone) continue;
-
-          // After Kokoro failure, try HF cloud (if token available) before server fallback.
-          if (hfTokenRef.current) {
-            try {
-              const blob = await fetchQwenCloudTTS(sectionText, currentPreset, hfTokenRef.current);
-              if (blob && !cancelledRef.current) {
-                setState(prev => ({ ...prev, usingServerTTS: false }));
-                await playBlobAudio(blob);
-                continue;
-              }
-            } catch (hfErr) {
-              if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-              console.warn("[TTS sections] HF cloud fallback failed for section", i, ":", hfErr);
-            }
-          }
           // Fall through to server
         }
 
