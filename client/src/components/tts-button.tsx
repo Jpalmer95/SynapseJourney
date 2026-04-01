@@ -330,22 +330,6 @@ export function TTSButton({
                 />
               ))}
             </div>
-            {/* Optionally show any non-local AI presets (future-proofed) */}
-            {cloudPresets.length > 0 && (
-              <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                {cloudPresets.map(preset => (
-                  <PresetCard
-                    key={preset.id}
-                    presetId={preset.id}
-                    name={preset.name}
-                    description={preset.description}
-                    gender={preset.gender}
-                    color={preset.color}
-                    tier={preset.voiceTier}
-                  />
-                ))}
-              </div>
-            )}
             {unitId && isCached && activeTier === "local" && (
               <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
                 <Check className="h-3 w-3" /> Audio ready for instant playback
@@ -360,6 +344,23 @@ export function TTSButton({
               <span className="text-xs font-semibold text-foreground">Cloud</span>
               <span className="text-[10px] text-muted-foreground">· Qwen ZeroGPU, voice cloning</span>
             </div>
+
+            {/* Cloud-tier AI presets (future-proofed: currently none in tts-constants) */}
+            {cloudPresets.length > 0 && (
+              <div className="grid grid-cols-2 gap-1.5 mb-2">
+                {cloudPresets.map(preset => (
+                  <PresetCard
+                    key={preset.id}
+                    presetId={preset.id}
+                    name={preset.name}
+                    description={preset.description}
+                    gender={preset.gender}
+                    color={preset.color}
+                    tier={preset.voiceTier}
+                  />
+                ))}
+              </div>
+            )}
 
             {/* Custom voice cloning — shown as a first-class selectable cloud preset */}
             {customIsCloud && (
