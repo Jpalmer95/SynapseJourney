@@ -325,15 +325,6 @@ export function TTSButton({
         <div className="overflow-y-auto max-h-[70vh]">
           <div className="p-3 space-y-2">
 
-            {/* ── Browser TTS Engine Row ── */}
-            <EngineRow
-              engineId="browser"
-              label="Browser TTS"
-              sublabel="Device speech engine · no AI"
-              icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
-              active={serverVoicePreset === "browser"}
-            />
-
             {/* ── Kokoro Engine Row ── */}
             <EngineRow
               engineId="kokoro"
@@ -375,6 +366,15 @@ export function TTSButton({
                 )}
               </div>
             )}
+
+            {/* ── Browser TTS Engine Row ── */}
+            <EngineRow
+              engineId="browser"
+              label="Browser TTS"
+              sublabel="Device speech engine · no AI"
+              icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
+              active={serverVoicePreset === "browser"}
+            />
 
             {/* ── Qwen Cloud Engine Row ── */}
             <EngineRow
