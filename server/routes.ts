@@ -1051,7 +1051,13 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   });
 
   app.get("/api/tts/presets", (_req, res) => {
-    import("./tts-service").then(({ VOICE_PRESETS }) => res.json(VOICE_PRESETS));
+    // Returns engine definitions for the new 3-engine model
+    res.json([
+      { id: "kokoro", name: "Kokoro", description: "Local WebGPU/WASM model — offline, no token needed", tier: "local" },
+      { id: "browser", name: "Browser TTS", description: "Device speech engine — quality depends on your OS", tier: "server" },
+      { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — high quality, requires HF token", tier: "cloud" },
+      { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample", tier: "cloud" },
+    ]);
   });
 
   app.get("/api/tts/cache-status/:unitId", isAuthenticated, async (req: any, res: Response) => {
