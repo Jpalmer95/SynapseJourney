@@ -175,12 +175,14 @@ export function buildIntroText(content: any, isNextGen: boolean): string {
 }
 
 /**
- * Map Synapse voice preset IDs to OpenAI built-in voice names.
+ * Map Synapse engine/preset IDs to OpenAI built-in voice names (server fallback).
  * OpenAI voices: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer
  */
 const OPENAI_VOICE_MAP: Record<string, "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"> = {
+  // Current engine IDs
   kokoro: "alloy",
   qwen: "alloy",
+  // Legacy sub-voice IDs kept for backward compatibility
   aria: "shimmer",
   nova: "nova",
   lyra: "fable",

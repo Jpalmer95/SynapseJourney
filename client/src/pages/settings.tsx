@@ -966,7 +966,7 @@ export default function SettingsPage() {
                   <CardTitle>Voice &amp; Audio</CardTitle>
                 </div>
                 <CardDescription>
-                  Choose a default AI voice for lesson narration. Your selection is saved and applied to every lesson automatically.
+                  Choose a default TTS engine for lesson narration. Your selection is saved and applied to every lesson automatically.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
