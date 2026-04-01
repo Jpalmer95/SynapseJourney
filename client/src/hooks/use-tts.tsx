@@ -171,7 +171,7 @@ function useTTSImpl(): UseTTSReturn {
 
   const [rate, setRateState] = useState(1.0);
   const [selectedVoiceName, setSelectedVoiceState] = useState<string | null>(null);
-  const [serverVoicePreset, setServerVoicePresetState] = useState<string>("kokoro");
+  const [serverVoicePreset, setServerVoicePresetState] = useState<string>("browser");
 
   const [kokoroVoice, setKokoroVoiceState] = useState<string>(() => {
     try {
@@ -211,6 +211,9 @@ function useTTSImpl(): UseTTSReturn {
   const kokoroVoiceRef = useRef<string>(kokoroVoice);
   const qwenVoiceRef = useRef<string>(qwenVoice);
   const qwenCustomDescriptionRef = useRef<string>(qwenCustomDescription);
+  // serverVoicePreset ref: updated synchronously in setServerVoicePreset so speak/speakSections
+  // always read the current engine even when called immediately after switching.
+  const serverVoicePresetRef = useRef<string>("browser");
 
   // Kokoro worker refs
   const workerRef = useRef<Worker | null>(null);
@@ -234,10 +237,12 @@ function useTTSImpl(): UseTTSReturn {
 
   useEffect(() => {
     if (ttsSettings) {
-      const raw = ttsSettings.voicePreset || "kokoro";
+      const raw = ttsSettings.voicePreset || "browser";
       // Migrate legacy preset IDs from pre-v10 to the new engine model
       const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
       const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
+      // Keep the ref in sync so speak/speakSections immediately see the loaded preset
+      serverVoicePresetRef.current = normalized;
       setServerVoicePresetState(normalized);
       // If a legacy Qwen preset ID directly maps to a QWEN_VOICES entry, seed qwen_voice
       // so the user's prior character choice is preserved (only if not already set)
@@ -706,7 +711,7 @@ function useTTSImpl(): UseTTSReturn {
       totalSections: 0,
     }));
 
-    const currentPreset = serverVoicePreset;
+    const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
     // Auto-use server TTS when: non-browser preset, speechSynthesis is absent,
     // OR the browser has no voices (e.g. Tesla browser where speechSynthesis exists
@@ -942,7 +947,7 @@ function useTTSImpl(): UseTTSReturn {
       totalSections: sections.length,
     }));
 
-    const currentPreset = serverVoicePreset;
+    const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
     const noVoicesAvailable = BROWSER_SPEECH_SUPPORTED &&
       window.speechSynthesis.getVoices().length === 0;
@@ -1196,6 +1201,9 @@ function useTTSImpl(): UseTTSReturn {
   }, []);
 
   const setServerVoicePreset = useCallback(async (preset: string) => {
+    // Update ref synchronously so speak/speakSections immediately see the new engine
+    // even if called before the React re-render completes.
+    serverVoicePresetRef.current = preset;
     setServerVoicePresetState(preset);
     try {
       await fetch("/api/tts/settings", {

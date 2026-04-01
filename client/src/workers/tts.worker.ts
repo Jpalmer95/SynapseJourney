@@ -24,12 +24,14 @@ self.onmessage = async (e: MessageEvent) => {
     try {
       if (!kokoroTTS) {
         try {
-          kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", {
-            dtype: "q8",
+          // WebGPU path: fp32 is required for correct audio output (q8 produces garbled/alien speech on WebGPU)
+          kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+            dtype: "fp32",
             device: "webgpu",
           });
         } catch {
-          kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-ONNX", {
+          // WASM fallback: q8 is fine here and keeps the download smaller
+          kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
             dtype: "q8",
             device: "wasm",
           });
