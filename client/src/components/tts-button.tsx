@@ -66,6 +66,8 @@ export function TTSButton({
     setKokoroVoice,
     qwenVoice,
     setQwenVoice,
+    qwenCustomDescription,
+    setQwenCustomDescription,
   } = useTTS();
 
   const { toast } = useToast();
@@ -392,6 +394,25 @@ export function TTSButton({
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Free-text voice description override */}
+                <div className="space-y-1">
+                  <p className="text-[10px] text-muted-foreground">Custom voice description (optional)</p>
+                  <textarea
+                    value={qwenCustomDescription}
+                    onChange={e => setQwenCustomDescription(e.target.value)}
+                    placeholder="Describe the voice style, e.g. 'calm female narrator with a soft American accent'"
+                    maxLength={500}
+                    rows={2}
+                    className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 resize-none placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary"
+                    data-testid="textarea-qwen-custom-desc"
+                  />
+                  {qwenCustomDescription && (
+                    <p className="text-[10px] text-blue-500 dark:text-blue-400">
+                      Using custom description · overrides voice character
+                    </p>
+                  )}
                 </div>
 
                 {/* Custom voice cloning row */}

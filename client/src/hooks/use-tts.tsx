@@ -9,6 +9,7 @@ const HF_TOKEN_KEY = "hf_token";
 const HF_SPACE_URL_KEY = "hf_space_url";
 const KOKORO_VOICE_KEY = "kokoro_voice";
 const QWEN_VOICE_KEY = "qwen_voice";
+const QWEN_CUSTOM_DESC_KEY = "qwen_custom_description";
 // Default HF model ID used when no custom space URL is configured
 const HF_DEFAULT_MODEL = "Qwen/Qwen3-TTS";
 
@@ -69,6 +70,8 @@ interface UseTTSReturn extends TTSState {
   setKokoroVoice: (voiceId: string) => void;
   qwenVoice: string;
   setQwenVoice: (voiceId: string) => void;
+  qwenCustomDescription: string;
+  setQwenCustomDescription: (desc: string) => void;
 }
 
 const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
@@ -176,6 +179,9 @@ function useTTSImpl(): UseTTSReturn {
   const [qwenVoice, setQwenVoiceState] = useState<string>(() => {
     try { return localStorage.getItem(QWEN_VOICE_KEY) || QWEN_DEFAULT_VOICE; } catch { return QWEN_DEFAULT_VOICE; }
   });
+  const [qwenCustomDescription, setQwenCustomDescriptionState] = useState<string>(() => {
+    try { return localStorage.getItem(QWEN_CUSTOM_DESC_KEY) || ""; } catch { return ""; }
+  });
 
   const [hfToken, setHFTokenState] = useState<string | null>(() =>
     typeof localStorage !== "undefined" ? localStorage.getItem(HF_TOKEN_KEY) : null
@@ -196,6 +202,7 @@ function useTTSImpl(): UseTTSReturn {
   const hfTokenRef = useRef<string | null>(hfToken);
   const kokoroVoiceRef = useRef<string>(kokoroVoice);
   const qwenVoiceRef = useRef<string>(qwenVoice);
+  const qwenCustomDescriptionRef = useRef<string>(qwenCustomDescription);
 
   // Kokoro worker refs
   const workerRef = useRef<Worker | null>(null);
@@ -209,6 +216,7 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => { hfTokenRef.current = hfToken; }, [hfToken]);
   useEffect(() => { kokoroVoiceRef.current = kokoroVoice; }, [kokoroVoice]);
   useEffect(() => { qwenVoiceRef.current = qwenVoice; }, [qwenVoice]);
+  useEffect(() => { qwenCustomDescriptionRef.current = qwenCustomDescription; }, [qwenCustomDescription]);
 
   const { data: ttsSettings } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
     queryKey: ["/api/tts/settings"],
@@ -635,6 +643,16 @@ function useTTSImpl(): UseTTSReturn {
     try { localStorage.setItem(QWEN_VOICE_KEY, voiceId); } catch { /* ignore */ }
   }, []);
 
+  const setQwenCustomDescription = useCallback((desc: string) => {
+    const trimmed = desc.slice(0, 500);
+    setQwenCustomDescriptionState(trimmed);
+    qwenCustomDescriptionRef.current = trimmed;
+    try {
+      if (trimmed) localStorage.setItem(QWEN_CUSTOM_DESC_KEY, trimmed);
+      else localStorage.removeItem(QWEN_CUSTOM_DESC_KEY);
+    } catch { /* ignore */ }
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────────
 
   const speak = useCallback(async (text: string, unitId?: number) => {
@@ -684,7 +702,7 @@ function useTTSImpl(): UseTTSReturn {
         // Fallback: if Kokoro failed and user has HF token, try Qwen cloud before server
         if (!kokoroDone && hfTokenRef.current) {
           try {
-            const fallbackDesc = QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
+            const fallbackDesc = qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
             const blob = await fetchQwenCloudTTS(text, fallbackDesc, hfTokenRef.current);
             if (blob && !cancelledRef.current) {
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
@@ -723,9 +741,9 @@ function useTTSImpl(): UseTTSReturn {
               } catch { /* ignore — proceed without reference audio */ }
             }
 
-            // For qwen: look up the voice description from the saved qwen sub-voice
+            // For qwen: use custom free-text description if set, otherwise look up from presets
             const voiceDesc = currentPreset === "qwen"
-              ? QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription
+              ? (qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription)
               : undefined;
 
             const blob = await fetchQwenCloudTTS(text, voiceDesc, hfTokenRef.current, referenceAudio);
@@ -973,7 +991,7 @@ function useTTSImpl(): UseTTSReturn {
           } else {
             try {
               const voiceDesc = currentPreset === "qwen"
-                ? QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription
+                ? (qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription)
                 : undefined;
               const blob = await fetchQwenCloudTTS(sectionText, voiceDesc, hfTokenRef.current, cloudReferenceAudio);
               if (blob && !cancelledRef.current) {
@@ -1191,6 +1209,8 @@ function useTTSImpl(): UseTTSReturn {
     setKokoroVoice,
     qwenVoice,
     setQwenVoice,
+    qwenCustomDescription,
+    setQwenCustomDescription,
   };
 }
 
