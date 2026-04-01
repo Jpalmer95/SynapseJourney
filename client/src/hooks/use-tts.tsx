@@ -231,6 +231,19 @@ function useTTSImpl(): UseTTSReturn {
       const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
       const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
       setServerVoicePresetState(normalized);
+      // If a legacy Qwen preset ID directly maps to a QWEN_VOICES entry, seed qwen_voice
+      // so the user's prior character choice is preserved (only if not already set)
+      const QWEN_VOICE_IDS = new Set(["aria", "nova", "lyra", "echo", "sage", "orion"]);
+      if (normalized !== raw && QWEN_VOICE_IDS.has(raw)) {
+        try {
+          const stored = localStorage.getItem(QWEN_VOICE_KEY);
+          if (!stored) {
+            localStorage.setItem(QWEN_VOICE_KEY, raw);
+            setQwenVoiceState(raw);
+            qwenVoiceRef.current = raw;
+          }
+        } catch { /* ignore */ }
+      }
       // Persist migration back to server so preset stays consistent
       if (normalized !== raw) {
         fetch("/api/tts/settings", {

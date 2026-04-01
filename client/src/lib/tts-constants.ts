@@ -21,7 +21,9 @@ export const QWEN_VOICES = [
 export const KOKORO_DEFAULT_VOICE = "af_bella";
 export const QWEN_DEFAULT_VOICE = "aria";
 
-export function getVoiceTier(presetId: string): VoiceTier {
+export type EnginePreset = "kokoro" | "browser" | "qwen" | "custom";
+
+export function getVoiceTier(presetId: EnginePreset | string): VoiceTier {
   if (presetId === "kokoro") return "local";
   if (presetId === "browser") return "server";
   if (presetId === "qwen" || presetId === "custom") return "cloud";
