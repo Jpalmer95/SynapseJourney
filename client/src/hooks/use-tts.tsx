@@ -226,7 +226,12 @@ function useTTSImpl(): UseTTSReturn {
 
   useEffect(() => {
     if (ttsSettings) {
-      setServerVoicePresetState(ttsSettings.voicePreset || "kokoro");
+      const raw = ttsSettings.voicePreset || "kokoro";
+      // Migrate legacy preset IDs from pre-v10 (aria/nova/echo/onyx/fable/shimmer)
+      // to the new engine model
+      const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer"]);
+      const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
+      setServerVoicePresetState(normalized);
       if (ttsSettings.playbackSpeed) {
         setRateState(ttsSettings.playbackSpeed);
       }
@@ -962,7 +967,7 @@ function useTTSImpl(): UseTTSReturn {
           // Fallback: Qwen cloud (if Kokoro failed and user has HF token)
           if (hfTokenRef.current) {
             try {
-              const fallbackDesc = QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
+              const fallbackDesc = qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
               const blob = await fetchQwenCloudTTS(sectionText, fallbackDesc, hfTokenRef.current);
               if (blob && !cancelledRef.current) {
                 setState(prev => ({ ...prev, usingServerTTS: false }));
