@@ -195,11 +195,12 @@ const OPENAI_VOICE_MAP: Record<string, "alloy" | "echo" | "fable" | "onyx" | "no
  * Call OpenAI TTS API (/audio/speech).
  * Uses Replit's AI integration env vars first (AI_INTEGRATIONS_OPENAI_API_KEY +
  * AI_INTEGRATIONS_OPENAI_BASE_URL), falling back to the standard OPENAI_API_KEY.
- * Only handles the 6 named AI presets — not "browser" or "custom".
+ * Handles engine preset IDs (kokoro, qwen) and legacy sub-voice IDs via OPENAI_VOICE_MAP.
+ * "browser" and "custom" bypass this and go through other providers.
  * Returns MP3 audio as a Buffer, or null on any failure.
  */
 async function callOpenAITTS(text: string, voicePresetId: string): Promise<Buffer | null> {
-  // Only handle the six named AI voice presets — custom/browser go to other providers
+  // Only handle engine/preset IDs present in the voice map — browser/custom go elsewhere
   if (!OPENAI_VOICE_MAP[voicePresetId]) return null;
 
   const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
