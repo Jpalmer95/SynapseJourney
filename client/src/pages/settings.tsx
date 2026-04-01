@@ -475,7 +475,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (ttsSettings) {
-      setLocalVoicePreset(ttsSettings.voicePreset || "kokoro");
+      const raw = ttsSettings.voicePreset || "kokoro";
+      const legacyQwen = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
+      setLocalVoicePreset(legacyQwen.has(raw) ? "qwen" : raw);
       setLocalSpeed(ttsSettings.playbackSpeed || 1.0);
     }
   }, [ttsSettings]);
