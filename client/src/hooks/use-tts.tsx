@@ -2,6 +2,7 @@ import { useState, useRef, useCallback, useEffect, createContext, useContext } f
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { KOKORO_VOICE_MAP, getVoiceTier } from "@/lib/tts-constants";
+import { useToast } from "@/hooks/use-toast";
 
 // localStorage keys used by the TTS engine (must match Task #9 settings panel)
 const HF_TOKEN_KEY = "hf_token";
@@ -61,6 +62,7 @@ interface UseTTSReturn extends TTSState {
   clearHFToken: () => void;
   kokoroReady: boolean;
   kokoroLoading: boolean;
+  hfWarming: boolean;
 }
 
 const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
@@ -143,6 +145,8 @@ function base64ToBlob(base64: string, format: string): Blob {
 const TTSContext = createContext<UseTTSReturn | null>(null);
 
 function useTTSImpl(): UseTTSReturn {
+  const { toast } = useToast();
+
   const [state, setState] = useState<TTSState>({
     isLoading: false,
     isSpeaking: false,
@@ -165,6 +169,8 @@ function useTTSImpl(): UseTTSReturn {
   );
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
+  const [hfWarming, setHfWarming] = useState(false);
+  const hfToastShownRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
@@ -455,8 +461,6 @@ function useTTSImpl(): UseTTSReturn {
   // ── HF cloud TTS (ZeroGPU Space / Inference API) ─────────────────────────
   // Handles cold-start 503 retries and optional reference audio for voice cloning.
 
-  const hfWarmingRef = useRef(false);
-
   const fetchQwenCloudTTS = useCallback(async (
     text: string,
     presetId: string,
@@ -469,7 +473,7 @@ function useTTSImpl(): UseTTSReturn {
       body.parameters = { reference_audio: referenceAudioBase64 };
     }
 
-    // Retry on 503 (ZeroGPU space warming up). Maximum 12 retries at 5-second intervals = 60 s.
+    // Retry on 503 (ZeroGPU space warming up). Maximum 12 retries, up to 60 s total.
     const MAX_RETRIES = 12;
     let retries = 0;
 
@@ -485,18 +489,30 @@ function useTTSImpl(): UseTTSReturn {
           body: JSON.stringify(body),
         });
       } catch {
+        setHfWarming(false);
+        hfToastShownRef.current = false;
         return null;
       }
 
       if (res.ok) {
-        hfWarmingRef.current = false;
+        setHfWarming(false);
+        hfToastShownRef.current = false;
         const blob = await res.blob();
         if (!blob || blob.size === 0) return null;
         return blob;
       }
 
       if (res.status === 503) {
-        hfWarmingRef.current = true;
+        // Show the "Warming up engine…" toast exactly once per request sequence.
+        if (!hfToastShownRef.current) {
+          hfToastShownRef.current = true;
+          setHfWarming(true);
+          toast({
+            title: "Warming up engine…",
+            description: "The cloud TTS engine is starting up. This usually takes 15–20 seconds.",
+            duration: 20000,
+          });
+        }
         retries++;
         if (retries > MAX_RETRIES) break;
         // Back off based on estimated_time header if present, else 5 s.
@@ -512,13 +528,15 @@ function useTTSImpl(): UseTTSReturn {
       }
 
       // Non-503 error — bail immediately.
-      hfWarmingRef.current = false;
+      setHfWarming(false);
+      hfToastShownRef.current = false;
       return null;
     }
 
-    hfWarmingRef.current = false;
+    setHfWarming(false);
+    hfToastShownRef.current = false;
     return null;
-  }, []);
+  }, [toast, setHfWarming]);
 
   // ── HF token management ───────────────────────────────────────────────────
 
@@ -1067,6 +1085,7 @@ function useTTSImpl(): UseTTSReturn {
     clearHFToken,
     kokoroReady,
     kokoroLoading,
+    hfWarming,
   };
 }
 

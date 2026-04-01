@@ -1,4 +1,4 @@
-export type VoiceTier = "local" | "cloud" | "browser";
+export type VoiceTier = "local" | "cloud" | "server";
 
 export const AI_VOICE_PRESETS = [
   { id: "aria", name: "Aria", description: "Warm educator", gender: "female", color: "text-pink-500 dark:text-pink-400", voiceTier: "local" as VoiceTier },
@@ -21,7 +21,7 @@ export const KOKORO_VOICE_MAP: Record<string, string> = {
 };
 
 export function getVoiceTier(presetId: string): VoiceTier {
-  if (presetId === "browser") return "browser";
+  if (presetId === "browser") return "server";
   if (presetId === "custom") return "cloud";
   const preset = AI_VOICE_PRESETS.find(p => p.id === presetId);
   return preset?.voiceTier ?? "local";
