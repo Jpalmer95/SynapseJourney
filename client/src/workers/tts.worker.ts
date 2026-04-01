@@ -1,6 +1,10 @@
 /// <reference lib="webworker" />
 
 import { KokoroTTS } from "kokoro-js";
+import { env } from "@huggingface/transformers";
+
+// Use the browser's Cache API so the model is stored offline after first download.
+env.useBrowserCache = true;
 
 let kokoroTTS: KokoroTTS | null = null;
 
@@ -41,6 +45,9 @@ function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
   return new Blob([buf], { type: "audio/wav" });
 }
 
+type GenerateOptions = NonNullable<Parameters<KokoroTTS["generate"]>[1]>;
+type KokoroVoice = NonNullable<GenerateOptions["voice"]>;
+
 self.onmessage = async (e: MessageEvent) => {
   const { id, type, text, voice } = e.data as {
     id: number;
@@ -78,8 +85,8 @@ self.onmessage = async (e: MessageEvent) => {
   if (type === "speak") {
     try {
       if (!kokoroTTS) throw new Error("Kokoro not initialized");
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const output = await kokoroTTS.generate(text ?? "", { voice: (voice || "af_bella") } as any);
+      const selectedVoice = (voice || "af_bella") as KokoroVoice;
+      const output = await kokoroTTS.generate(text ?? "", { voice: selectedVoice });
       const audioData: Float32Array = (output as unknown as { audio: Float32Array }).audio;
       const samplingRate: number = (output as unknown as { sampling_rate: number }).sampling_rate;
       const blob = float32ToWav(audioData, samplingRate);

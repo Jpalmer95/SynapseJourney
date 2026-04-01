@@ -838,6 +838,21 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // Returns the stored reference audio for the authenticated user so the client can
+  // forward it directly to an HF cloud TTS Space for voice cloning.
+  app.get("/api/tts/reference-audio", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const settings = await storage.getTtsSettings(req.user.claims.sub);
+      if (!settings.referenceAudio) {
+        return res.status(404).json({ error: "No reference audio stored" });
+      }
+      res.json({ audioBase64: settings.referenceAudio });
+    } catch (err) {
+      console.error("TTS reference audio fetch error:", err);
+      res.status(500).json({ error: "Failed to fetch reference audio" });
+    }
+  });
+
   app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
     try {
       const VALID_PRESETS = ["browser", "custom", "aria", "nova", "lyra", "echo", "sage", "orion"] as const;
