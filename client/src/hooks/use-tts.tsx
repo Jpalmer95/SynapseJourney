@@ -231,6 +231,15 @@ function useTTSImpl(): UseTTSReturn {
       const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
       const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
       setServerVoicePresetState(normalized);
+      // Persist migration back to server so preset stays consistent
+      if (normalized !== raw) {
+        fetch("/api/tts/settings", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ voicePreset: normalized }),
+        }).catch(() => { /* ignore — non-critical */ });
+      }
       if (ttsSettings.playbackSpeed) {
         setRateState(ttsSettings.playbackSpeed);
       }
