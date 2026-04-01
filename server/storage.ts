@@ -1799,7 +1799,7 @@ export class DatabaseStorage implements IStorage {
   async getTtsSettings(userId: string): Promise<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }> {
     const profile = await this.getUserProfile(userId);
     return {
-      voicePreset: profile?.ttsVoicePreset || "browser",
+      voicePreset: profile?.ttsVoicePreset || "kokoro",
       referenceAudio: profile?.ttsReferenceAudio || null,
       playbackSpeed: parseFloat(profile?.ttsPlaybackSpeed || "1.0") || 1.0,
     };

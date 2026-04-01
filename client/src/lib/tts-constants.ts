@@ -1,43 +1,31 @@
 export type VoiceTier = "local" | "cloud" | "server";
 
-export const AI_VOICE_PRESETS = [
-  { id: "aria", name: "Aria", description: "Warm educator", gender: "female", color: "text-pink-500 dark:text-pink-400", voiceTier: "local" as VoiceTier },
-  { id: "nova", name: "Nova", description: "Energetic", gender: "female", color: "text-violet-500 dark:text-violet-400", voiceTier: "local" as VoiceTier },
-  { id: "lyra", name: "Lyra", description: "Calm & soothing", gender: "female", color: "text-blue-500 dark:text-blue-400", voiceTier: "local" as VoiceTier },
-  { id: "echo", name: "Echo", description: "Professional", gender: "male", color: "text-green-600 dark:text-green-400", voiceTier: "local" as VoiceTier },
-  { id: "sage", name: "Sage", description: "Authoritative", gender: "male", color: "text-amber-600 dark:text-amber-400", voiceTier: "local" as VoiceTier },
-  { id: "orion", name: "Orion", description: "Thoughtful", gender: "male", color: "text-cyan-600 dark:text-cyan-400", voiceTier: "local" as VoiceTier },
+export const KOKORO_VOICES = [
+  { id: "af_bella", name: "Bella", gender: "female", style: "Warm & friendly" },
+  { id: "af_sky", name: "Sky", gender: "female", style: "Bright & clear" },
+  { id: "af_heart", name: "Heart", gender: "female", style: "Calm & soothing" },
+  { id: "am_michael", name: "Michael", gender: "male", style: "Professional" },
+  { id: "bm_george", name: "George", gender: "male", style: "Authoritative" },
+  { id: "am_adam", name: "Adam", gender: "male", style: "Thoughtful" },
 ] as const;
 
-export type VoicePresetId = typeof AI_VOICE_PRESETS[number]["id"];
+export const QWEN_VOICES = [
+  { id: "aria", name: "Aria", gender: "female", color: "text-pink-500 dark:text-pink-400", voiceDescription: "A warm, friendly female educator with a clear and welcoming voice." },
+  { id: "nova", name: "Nova", gender: "female", color: "text-violet-500 dark:text-violet-400", voiceDescription: "An energetic and enthusiastic female voice, great for science and technology topics." },
+  { id: "lyra", name: "Lyra", gender: "female", color: "text-blue-500 dark:text-blue-400", voiceDescription: "A calm and soothing female voice, perfect for focused studying and meditation." },
+  { id: "echo", name: "Echo", gender: "male", color: "text-green-600 dark:text-green-400", voiceDescription: "A clear, confident male narrator with a professional and precise delivery." },
+  { id: "sage", name: "Sage", gender: "male", color: "text-amber-600 dark:text-amber-400", voiceDescription: "A deep and authoritative male voice, ideal for advanced academic content." },
+  { id: "orion", name: "Orion", gender: "male", color: "text-cyan-600 dark:text-cyan-400", voiceDescription: "A thoughtful and measured male voice, great for philosophy and reflective content." },
+] as const;
 
-export const KOKORO_VOICE_MAP: Record<string, string> = {
-  aria: "af_bella",
-  nova: "af_sky",
-  lyra: "af_heart",
-  echo: "am_michael",
-  sage: "bm_george",
-  orion: "am_adam",
-};
-
-/**
- * Per-preset voice descriptions forwarded to the Qwen3-TTS ZeroGPU Space / Inference API.
- * Qwen3-TTS accepts a `voice_description` parameter to control speaker characteristics.
- */
-export const QWEN_VOICE_DESCRIPTIONS: Record<string, string> = {
-  aria: "A warm, friendly female educator with a clear and welcoming voice.",
-  nova: "An energetic and enthusiastic female voice, great for science and technology topics.",
-  lyra: "A calm and soothing female voice, perfect for focused studying and meditation.",
-  echo: "A clear, confident male narrator with a professional and precise delivery.",
-  sage: "A deep and authoritative male voice, ideal for advanced academic content.",
-  orion: "A thoughtful and measured male voice, great for philosophy and reflective content.",
-};
+export const KOKORO_DEFAULT_VOICE = "af_bella";
+export const QWEN_DEFAULT_VOICE = "aria";
 
 export function getVoiceTier(presetId: string): VoiceTier {
+  if (presetId === "kokoro") return "local";
   if (presetId === "browser") return "server";
-  if (presetId === "custom") return "cloud";
-  const preset = AI_VOICE_PRESETS.find(p => p.id === presetId);
-  return preset?.voiceTier ?? "local";
+  if (presetId === "qwen" || presetId === "custom") return "cloud";
+  return "server";
 }
 
 /**

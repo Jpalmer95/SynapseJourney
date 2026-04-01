@@ -855,7 +855,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
 
   app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
     try {
-      const VALID_PRESETS = ["browser", "custom", "aria", "nova", "lyra", "echo", "sage", "orion"] as const;
+      const VALID_PRESETS = ["kokoro", "browser", "qwen", "custom"] as const;
       const schema = z.object({
         voicePreset: z.enum(VALID_PRESETS).optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
@@ -912,7 +912,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
   app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) => {
     try {
       // Accept either a unitId (lesson-based) or free-form text + voiceConfig
-      const VALID_PRESETS = ["browser", "custom", "aria", "nova", "lyra", "echo", "sage", "orion"] as const;
+      const VALID_PRESETS = ["kokoro", "browser", "qwen", "custom"] as const;
       const schema = z.object({
         unitId: z.number().int().positive().optional(),
         text: z.string().min(1).max(5000).optional(),

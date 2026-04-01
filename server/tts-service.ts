@@ -179,6 +179,8 @@ export function buildIntroText(content: any, isNextGen: boolean): string {
  * OpenAI voices: alloy, ash, coral, echo, fable, nova, onyx, sage, shimmer
  */
 const OPENAI_VOICE_MAP: Record<string, "alloy" | "echo" | "fable" | "onyx" | "nova" | "shimmer"> = {
+  kokoro: "shimmer",
+  qwen: "nova",
   aria: "shimmer",
   nova: "nova",
   lyra: "fable",

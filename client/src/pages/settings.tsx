@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet, Volume2, Mic, Upload } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet, Volume2, Mic, Upload, Cloud } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -16,7 +16,6 @@ import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
-import { AI_VOICE_PRESETS } from "@/lib/tts-constants";
 import { cn } from "@/lib/utils";
 
 interface CategoryPreference {
@@ -488,7 +487,8 @@ export default function SettingsPage() {
     onSuccess: (_data, preset) => {
       setLocalVoicePreset(preset);
       queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
-      toast({ title: "Voice updated", description: `Default voice set to ${AI_VOICE_PRESETS.find(p => p.id === preset)?.name ?? preset}.` });
+      const engineName = preset === "kokoro" ? "Kokoro (Offline)" : preset === "qwen" ? "Qwen Cloud" : preset === "custom" ? "Custom Voice" : "Browser TTS";
+      toast({ title: "Voice updated", description: `Default engine set to ${engineName}.` });
     },
     onError: () => toast({ title: "Error", description: "Failed to save voice preference.", variant: "destructive" }),
   });
@@ -975,55 +975,61 @@ export default function SettingsPage() {
                   </div>
                 ) : (
                   <>
-                    {/* AI Voice Presets */}
+                    {/* TTS Engine Selection */}
                     <div className="space-y-2">
-                      <Label>AI Voices</Label>
+                      <Label>TTS Engine</Label>
                       <p className="text-xs text-muted-foreground">
-                        High-quality AI voices generated server-side. Works on all devices including Tesla browsers.
+                        Choose your default text-to-speech engine. Fine-tune the voice inside the Listen button on each lesson.
                       </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
-                        {AI_VOICE_PRESETS.map(preset => (
+                      <div className="grid grid-cols-1 gap-2 mt-2">
+                        {[
+                          {
+                            id: "kokoro",
+                            label: "Kokoro",
+                            description: "Local WebGPU/WASM model — offline, no token needed",
+                            icon: <Zap className="h-4 w-4 text-emerald-500" />,
+                            badge: <span className="text-[10px] px-1 py-0.5 rounded bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300 font-medium">Offline</span>,
+                          },
+                          {
+                            id: "browser",
+                            label: "Browser TTS",
+                            description: "Device speech engine — quality depends on your OS",
+                            icon: <Volume2 className="h-4 w-4 text-muted-foreground" />,
+                            badge: null,
+                          },
+                          {
+                            id: "qwen",
+                            label: "Qwen Cloud",
+                            description: "Hugging Face ZeroGPU — high quality, requires HF token",
+                            icon: <Cloud className="h-4 w-4 text-blue-500" />,
+                            badge: <span className="text-[10px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium">Pro</span>,
+                          },
+                        ].map(engine => (
                           <button
-                            key={preset.id}
-                            onClick={() => setPresetMutation.mutate(preset.id)}
+                            key={engine.id}
+                            onClick={() => setPresetMutation.mutate(engine.id)}
                             disabled={setPresetMutation.isPending}
                             className={cn(
-                              "flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                              localVoicePreset === preset.id
+                              "flex items-center gap-3 rounded-lg border px-3 py-2.5 text-left transition-colors",
+                              (localVoicePreset === engine.id || (engine.id === "qwen" && localVoicePreset === "custom"))
                                 ? "border-primary bg-primary/10"
                                 : "border-border hover:border-primary/50 hover:bg-muted/50"
                             )}
-                            data-testid={`button-settings-voice-${preset.id}`}
+                            data-testid={`button-settings-voice-${engine.id}`}
                           >
-                            <div className="flex items-center gap-2 w-full">
-                              <span className={cn("font-semibold text-sm", preset.color)}>{preset.name}</span>
-                              {localVoicePreset === preset.id && <Check className="h-3.5 w-3.5 text-primary ml-auto" />}
+                            <div className="shrink-0">{engine.icon}</div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="font-semibold text-sm">{engine.label}</span>
+                                {engine.badge}
+                              </div>
+                              <span className="text-xs text-muted-foreground leading-tight">{engine.description}</span>
                             </div>
-                            <div className="flex items-center justify-between w-full">
-                              <span className="text-xs text-muted-foreground leading-tight">{preset.description}</span>
-                              <span className="text-xs text-muted-foreground/60 capitalize ml-2">{preset.gender}</span>
-                            </div>
+                            {(localVoicePreset === engine.id || (engine.id === "qwen" && localVoicePreset === "custom")) && (
+                              <Check className="h-3.5 w-3.5 text-primary shrink-0" />
+                            )}
                           </button>
                         ))}
-
-                        {/* Browser TTS option */}
-                        <button
-                          onClick={() => setPresetMutation.mutate("browser")}
-                          disabled={setPresetMutation.isPending}
-                          className={cn(
-                            "flex flex-col items-start gap-0.5 rounded-lg border px-3 py-2.5 text-left transition-colors",
-                            localVoicePreset === "browser"
-                              ? "border-primary bg-primary/10"
-                              : "border-border hover:border-primary/50 hover:bg-muted/50"
-                          )}
-                          data-testid="button-settings-voice-browser"
-                        >
-                          <div className="flex items-center gap-2 w-full">
-                            <span className="font-semibold text-sm">Browser TTS</span>
-                            {localVoicePreset === "browser" && <Check className="h-3.5 w-3.5 text-primary ml-auto" />}
-                          </div>
-                          <span className="text-xs text-muted-foreground leading-tight">Uses your device's built-in voice</span>
-                        </button>
                       </div>
                     </div>
 
