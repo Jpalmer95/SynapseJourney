@@ -8,43 +8,6 @@ env.useCustomCache = true;
 
 let kokoroTTS: KokoroTTS | null = null;
 
-function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
-  const numChannels = 1;
-  const bytesPerSample = 2;
-  const blockAlign = numChannels * bytesPerSample;
-  const byteRate = sampleRate * blockAlign;
-  const dataSize = samples.length * bytesPerSample;
-  const buf = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buf);
-
-  const writeStr = (o: number, s: string) => {
-    for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
-  };
-
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + dataSize, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, dataSize, true);
-
-  let offset = 44;
-  for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-    offset += 2;
-  }
-
-  return new Blob([buf], { type: "audio/wav" });
-}
-
 type GenerateOptions = NonNullable<Parameters<KokoroTTS["generate"]>[1]>;
 type KokoroVoice = NonNullable<GenerateOptions["voice"]>;
 
@@ -87,10 +50,12 @@ self.onmessage = async (e: MessageEvent) => {
       if (!kokoroTTS) throw new Error("Kokoro not initialized");
       const selectedVoice = (voice || "af_bella") as KokoroVoice;
       const output = await kokoroTTS.generate(text ?? "", { voice: selectedVoice });
-      const audioData: Float32Array = (output as unknown as { audio: Float32Array }).audio;
-      const samplingRate: number = (output as unknown as { sampling_rate: number }).sampling_rate;
-      const blob = float32ToWav(audioData, samplingRate);
-      self.postMessage({ id, type: "audio", blob });
+      // Reply with the raw Float32Array samples + sampleRate.
+      // The hook converts this to WAV/Blob on the main thread.
+      const samples: Float32Array = (output as unknown as { audio: Float32Array }).audio;
+      const sampleRate: number = (output as unknown as { sampling_rate: number }).sampling_rate;
+      // Transfer the underlying ArrayBuffer so the main thread receives it zero-copy.
+      self.postMessage({ id, type: "audio", samples, sampleRate }, [samples.buffer]);
     } catch (err) {
       self.postMessage({
         id,

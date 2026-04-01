@@ -353,6 +353,45 @@ function useTTSImpl(): UseTTSReturn {
     }
   }, []);
 
+  // ── Float32Array → WAV Blob converter (runs on main thread) ─────────────
+
+  function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
+    const numChannels = 1;
+    const bytesPerSample = 2;
+    const blockAlign = numChannels * bytesPerSample;
+    const byteRate = sampleRate * blockAlign;
+    const dataSize = samples.length * bytesPerSample;
+    const buf = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buf);
+
+    const writeStr = (o: number, s: string) => {
+      for (let i = 0; i < s.length; i++) view.setUint8(o + i, s.charCodeAt(i));
+    };
+
+    writeStr(0, "RIFF");
+    view.setUint32(4, 36 + dataSize, true);
+    writeStr(8, "WAVE");
+    writeStr(12, "fmt ");
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, "data");
+    view.setUint32(40, dataSize, true);
+
+    let offset = 44;
+    for (let i = 0; i < samples.length; i++) {
+      const s = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+
+    return new Blob([buf], { type: "audio/wav" });
+  }
+
   // ── Kokoro local worker ──────────────────────────────────────────────────
 
   const getWorker = useCallback((): Worker => {
@@ -361,10 +400,11 @@ function useTTSImpl(): UseTTSReturn {
     const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" });
 
     w.onmessage = ({ data }: MessageEvent) => {
-      const { id, type, blob, message } = data as {
+      const { id, type, samples, sampleRate, message } = data as {
         id: number;
         type: "ready" | "audio" | "error";
-        blob?: Blob;
+        samples?: Float32Array;
+        sampleRate?: number;
         message?: string;
       };
       const p = pendingRef.current.get(id);
@@ -374,7 +414,13 @@ function useTTSImpl(): UseTTSReturn {
       if (type === "ready") {
         p.resolve(undefined);
       } else if (type === "audio") {
-        p.resolve(blob);
+        if (samples && sampleRate) {
+          // Convert the raw Float32Array from the worker to a WAV Blob on the main thread.
+          const blob = float32ToWav(samples, sampleRate);
+          p.resolve(blob);
+        } else {
+          p.reject(new Error("Worker returned audio with no samples"));
+        }
       } else if (type === "error") {
         p.reject(new Error(message || "Worker error"));
       }
@@ -594,12 +640,26 @@ function useTTSImpl(): UseTTSReturn {
     const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
 
     try {
-      // ── Tier 1: AI presets (Kokoro local or Qwen cloud depending on token) ──
+      // ── Tier 1: Local Kokoro (AI presets — offline-capable, free) ───────────
       if (voiceTier === "local") {
-        // When the user has an HF token, route to Qwen cloud FIRST so they get
-        // full Qwen ZeroGPU voice quality for their named preset (aria, nova, etc.).
-        // Kokoro is the free offline fallback when no token or cloud fails.
-        if (hfTokenRef.current) {
+        // Primary path: Kokoro local worker (offline-capable, no token required)
+        let kokoroDone = false;
+        try {
+          const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
+          const blob = await kokoroSpeak(text, kokoroVoice);
+          if (cancelledRef.current) return;
+          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
+          await playBlobAudio(blob);
+          if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+          kokoroDone = true;
+          return;
+        } catch (kokoroErr) {
+          if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
+          console.warn("[TTS] Kokoro local failed:", kokoroErr);
+        }
+
+        // Fallback: if Kokoro failed and user has HF token, try Qwen cloud before server
+        if (!kokoroDone && hfTokenRef.current) {
           try {
             const blob = await fetchQwenCloudTTS(text, currentPreset, hfTokenRef.current);
             if (blob && !cancelledRef.current) {
@@ -610,22 +670,8 @@ function useTTSImpl(): UseTTSReturn {
             }
           } catch (hfErr) {
             if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-            console.warn("[TTS] Qwen cloud primary failed for local preset, trying Kokoro:", hfErr);
+            console.warn("[TTS] HF cloud fallback after Kokoro failure:", hfErr);
           }
-        }
-
-        // Kokoro: free local inference (primary when no token, fallback when cloud fails)
-        try {
-          const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
-          const blob = await kokoroSpeak(text, kokoroVoice);
-          if (cancelledRef.current) return;
-          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-          await playBlobAudio(blob);
-          if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
-          return;
-        } catch (kokoroErr) {
-          if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
-          console.warn("[TTS] Kokoro local failed:", kokoroErr);
         }
         // Fall through to server
       }
@@ -851,24 +897,9 @@ function useTTSImpl(): UseTTSReturn {
 
         const sectionText = sections[i].text;
 
-        // ── Tier 1: AI presets (Qwen cloud first if token, then Kokoro) ──────
+        // ── Tier 1: Local Kokoro (AI presets) ────────────────────────────────
         if (voiceTier === "local") {
-          // Primary: Qwen cloud when user has HF token
-          if (hfTokenRef.current) {
-            try {
-              const blob = await fetchQwenCloudTTS(sectionText, currentPreset, hfTokenRef.current);
-              if (blob && !cancelledRef.current) {
-                setState(prev => ({ ...prev, usingServerTTS: false }));
-                await playBlobAudio(blob);
-                continue;
-              }
-            } catch (hfErr) {
-              if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-              console.warn("[TTS sections] Qwen cloud primary failed for section", i, ", trying Kokoro:", hfErr);
-            }
-          }
-
-          // Kokoro: free offline (primary when no token, fallback when cloud fails)
+          // Primary: Kokoro local worker (offline-capable, no token required)
           let kokoroDone = false;
           try {
             const kokoroVoice = KOKORO_VOICE_MAP[currentPreset] || "af_bella";
@@ -882,6 +913,21 @@ function useTTSImpl(): UseTTSReturn {
             console.warn("[TTS sections] Kokoro failed for section", i, ":", kokoroErr);
           }
           if (kokoroDone) continue;
+
+          // Fallback: Qwen cloud (if Kokoro failed and user has HF token)
+          if (hfTokenRef.current) {
+            try {
+              const blob = await fetchQwenCloudTTS(sectionText, currentPreset, hfTokenRef.current);
+              if (blob && !cancelledRef.current) {
+                setState(prev => ({ ...prev, usingServerTTS: false }));
+                await playBlobAudio(blob);
+                continue;
+              }
+            } catch (hfErr) {
+              if (hfErr instanceof Error && hfErr.message === "cancelled") return;
+              console.warn("[TTS sections] HF cloud fallback failed for section", i, ":", hfErr);
+            }
+          }
           // Fall through to server
         }
 
