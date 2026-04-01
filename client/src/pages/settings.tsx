@@ -475,7 +475,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (ttsSettings) {
-      setLocalVoicePreset(ttsSettings.voicePreset || "aria");
+      setLocalVoicePreset(ttsSettings.voicePreset || "kokoro");
       setLocalSpeed(ttsSettings.playbackSpeed || 1.0);
     }
   }, [ttsSettings]);
