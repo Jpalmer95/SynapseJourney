@@ -37,4 +37,10 @@ export default defineConfig({
       deny: ["**/.*"],
     },
   },
+  optimizeDeps: {
+    exclude: ["onnxruntime-node", "@huggingface/transformers"],
+  },
+  worker: {
+    format: "es",
+  },
 });
