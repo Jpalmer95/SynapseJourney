@@ -88,11 +88,23 @@ class GeminiProvider implements AIProvider {
     } catch (err: unknown) {
       // If the primary model is not found (deprecated/renamed), automatically
       // fall back to the known-good model rather than hard-failing.
-      const isNotFound =
+      // Check structured fields first (SDK may expose status/code directly),
+      // then fall back to message substring matching for resilience.
+      const structuredNotFound =
+        typeof err === "object" &&
+        err !== null &&
+        (
+          (err as Record<string, unknown>).status === 404 ||
+          (err as Record<string, unknown>).status === "NOT_FOUND" ||
+          (err as Record<string, unknown>).code === 404 ||
+          (err as Record<string, unknown>).code === "NOT_FOUND"
+        );
+      const messageNotFound =
         err instanceof Error &&
         (err.message.includes('"status":"NOT_FOUND"') ||
           err.message.includes('"code":404') ||
           err.message.includes("was not found"));
+      const isNotFound = structuredNotFound || messageNotFound;
 
       if (isNotFound && modelName !== GEMINI_FALLBACK_MODEL) {
         console.warn(
