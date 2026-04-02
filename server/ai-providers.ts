@@ -22,9 +22,21 @@ export interface ProviderConfig {
   preferredModel?: string;
 }
 
+// The known-good fallback model — used when the primary model returns a 404.
+// Never change this to an experimental or preview model.
+const GEMINI_FALLBACK_MODEL = "gemini-2.0-flash";
+
+// The primary Gemini model for course content generation.
+// Override at runtime (no redeploy needed) via the GEMINI_COURSE_MODEL env var:
+//   GEMINI_COURSE_MODEL=gemini-2.5-pro
+// Falls back to gemini-2.0-flash if the env var is not set.
+const GEMINI_COURSE_MODEL = process.env.GEMINI_COURSE_MODEL || GEMINI_FALLBACK_MODEL;
+
+console.log(`[AI] Course content model: ${GEMINI_COURSE_MODEL} (fallback: ${GEMINI_FALLBACK_MODEL})`);
+
 const DEFAULT_MODELS: Record<string, string> = {
-  openai: "gemini-3-pro-preview", // Switched default for Replit OpenAI wrapper
-  gemini: "gemini-3-pro-preview",
+  openai: GEMINI_COURSE_MODEL,
+  gemini: GEMINI_COURSE_MODEL,
   huggingface: "meta-llama/Llama-3.3-70B-Instruct",
   ollama: "llama3.2",
   openrouter: "anthropic/claude-3.5-sonnet",
@@ -50,7 +62,7 @@ class GeminiProvider implements AIProvider {
 
   async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
     const modelName = options?.model || DEFAULT_MODELS.gemini;
-    
+
     const chatContents = messages.map(m => ({
       role: m.role === "assistant" ? "model" : "user",
       parts: [{ text: m.content }],
@@ -66,13 +78,37 @@ class GeminiProvider implements AIProvider {
       config.responseMimeType = "application/json";
     }
 
-    const result = await this.client.models.generateContent({
-      model: modelName,
-      contents: chatContents,
-      config,
-    });
+    try {
+      const result = await this.client.models.generateContent({
+        model: modelName,
+        contents: chatContents,
+        config,
+      });
+      return result.text || "";
+    } catch (err: unknown) {
+      // If the primary model is not found (deprecated/renamed), automatically
+      // fall back to the known-good model rather than hard-failing.
+      const isNotFound =
+        err instanceof Error &&
+        (err.message.includes('"status":"NOT_FOUND"') ||
+          err.message.includes('"code":404') ||
+          err.message.includes("was not found"));
 
-    return result.text || "";
+      if (isNotFound && modelName !== GEMINI_FALLBACK_MODEL) {
+        console.warn(
+          `[AI] Model "${modelName}" not found — falling back to "${GEMINI_FALLBACK_MODEL}". ` +
+          `Set GEMINI_COURSE_MODEL env var to a valid model to resolve this.`
+        );
+        const fallbackResult = await this.client.models.generateContent({
+          model: GEMINI_FALLBACK_MODEL,
+          contents: chatContents,
+          config,
+        });
+        return fallbackResult.text || "";
+      }
+
+      throw err;
+    }
   }
 }
 
@@ -269,13 +305,16 @@ export function getDefaultProvider(): AIProvider {
 
 /**
  * TWO-TIER AI ARCHITECTURE:
- * 
- * 1. COURSE CONTENT (Gemini 3 Pro only - platform pays)
+ *
+ * 1. COURSE CONTENT (Gemini - platform pays)
  *    - Lesson units, roadmaps, practice tests, custom topics
  *    - Uses: getCourseContentProvider() or generateCourseContent()
  *    - Shared across all users, generated once and cached in database
- *    - Ensures consistent, high-quality educational content
- * 
+ *    - Model: GEMINI_COURSE_MODEL env var (default: gemini-2.0-flash)
+ *      Override without a redeploy: set GEMINI_COURSE_MODEL to any valid model ID.
+ *      If the model returns a 404, GeminiProvider automatically falls back to
+ *      gemini-2.0-flash and logs a warning so the issue is never silent.
+ *
  * 2. USER CHAT/Q&A (User's choice - user pays via their API keys)
  *    - Interactive tutoring, follow-up questions, exploration
  *    - Uses: getUserChatProvider() with user's provider config
@@ -284,7 +323,7 @@ export function getDefaultProvider(): AIProvider {
 
 /**
  * Get the provider for generating shared course content.
- * ALWAYS returns Gemini 3 Pro - user preferences are ignored.
+ * ALWAYS returns the platform Gemini provider — user preferences are ignored.
  * Use this for: lesson units, roadmaps, practice tests, topic content.
  */
 export function getCourseContentProvider(): AIProvider {
@@ -292,9 +331,10 @@ export function getCourseContentProvider(): AIProvider {
 }
 
 /**
- * Generate course content using Gemini 3 Pro.
+ * Generate course content via Gemini.
  * This is a convenience wrapper that ensures course content is always
  * generated with consistent quality using the platform's AI credits.
+ * The active model is controlled by GEMINI_COURSE_MODEL (default: gemini-2.0-flash).
  */
 export async function generateCourseContent(
   messages: { role: string; content: string }[],
