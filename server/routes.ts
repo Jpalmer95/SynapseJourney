@@ -1969,19 +1969,14 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     completedAt: null,
   };
 
-  // Background job: regenerate all outlines sequentially
+  // Background job: regenerate all outlines sequentially (outline + pregen per topic)
   async function runBulkOutlineRegeneration(triggeredByUserId: string): Promise<void> {
+    // Fetch topic list before setting isRunning, but mark running immediately after to avoid race window
     const allTopics = await storage.getTopics();
-    // Skip custom topics (those without a categoryId in the standard seeded set)
-    // In practice all 20 standard topics have a categoryId; custom topics live in the customTopics table
-    const topics = allTopics; // process all topics in the topics table
+    const topics = allTopics; // All rows in the topics table (custom topics live in customTopics table, not here)
 
-    bulkRegenState.isRunning = true;
-    bulkRegenState.completed = 0;
+    // Update total now that we know the topic count (isRunning was already set by the POST handler)
     bulkRegenState.total = topics.length;
-    bulkRegenState.errors = [];
-    bulkRegenState.startedAt = new Date().toISOString();
-    bulkRegenState.completedAt = null;
 
     console.log(`[BulkRegen] Starting bulk outline regeneration for ${topics.length} topics`);
 
@@ -1994,10 +1989,11 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         console.log(`[BulkRegen] Generating new outline for "${topic.title}"`);
         const newUnits = await generateLessonOutline(topic.id, topic.title, topic.description);
 
-        console.log(`[BulkRegen] "${topic.title}": ${newUnits.length} units created — firing batch pre-generation`);
-        batchPregenerateUnits(newUnits, { title: topic.title, description: topic.description }, triggeredByUserId).catch((err) =>
-          console.warn(`[BulkRegen] Batch pregen error for "${topic.title}":`, err instanceof Error ? err.message : String(err))
-        );
+        // Await batch pregen so this topic is fully complete before moving to next
+        // This enforces sequential processing and accurate completion status
+        console.log(`[BulkRegen] "${topic.title}": ${newUnits.length} units created — starting batch pre-generation`);
+        await batchPregenerateUnits(newUnits, { title: topic.title, description: topic.description }, triggeredByUserId);
+        console.log(`[BulkRegen] "${topic.title}": batch pre-generation complete`);
 
         bulkRegenState.completed++;
       } catch (err) {
@@ -2008,6 +2004,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       }
     }
 
+    // Mark done only after all outlines AND all pregen are complete
     bulkRegenState.isRunning = false;
     bulkRegenState.currentTopic = "";
     bulkRegenState.completedAt = new Date().toISOString();
@@ -2036,11 +2033,23 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.status(409).json({ error: "A regeneration job is already running", state: bulkRegenState });
       }
 
+      // Mark running immediately (before any await) to prevent concurrent POST race conditions
+      bulkRegenState.isRunning = true;
+      bulkRegenState.completed = 0;
+      bulkRegenState.errors = [];
+      bulkRegenState.startedAt = new Date().toISOString();
+      bulkRegenState.completedAt = null;
+      bulkRegenState.currentTopic = "";
+      bulkRegenState.total = 0; // Will be updated inside the job once topics are fetched
+
       const userId = req.user.claims.sub;
       // Fire and forget — caller polls /api/admin/regeneration-status for progress
-      runBulkOutlineRegeneration(userId).catch((err) =>
-        console.error("[BulkRegen] Unhandled error in runBulkOutlineRegeneration:", err)
-      );
+      runBulkOutlineRegeneration(userId).catch((err) => {
+        console.error("[BulkRegen] Unhandled error in runBulkOutlineRegeneration:", err);
+        bulkRegenState.isRunning = false;
+        bulkRegenState.errors.push(`Unhandled error: ${err instanceof Error ? err.message : String(err)}`);
+        bulkRegenState.completedAt = new Date().toISOString();
+      });
 
       res.status(202).json({ message: "Bulk outline regeneration started", state: bulkRegenState });
     } catch (error) {

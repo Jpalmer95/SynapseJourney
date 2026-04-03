@@ -761,6 +761,17 @@ export class DatabaseStorage implements IStorage {
   }
 
   async deleteLessonUnitsByTopicId(topicId: number): Promise<void> {
+    // Fetch all unit IDs for this topic so we can delete dependent rows first
+    const units = await db.select({ id: lessonUnits.id }).from(lessonUnits).where(eq(lessonUnits.topicId, topicId));
+    if (units.length === 0) return;
+    const unitIds = units.map((u) => u.id);
+
+    // Delete all dependent rows that reference lesson_units.id (FK without cascade)
+    await db.delete(lessonProgress).where(inArray(lessonProgress.unitId, unitIds));
+    await db.delete(ttsAudioCache).where(inArray(ttsAudioCache.unitId, unitIds));
+    await db.delete(ideaContributions).where(inArray(ideaContributions.unitId, unitIds));
+
+    // Now safe to delete the units themselves
     await db.delete(lessonUnits).where(eq(lessonUnits.topicId, topicId));
   }
 
