@@ -1360,6 +1360,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                                 ? <Users className="h-4 w-4 shrink-0 text-orange-500" />
                                 : resource.type === "tool"
                                 ? <Wrench className="h-4 w-4 shrink-0 text-gray-500" />
+                                : resource.type === "encyclopedia"
+                                ? <BookOpen className="h-4 w-4 shrink-0 text-cyan-500" />
                                 : <Globe className="h-4 w-4 shrink-0 text-emerald-500" />;
                               return (
                                 <Card key={i} className="border-emerald-500/20 bg-emerald-500/5 overflow-hidden w-full hover:border-emerald-500/50 transition-colors" data-testid={`card-resource-${i}`}>

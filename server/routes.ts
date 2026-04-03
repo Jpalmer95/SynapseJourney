@@ -13,6 +13,38 @@ function contentHash(content: unknown): string {
   return createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 12);
 }
 
+// Build a Grokipedia resource object for a given topic title
+function buildGrokipediaResource(topicTitle: string) {
+  const slug = topicTitle.replace(/ /g, "_");
+  return {
+    title: `${topicTitle} — Grokipedia`,
+    url: `https://grokipedia.com/page/${slug}`,
+    type: "encyclopedia",
+    description: `Comprehensive encyclopedic reference for ${topicTitle} — covers key concepts, history, related topics, and links to deeper subtopics.`,
+  };
+}
+
+// Inject a Grokipedia link into lesson content at response time (does NOT modify stored content).
+// For regular lessons: appends to externalResources. For Next Gen: appends to resources.
+function injectGrokipediaResource(content: unknown, topicTitle: string, isNextGen: boolean): unknown {
+  if (typeof content !== "object" || content === null) return content;
+  const grokipedia = buildGrokipediaResource(topicTitle);
+
+  if (isNextGen) {
+    const c = content as Record<string, unknown>;
+    const resources = Array.isArray(c.resources) ? c.resources : [];
+    const alreadyPresent = resources.some((r: unknown) => typeof r === "object" && r !== null && (r as Record<string, unknown>).url?.toString().includes("grokipedia.com"));
+    if (alreadyPresent) return content;
+    return { ...c, resources: [...resources, grokipedia] };
+  } else {
+    const c = content as Record<string, unknown>;
+    const externalResources = Array.isArray(c.externalResources) ? c.externalResources : [];
+    const alreadyPresent = externalResources.some((r: unknown) => typeof r === "object" && r !== null && (r as Record<string, unknown>).url?.toString().includes("grokipedia.com"));
+    if (alreadyPresent) return content;
+    return { ...c, externalResources: [...externalResources, grokipedia] };
+  }
+}
+
 // Admin emails - users who can regenerate lesson content
 const ADMIN_EMAILS = ["jpkorstad@gmail.com"];
 
@@ -815,7 +847,9 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         // Predictive pre-generation: asynchronously generate next unit's content
         predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
 
-        return res.json({ unit: updatedUnit, content, isNextGen });
+        // Inject Grokipedia link at response time (not persisted)
+        const contentWithGrokipedia = injectGrokipediaResource(content, topic.title, isNextGen);
+        return res.json({ unit: updatedUnit, content: contentWithGrokipedia, isNextGen });
       }
 
       // Content already exists — log cache hit and trigger predictive pre-gen in background
@@ -834,7 +868,9 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       // Also pre-generate TTS audio for this unit if user has a non-browser preset
       preTTSForUnit(userId, unitId, content, isNextGen).catch(console.error);
 
-      return res.json({ unit, content, isNextGen });
+      // Inject Grokipedia link at response time (not persisted)
+      const contentWithGrokipedia = injectGrokipediaResource(content, topic.title, isNextGen);
+      return res.json({ unit, content: contentWithGrokipedia, isNextGen });
     } catch (error) {
       console.error("Error fetching lesson content:", error);
       res.status(500).json({ error: "Failed to fetch lesson content" });
@@ -3562,6 +3598,8 @@ Respond with a JSON object where each key is the unit index (0, 1, 2...) and eac
 
 CRITICAL: Each unit MUST include "keyTakeaways" (3-5 bullet points) and "externalResources" (2-5 real, specific links). See requirements below.
 
+NOTE: Grokipedia (grokipedia.com) is a high-quality encyclopedia — you may include relevant Grokipedia page links (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) if they add value alongside other resources.
+
 JSON format:
 {
   "0": {
@@ -3728,6 +3766,7 @@ CRITICAL RESOURCE SPECIFICITY RULES:
 - For YouTube: include the full /watch?v=... URL to a specific video about THIS topic.
 - For OCW/Coursera: link to a specific course or module page about THIS topic.
 - For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX) directly related to THIS topic.
+- You may include a relevant Grokipedia page (https://grokipedia.com/page/${topic.title.replace(/ /g, "_")} or a more specific sub-page) as an additional resource.
 - Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
 - Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
 
@@ -3884,6 +3923,7 @@ CRITICAL RESOURCE SPECIFICITY RULES:
 - For journals: link to a specific paper DOI or journal page — not a journal homepage.
 - For communities: include the actual URL (subreddit, Discord invite, mailing list archive, etc.).
 - For YouTube: include the full /watch?v=... URL to a specific expert lecture on this frontier topic.
+- You may include a Grokipedia page (https://grokipedia.com/page/${topic.title.replace(/ /g, "_")} or a more specific sub-page) as an additional reference.
 - DO NOT use placeholder URLs or link to generic homepages.`;
 
   const prompt = `You are a research mentor and frontier scientist helping advanced learners engage with the bleeding edge of "${topic.title}".
