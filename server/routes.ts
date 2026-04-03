@@ -774,10 +774,23 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       let content = unit.contentJson;
 
       if (!content) {
+        // Build sibling context so the AI knows which units exist in the same tier
+        const allTopicUnits = await storage.getLessonUnits(unit.topicId);
+        const tierUnits = allTopicUnits
+          .filter(u => u.difficulty === unit.difficulty)
+          .sort((a, b) => a.unitIndex - b.unitIndex);
+        const unitPosInTier = tierUnits.findIndex(u => u.id === unit.id);
+        const unitContext = {
+          position: unitPosInTier + 1,
+          total: tierUnits.length,
+          siblingTitles: tierUnits.filter(u => u.id !== unit.id).map(u => u.title),
+        };
+        console.log(`[Lesson] Generating content for unit ${unitId} "${unit.title}" (${unit.difficulty} ${unitContext.position}/${unitContext.total})`);
+
         // Generate content using AI - use different generator for Next Gen
         const generatedContent = isNextGen 
           ? await generateNextGenContent(topic, unit, masteredTopics, categoryName)
-          : await generateLessonContent(topic, unit, masteredTopics, categoryName);
+          : await generateLessonContent(topic, unit, masteredTopics, categoryName, unitContext);
         
         // Only save real AI-generated content, NOT placeholder fallbacks
         const isPlaceholder = typeof generatedContent === "object" && generatedContent !== null &&
@@ -796,7 +809,8 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         return res.json({ unit: updatedUnit, content, isNextGen });
       }
 
-      // Content already exists — still trigger predictive pre-gen in background
+      // Content already exists — log cache hit and trigger predictive pre-gen in background
+      console.log(`[Lesson] Returning cached content for unit ${unitId} "${unit.title}" (${unit.difficulty})`);
       predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
 
       // Background link re-validation: check if content is stale (>30 days)
@@ -3117,7 +3131,7 @@ Help the student understand why their answer was wrong and why the correct answe
 const DIFFICULTY_ORDER = ["beginner", "intermediate", "advanced", "nextgen"];
 
 async function predictivelyGenerateNextUnit(
-  currentUnit: { topicId: number; difficulty: string; unitIndex: number },
+  currentUnit: { id?: number; topicId: number; difficulty: string; unitIndex: number },
   topic: { title: string; description: string },
   masteredTopics: { topicId: number; topicTitle: string }[],
   userId: string,
@@ -3131,19 +3145,27 @@ async function predictivelyGenerateNextUnit(
 
     let nextUnit: typeof allUnits[0] | undefined;
 
-    // Try next unit in same difficulty
+    // Try next unit by unitIndex (normal case)
     const nextInDiff = diffUnits.find(u => u.unitIndex === currentUnit.unitIndex + 1);
     if (nextInDiff) {
       nextUnit = nextInDiff;
     } else {
-      // Try first unit of next difficulty
-      const currentDiffIdx = DIFFICULTY_ORDER.indexOf(currentUnit.difficulty);
-      if (currentDiffIdx >= 0 && currentDiffIdx < DIFFICULTY_ORDER.length - 1) {
-        const nextDiff = DIFFICULTY_ORDER[currentDiffIdx + 1];
-        const nextDiffUnits = allUnits
-          .filter(u => u.difficulty === nextDiff)
-          .sort((a, b) => a.unitIndex - b.unitIndex);
-        nextUnit = nextDiffUnits[0];
+      // Fallback: find the unit after the current one by array position (handles duplicate unitIndex values)
+      const currentPosInDiff = currentUnit.id
+        ? diffUnits.findIndex(u => u.id === currentUnit.id)
+        : diffUnits.findIndex(u => u.unitIndex === currentUnit.unitIndex);
+      if (currentPosInDiff >= 0 && currentPosInDiff + 1 < diffUnits.length) {
+        nextUnit = diffUnits[currentPosInDiff + 1];
+      } else {
+        // Try first unit of next difficulty
+        const currentDiffIdx = DIFFICULTY_ORDER.indexOf(currentUnit.difficulty);
+        if (currentDiffIdx >= 0 && currentDiffIdx < DIFFICULTY_ORDER.length - 1) {
+          const nextDiff = DIFFICULTY_ORDER[currentDiffIdx + 1];
+          const nextDiffUnits = allUnits
+            .filter(u => u.difficulty === nextDiff)
+            .sort((a, b) => a.unitIndex - b.unitIndex);
+          nextUnit = nextDiffUnits[0];
+        }
       }
     }
 
@@ -3151,14 +3173,25 @@ async function predictivelyGenerateNextUnit(
 
     const isNextGen = nextUnit.difficulty === "nextgen";
 
+    // Build sibling context for the next unit
+    const nextTierUnits = allUnits
+      .filter(u => u.difficulty === nextUnit!.difficulty)
+      .sort((a, b) => a.unitIndex - b.unitIndex);
+    const nextPosInTier = nextTierUnits.findIndex(u => u.id === nextUnit!.id);
+    const nextUnitContext = {
+      position: nextPosInTier + 1,
+      total: nextTierUnits.length,
+      siblingTitles: nextTierUnits.filter(u => u.id !== nextUnit!.id).map(u => u.title),
+    };
+
     // If content already exists, still attempt TTS pre-caching (don't return early)
     let content = nextUnit.contentJson;
 
     if (!content) {
-      console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} (${nextUnit.difficulty} #${nextUnit.unitIndex})`);
+      console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} "${nextUnit.title}" (${nextUnit.difficulty} ${nextUnitContext.position}/${nextUnitContext.total})`);
       const generated = isNextGen
         ? await generateNextGenContent(topic, nextUnit, masteredTopics, categoryName)
-        : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName);
+        : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName, nextUnitContext);
 
       const isPlaceholder = typeof generated === "object" && generated !== null &&
         "_isPlaceholder" in generated && Boolean((generated as Record<string, unknown>)._isPlaceholder);
@@ -3310,26 +3343,35 @@ async function generateLessonOutline(topicId: number, topicTitle: string, topicD
 
 Topic Description: ${topicDescription}
 
-Create a course outline with units across FOUR difficulty levels. Each level should have 3-4 units that progressively build understanding.
+Create a course outline with units across FOUR difficulty levels. Each level MUST have exactly 3 units that cover DIFFERENT subtopics and progressively build understanding. Every unit in a tier must have a UNIQUE title covering distinct material — no two units in the same tier may overlap.
 
-Respond with a JSON object in this exact format:
+Respond with a JSON object in this exact format (showing a Physics example — replace with real content for "${topicTitle}"):
 {
   "units": [
-    {"difficulty": "beginner", "unitIndex": 0, "title": "Unit Title", "outline": "Brief 1-2 sentence description of what this unit covers"},
-    {"difficulty": "beginner", "unitIndex": 1, "title": "Unit Title", "outline": "Brief description"},
-    {"difficulty": "intermediate", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"},
-    {"difficulty": "advanced", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"},
-    {"difficulty": "nextgen", "unitIndex": 0, "title": "Unit Title", "outline": "Brief description"}
+    {"difficulty": "beginner", "unitIndex": 0, "title": "What Is Energy?", "outline": "Introduce energy as the capacity to do work, using everyday examples like food, batteries, and sunlight."},
+    {"difficulty": "beginner", "unitIndex": 1, "title": "Forces and Motion", "outline": "Explore how pushes and pulls change the speed and direction of objects, from bicycles to planets."},
+    {"difficulty": "beginner", "unitIndex": 2, "title": "Waves and Light", "outline": "Discover how energy travels through waves, why the sky is blue, and how rainbows form."},
+    {"difficulty": "intermediate", "unitIndex": 0, "title": "Newton's Laws in Depth", "outline": "Derive and apply all three of Newton's laws using free-body diagrams and real engineering scenarios."},
+    {"difficulty": "intermediate", "unitIndex": 1, "title": "Thermodynamics Fundamentals", "outline": "Understand heat engines, entropy, and the laws of thermodynamics through worked examples."},
+    {"difficulty": "intermediate", "unitIndex": 2, "title": "Electromagnetism Mechanics", "outline": "Explore Coulomb's law, electric fields, and how Maxwell unified electricity and magnetism."},
+    {"difficulty": "advanced", "unitIndex": 0, "title": "Quantum Mechanics Foundations", "outline": "Examine wave-particle duality, the Schrödinger equation, and the measurement problem."},
+    {"difficulty": "advanced", "unitIndex": 1, "title": "General Relativity", "outline": "Understand spacetime curvature, gravitational waves, and black hole physics from first principles."},
+    {"difficulty": "advanced", "unitIndex": 2, "title": "Standard Model and Particle Physics", "outline": "Survey quarks, leptons, gauge bosons, and the Higgs mechanism in modern particle physics."},
+    {"difficulty": "nextgen", "unitIndex": 0, "title": "Open Problems in Quantum Gravity", "outline": "Explore why reconciling quantum mechanics with gravity remains unsolved and what approaches are being tried."},
+    {"difficulty": "nextgen", "unitIndex": 1, "title": "Dark Matter and Dark Energy Frontiers", "outline": "Investigate what 95% of the universe is made of, what experiments are hunting for it, and competing theories."},
+    {"difficulty": "nextgen", "unitIndex": 2, "title": "Future of Energy Technology", "outline": "Examine fusion energy, room-temperature superconductivity, and the path from lab to global power grid."}
   ]
 }
 
-Guidelines:
-- Beginner units should use simple language and everyday analogies
-- Intermediate units should explore mechanisms and relationships  
-- Advanced units should cover edge cases, research, and expert applications
-- Next Gen (nextgen) units should focus on CUTTING-EDGE RESEARCH QUESTIONS, active industry challenges, unsolved problems, and creative frontier exploration. These encourage learners to think like researchers and contribute new ideas.
-- Each unit title should be concise (3-6 words)
-- Outlines should be specific to the content covered`;
+CRITICAL RULES:
+- Every unit title must be UNIQUE and cover a DIFFERENT aspect of "${topicTitle}" — no overlapping content within a tier.
+- unitIndex MUST be sequential starting from 0 within each difficulty: beginner 0,1,2 — intermediate 0,1,2 — advanced 0,1,2 — nextgen 0,1,2.
+- Titles must be specific to "${topicTitle}", not generic placeholders.
+- Outlines must describe exactly what that specific unit covers (1-2 sentences).
+- Beginner: everyday language, no jargon, spark curiosity.
+- Intermediate: mechanisms, frameworks, how things work.
+- Advanced: current research, edge cases, expert-level nuances.
+- Next Gen: unsolved problems, active research questions, frontier exploration.`;
 
   try {
     const content = await generateCourseContent(
@@ -3343,10 +3385,26 @@ Guidelines:
       throw new Error("Invalid AI response format");
     }
 
+    // Normalize unitIndex values to ensure they are sequential within each difficulty
+    // (guard against AI returning wrong indices like all 0s)
+    const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"];
+    const unitsByDiff: Record<string, any[]> = {};
+    for (const u of parsed.units) {
+      if (!unitsByDiff[u.difficulty]) unitsByDiff[u.difficulty] = [];
+      unitsByDiff[u.difficulty].push(u);
+    }
+    const normalizedUnits: any[] = [];
+    for (const diff of DIFFICULTIES) {
+      const diffUnits = unitsByDiff[diff] || [];
+      diffUnits.forEach((u, i) => {
+        normalizedUnits.push({ ...u, unitIndex: i });
+      });
+    }
+
     // Save units to database
     const { storage } = await import("./storage");
     const createdUnits = await Promise.all(
-      parsed.units.map((u: any) => storage.createLessonUnit({
+      normalizedUnits.map((u: any) => storage.createLessonUnit({
         topicId,
         difficulty: u.difficulty,
         unitIndex: u.unitIndex,
@@ -3355,6 +3413,7 @@ Guidelines:
       }))
     );
 
+    console.log(`[Outline] Created ${createdUnits.length} units for topic "${topicTitle}"`);
     return createdUnits;
   } catch (error) {
     console.error("Error generating lesson outline:", error);
@@ -3386,9 +3445,24 @@ async function generateBatchLessonContent(
     return new Map();
   }
 
-  const unitsDescription = unitsList.map((u, i) => 
-    `${i + 1}. [${u.difficulty.toUpperCase()}] "${u.title}" - ${u.outline || "No description"}`
-  ).join("\n");
+  // Build per-tier position labels so the AI knows each unit's position within its difficulty tier
+  const tierPositionCounters: Record<string, number> = {};
+  const tierTotals: Record<string, number> = {
+    beginner: beginnerUnits.length,
+    intermediate: intermediateUnits.length,
+    advanced: advancedUnits.length,
+  };
+  const unitsDescription = unitsList.map((u, i) => {
+    if (!tierPositionCounters[u.difficulty]) tierPositionCounters[u.difficulty] = 0;
+    tierPositionCounters[u.difficulty]++;
+    const pos = tierPositionCounters[u.difficulty];
+    const total = tierTotals[u.difficulty];
+    const siblings = unitsList
+      .filter(s => s.difficulty === u.difficulty && s.id !== u.id)
+      .map(s => `"${s.title}"`).join(", ");
+    const siblingNote = siblings ? ` | Other ${u.difficulty} units: ${siblings}` : "";
+    return `${i + 1}. [${u.difficulty.toUpperCase()} Unit ${pos}/${total}] "${u.title}" - ${u.outline || "No description"}${siblingNote}`;
+  }).join("\n");
 
   const prompt = `You are an expert curriculum designer creating a deep, engaging learning journey for "${topic.title}".
 
@@ -3396,7 +3470,7 @@ Topic Description: ${topic.description}
 
 ${crossTopicContext}
 
-Create content for these ${unitsList.length} units, ensuring a cohesive and progressively deeper learning journey:
+Create content for these ${unitsList.length} units. Each unit MUST cover DIFFERENT material — do not duplicate concepts across units in the same tier. The unit position (e.g., "Unit 2/3") and the list of sibling unit titles tell you what the other lessons cover so you can write DISTINCT content for each:
 ${unitsDescription}
 
 Respond with a JSON object where each key is the unit index (0, 1, 2...) and each value is the lesson content.
@@ -3496,7 +3570,8 @@ async function generateLessonContent(
   topic: { title: string; description: string },
   unit: { title: string; difficulty: string; outline?: string | null },
   masteredTopics: { topicId: number; topicTitle: string }[],
-  categoryName?: string
+  categoryName?: string,
+  unitContext?: { position: number; total: number; siblingTitles: string[] }
 ): Promise<any> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
@@ -3571,13 +3646,20 @@ CRITICAL RESOURCE SPECIFICITY RULES:
 - Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
 - Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
 
+  const positionContext = unitContext
+    ? `Unit Position: ${unitContext.position} of ${unitContext.total} in the ${unit.difficulty.toUpperCase()} tier\n` +
+      (unitContext.siblingTitles.length > 0
+        ? `Other ${unit.difficulty} units in this course: ${unitContext.siblingTitles.map(t => `"${t}"`).join(", ")} — your content MUST cover DIFFERENT material and NOT duplicate these topics.\n`
+        : "")
+    : "";
+
   const prompt = `You are an expert curriculum designer creating a deep, engaging lesson for:
 
 ${topicContext}
 Unit: ${unit.title}
 Difficulty Level: ${unit.difficulty.toUpperCase()}
 Unit Description: ${unit.outline || ""}
-
+${positionContext}
 ${crossTopicContext}
 
 ${difficultyGuidelines}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
@@ -495,6 +495,15 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     },
   });
 
+  // Reset quiz and UI state whenever the selected unit changes
+  useEffect(() => {
+    if (selectedUnit) {
+      setQuizAnswers({});
+      setQuizSubmitted(false);
+      setShowResources(false);
+    }
+  }, [selectedUnit?.id]);
+
   const handleStartUnit = (unit: LessonUnit) => {
     if (unit.locked) {
       toast({
@@ -593,6 +602,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     
     return (
       <motion.div
+        key={selectedUnit.id}
         className="min-h-screen bg-background overflow-x-hidden max-w-full"
         initial={{ opacity: 0 }}
         animate={{ opacity: 1 }}
