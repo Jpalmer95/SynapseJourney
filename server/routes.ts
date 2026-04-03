@@ -3474,14 +3474,9 @@ CRITICAL RULES:
       let diffUnits = unitsByDiff[diff] || [];
       if (diffUnits.length < 2 || diffUnits.length > 6) {
         const originalCount = diffUnits.length;
-        if (diffUnits.length > 6) {
-          // Too many: take first 3 from the AI-returned units
-          diffUnits = diffUnits.slice(0, 3);
-        } else {
-          // Too few (0 or 1): replace entirely with 3 generic defaults for this tier
-          diffUnits = tierDefaults[diff] || tierDefaults["beginner"];
-        }
-        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected 2–6); defaulted to ${diffUnits.length} units`);
+        // Both out-of-range cases use the same 3-unit default template for consistency
+        diffUnits = tierDefaults[diff] || tierDefaults["beginner"];
+        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected 2–6); defaulted to ${diffUnits.length} generic units`);
       }
       // Re-assign sequential unitIndex regardless of what the AI returned
       diffUnits.forEach((u, i) => {
