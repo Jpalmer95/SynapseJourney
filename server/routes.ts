@@ -1,11 +1,17 @@
 import type { Express, Request, Response } from "express";
 import { createServer, type Server } from "http";
+import { createHash } from "crypto";
 import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
 import { authStorage } from "./replit_integrations/auth/storage";
 import { registerChatRoutes } from "./replit_integrations/chat";
 import OpenAI from "openai";
 import { z } from "zod";
+
+// Compute a short SHA-256 hash of lesson content for traceability logging
+function contentHash(content: unknown): string {
+  return createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 12);
+}
 
 // Admin emails - users who can regenerate lesson content
 const ADMIN_EMAILS = ["jpkorstad@gmail.com"];
@@ -802,6 +808,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
         
         const updatedUnit = await storage.updateLessonContent(unitId, generatedContent);
         content = generatedContent;
+        console.log(`[Lesson] unit_id=${unitId} title="${unit.title}" content_hash=${contentHash(content)} (generated)`);
 
         // Predictive pre-generation: asynchronously generate next unit's content
         predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
@@ -810,7 +817,7 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       }
 
       // Content already exists — log cache hit and trigger predictive pre-gen in background
-      console.log(`[Lesson] Returning cached content for unit ${unitId} "${unit.title}" (${unit.difficulty})`);
+      console.log(`[Lesson] unit_id=${unitId} title="${unit.title}" content_hash=${contentHash(content)} (cached)`);
       predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
 
       // Background link re-validation: check if content is stale (>30 days)
@@ -3196,6 +3203,7 @@ async function predictivelyGenerateNextUnit(
       const isPlaceholder = typeof generated === "object" && generated !== null &&
         "_isPlaceholder" in generated && Boolean((generated as Record<string, unknown>)._isPlaceholder);
       if (!isPlaceholder) {
+        console.log(`[Lesson] unit_id=${nextUnit.id} title="${nextUnit.title}" content_hash=${contentHash(generated)} (predictive-generated)`);
         await storage.updateLessonContent(nextUnit.id, generated);
         console.log(`[Predictive] Saved content for unit ${nextUnit.id}`);
         content = generated;
