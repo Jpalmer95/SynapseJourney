@@ -3624,7 +3624,7 @@ JSON format:
       {
         "title": "Resource title",
         "url": "https://actual-url.com",
-        "type": "video|course|paper|book|forum|tool",
+        "type": "video|course|paper|book|forum|tool|encyclopedia",
         "description": "What this resource offers and why it's worth exploring"
       }
     ]
@@ -3819,7 +3819,7 @@ Create the lesson content in this JSON format:
     {
       "title": "Specific resource title",
       "url": "https://real-working-url.com/specific-path",
-      "type": "video|course|paper|book|forum|tool",
+      "type": "video|course|paper|book|forum|tool|encyclopedia",
       "description": "What this resource covers and why it's the best next step for this difficulty level"
     }
   ]
@@ -3847,7 +3847,7 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
         unit.difficulty,
         async (count) => {
           const retryPrompt = `The following URLs for the lesson "${unit.title}" on topic "${topic.title}" (${categoryName || "general"}, ${unit.difficulty} level) failed validation. Generate ${count} alternative external resource links that are real, live, and specific to this exact topic and difficulty level. Return JSON array only:
-[{"title":"...","url":"https://...","type":"video|course|paper|book","description":"..."}]`;
+[{"title":"...","url":"https://...","type":"video|course|paper|book|forum|tool|encyclopedia","description":"..."}]`;
           try {
             const alt = await generateCourseContent(
               [{ role: "user", content: retryPrompt }],
