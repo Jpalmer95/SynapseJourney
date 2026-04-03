@@ -56,6 +56,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { AiChat } from "@/components/ai-chat";
 import { TTSButton } from "@/components/tts-button";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
@@ -226,6 +234,17 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [ideaDescription, setIdeaDescription] = useState("");
   const [showIdeaForm, setShowIdeaForm] = useState(false);
   const [justSubmittedIdea, setJustSubmittedIdea] = useState(false);
+  const [showBulkRegenConfirm, setShowBulkRegenConfirm] = useState(false);
+  const [isBulkRegenPolling, setIsBulkRegenPolling] = useState(false);
+  const [bulkRegenStatus, setBulkRegenStatus] = useState<{
+    isRunning: boolean;
+    completed: number;
+    total: number;
+    currentTopic: string;
+    errors: string[];
+    startedAt: string | null;
+    completedAt: string | null;
+  } | null>(null);
   const { toast } = useToast();
 
   // Fetch saved cards to check if this topic's card is saved
@@ -453,6 +472,44 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       });
     },
   });
+
+  // Bulk outline regeneration trigger mutation (admin only)
+  const bulkRegenMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/admin/regenerate-all-outlines");
+      return res.json();
+    },
+    onSuccess: () => {
+      setShowBulkRegenConfirm(false);
+      setIsBulkRegenPolling(true);
+      toast({ title: "Bulk Regeneration Started", description: "Processing all course outlines sequentially. Check progress below." });
+    },
+    onError: (error: any) => {
+      toast({ title: "Failed to Start Regeneration", description: error?.message || "Could not trigger bulk regeneration", variant: "destructive" });
+    },
+  });
+
+  // Poll regeneration status every 5 seconds while running
+  useEffect(() => {
+    if (!isBulkRegenPolling) return;
+    const poll = async () => {
+      try {
+        const res = await fetch("/api/admin/regeneration-status", { credentials: "include" });
+        if (res.ok) {
+          const status = await res.json();
+          setBulkRegenStatus(status);
+          if (!status.isRunning) {
+            setIsBulkRegenPolling(false);
+          }
+        }
+      } catch {
+        // silent — will retry
+      }
+    };
+    poll();
+    const interval = setInterval(poll, 5000);
+    return () => clearInterval(interval);
+  }, [isBulkRegenPolling]);
 
   // Start lesson mutation
   const startLessonMutation = useMutation({
@@ -1569,6 +1626,88 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 </Button>
               </div>
             )}
+
+            {/* Admin global: bulk outline regeneration */}
+            {isAdmin && (
+              <div className="mt-3 p-3 rounded-lg bg-red-500/10 border border-red-500/20 space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm text-red-600 dark:text-red-400 font-medium">Admin (Global):</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setShowBulkRegenConfirm(true)}
+                    disabled={bulkRegenStatus?.isRunning || isBulkRegenPolling}
+                    className="gap-2 text-red-600 border-red-500/50"
+                    data-testid="button-bulk-regen-all-outlines"
+                  >
+                    <RefreshCw className={cn("h-4 w-4", (bulkRegenStatus?.isRunning || isBulkRegenPolling) && "animate-spin")} />
+                    {bulkRegenStatus?.isRunning ? "Regenerating..." : "Regenerate ALL Course Outlines"}
+                  </Button>
+                </div>
+
+                {/* Progress display while running */}
+                {(isBulkRegenPolling || (bulkRegenStatus && bulkRegenStatus.total > 0)) && (
+                  <div className="space-y-2" data-testid="section-bulk-regen-progress">
+                    {bulkRegenStatus?.isRunning && (
+                      <p className="text-xs text-muted-foreground">
+                        Regenerating topic {bulkRegenStatus.completed + 1} of {bulkRegenStatus.total}:&nbsp;
+                        <span className="font-medium text-foreground">{bulkRegenStatus.currentTopic}</span>
+                      </p>
+                    )}
+                    {bulkRegenStatus && bulkRegenStatus.total > 0 && (
+                      <Progress
+                        value={(bulkRegenStatus.completed / bulkRegenStatus.total) * 100}
+                        className="h-2"
+                        data-testid="progress-bulk-regen"
+                      />
+                    )}
+                    {!bulkRegenStatus?.isRunning && bulkRegenStatus?.completedAt && (
+                      <p className="text-xs text-green-600 dark:text-green-400 font-medium">
+                        Done — {bulkRegenStatus.completed} topics processed
+                        {bulkRegenStatus.errors.length > 0 && `, ${bulkRegenStatus.errors.length} error(s)`}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Bulk regen confirmation dialog */}
+            <Dialog open={showBulkRegenConfirm} onOpenChange={setShowBulkRegenConfirm}>
+              <DialogContent>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="h-5 w-5" />
+                    Regenerate ALL Course Outlines?
+                  </DialogTitle>
+                  <DialogDescription className="space-y-2 pt-2">
+                    <span className="block">
+                      This will delete and recreate lesson units for <strong>all {20} courses</strong> using the latest dynamic-count prompt.
+                    </span>
+                    <span className="block font-medium text-destructive">
+                      Warning: All existing user progress (quiz scores, completion status) will be lost because unit IDs will change.
+                    </span>
+                    <span className="block">
+                      New lesson content will be pre-generated in the background after each outline is rebuilt. Next Gen units are excluded (generated on demand).
+                    </span>
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogFooter className="gap-2">
+                  <Button variant="outline" onClick={() => setShowBulkRegenConfirm(false)} data-testid="button-bulk-regen-cancel">
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={() => bulkRegenMutation.mutate()}
+                    disabled={bulkRegenMutation.isPending}
+                    data-testid="button-bulk-regen-confirm"
+                  >
+                    {bulkRegenMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    Yes, Regenerate Everything
+                  </Button>
+                </DialogFooter>
+              </DialogContent>
+            </Dialog>
           </motion.div>
 
           {isLoading ? (

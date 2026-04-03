@@ -1948,6 +1948,107 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // ============ BULK OUTLINE REGENERATION ============
+
+  // In-memory state for the bulk outline regeneration job (one job at a time)
+  const bulkRegenState: {
+    isRunning: boolean;
+    completed: number;
+    total: number;
+    currentTopic: string;
+    errors: string[];
+    startedAt: string | null;
+    completedAt: string | null;
+  } = {
+    isRunning: false,
+    completed: 0,
+    total: 0,
+    currentTopic: "",
+    errors: [],
+    startedAt: null,
+    completedAt: null,
+  };
+
+  // Background job: regenerate all outlines sequentially
+  async function runBulkOutlineRegeneration(triggeredByUserId: string): Promise<void> {
+    const allTopics = await storage.getTopics();
+    // Skip custom topics (those without a categoryId in the standard seeded set)
+    // In practice all 20 standard topics have a categoryId; custom topics live in the customTopics table
+    const topics = allTopics; // process all topics in the topics table
+
+    bulkRegenState.isRunning = true;
+    bulkRegenState.completed = 0;
+    bulkRegenState.total = topics.length;
+    bulkRegenState.errors = [];
+    bulkRegenState.startedAt = new Date().toISOString();
+    bulkRegenState.completedAt = null;
+
+    console.log(`[BulkRegen] Starting bulk outline regeneration for ${topics.length} topics`);
+
+    for (const topic of topics) {
+      bulkRegenState.currentTopic = topic.title;
+      try {
+        console.log(`[BulkRegen] (${bulkRegenState.completed + 1}/${topics.length}) Deleting existing units for "${topic.title}"`);
+        await storage.deleteLessonUnitsByTopicId(topic.id);
+
+        console.log(`[BulkRegen] Generating new outline for "${topic.title}"`);
+        const newUnits = await generateLessonOutline(topic.id, topic.title, topic.description);
+
+        console.log(`[BulkRegen] "${topic.title}": ${newUnits.length} units created — firing batch pre-generation`);
+        batchPregenerateUnits(newUnits, { title: topic.title, description: topic.description }, triggeredByUserId).catch((err) =>
+          console.warn(`[BulkRegen] Batch pregen error for "${topic.title}":`, err instanceof Error ? err.message : String(err))
+        );
+
+        bulkRegenState.completed++;
+      } catch (err) {
+        const msg = `Failed "${topic.title}": ${err instanceof Error ? err.message : String(err)}`;
+        console.error(`[BulkRegen] ${msg}`);
+        bulkRegenState.errors.push(msg);
+        bulkRegenState.completed++;
+      }
+    }
+
+    bulkRegenState.isRunning = false;
+    bulkRegenState.currentTopic = "";
+    bulkRegenState.completedAt = new Date().toISOString();
+    console.log(`[BulkRegen] Complete: ${topics.length} topics processed, ${bulkRegenState.errors.length} errors`);
+  }
+
+  // GET /api/admin/regeneration-status — returns current job state (admin only)
+  app.get("/api/admin/regeneration-status", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) return res.status(403).json({ error: "Admin only" });
+      res.json(bulkRegenState);
+    } catch (error) {
+      console.error("Error fetching regeneration status:", error);
+      res.status(500).json({ error: "Failed to fetch status" });
+    }
+  });
+
+  // POST /api/admin/regenerate-all-outlines — triggers bulk regeneration job (admin only, 202 Accepted)
+  app.post("/api/admin/regenerate-all-outlines", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) return res.status(403).json({ error: "Only administrators can trigger bulk regeneration" });
+
+      if (bulkRegenState.isRunning) {
+        return res.status(409).json({ error: "A regeneration job is already running", state: bulkRegenState });
+      }
+
+      const userId = req.user.claims.sub;
+      // Fire and forget — caller polls /api/admin/regeneration-status for progress
+      runBulkOutlineRegeneration(userId).catch((err) =>
+        console.error("[BulkRegen] Unhandled error in runBulkOutlineRegeneration:", err)
+      );
+
+      res.status(202).json({ message: "Bulk outline regeneration started", state: bulkRegenState });
+    } catch (error) {
+      console.error("Error triggering bulk regeneration:", error);
+      res.status(500).json({ error: "Failed to start bulk regeneration" });
+    }
+  });
+
   // Admin endpoint to regenerate empty lesson content
   app.post("/api/admin/regenerate-empty-lessons", async (req: Request, res: Response) => {
     try {

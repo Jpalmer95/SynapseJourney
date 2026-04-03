@@ -130,6 +130,7 @@ export interface IStorage {
   updateLessonContent(unitId: number, contentJson: LessonContent | NextGenContent): Promise<LessonUnit>;
   getAllLessonUnitsWithContent(): Promise<LessonUnit[]>;
   clearLessonUnitContent(unitId: number): Promise<void>;
+  deleteLessonUnitsByTopicId(topicId: number): Promise<void>;
 
   // Lesson Progress
   getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined>;
@@ -757,6 +758,10 @@ export class DatabaseStorage implements IStorage {
     await db.update(lessonUnits)
       .set({ contentJson: null })
       .where(eq(lessonUnits.id, unitId));
+  }
+
+  async deleteLessonUnitsByTopicId(topicId: number): Promise<void> {
+    await db.delete(lessonUnits).where(eq(lessonUnits.topicId, topicId));
   }
 
   // Lesson Progress
