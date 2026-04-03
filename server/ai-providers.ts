@@ -42,8 +42,8 @@ const GEMINI_COURSE_MODEL = process.env.GEMINI_COURSE_MODEL || GEMINI_FALLBACK_M
 // Determine primary engine for startup log
 const _xaiConfigured = !!process.env.XAI_API_KEY;
 console.log(
-  `[AI] Course content primary: ${_xaiConfigured ? `${XAI_COURSE_MODEL} via xAI` : "gemini (xAI key not set)"} ` +
-  `| fallback: ${GEMINI_COURSE_MODEL}`
+  `[AI] Course content model: ${_xaiConfigured ? `${XAI_COURSE_MODEL} via xAI` : `${GEMINI_COURSE_MODEL} via gemini (xAI key not set)`} ` +
+  `(fallback: ${_xaiConfigured ? GEMINI_COURSE_MODEL : GEMINI_FALLBACK_MODEL})`
 );
 
 const DEFAULT_MODELS: Record<string, string> = {
