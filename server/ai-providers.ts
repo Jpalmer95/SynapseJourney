@@ -22,17 +22,29 @@ export interface ProviderConfig {
   preferredModel?: string;
 }
 
-// The known-good fallback model — used when the primary model returns a 404.
-// Never change this to an experimental or preview model.
+// ── Grok (xAI) — primary course content engine ──────────────────────────────
+// Override model at runtime (no redeploy needed) via XAI_COURSE_MODEL env var:
+//   XAI_COURSE_MODEL=grok-4.20-reasoning
+// Requires XAI_API_KEY to be set; falls back to Gemini if the key is absent
+// or if xAI is unreachable.
+const XAI_COURSE_MODEL = process.env.XAI_COURSE_MODEL || "grok-4.20-reasoning";
+
+// ── Gemini — fallback engine when xAI is unavailable ────────────────────────
+// Also used directly by infographic-generator.ts for image generation.
+// Never change GEMINI_FALLBACK_MODEL to an experimental or preview model —
+// it must always be a known-good stable model.
 const GEMINI_FALLBACK_MODEL = "gemini-2.0-flash";
 
-// The primary Gemini model for course content generation.
-// Override at runtime (no redeploy needed) via the GEMINI_COURSE_MODEL env var:
-//   GEMINI_COURSE_MODEL=gemini-2.5-pro
-// Falls back to gemini-2.0-flash if the env var is not set.
+// Gemini model used when the Grok primary is unavailable.
+// Override via GEMINI_COURSE_MODEL env var (e.g. GEMINI_COURSE_MODEL=gemini-2.5-pro).
 const GEMINI_COURSE_MODEL = process.env.GEMINI_COURSE_MODEL || GEMINI_FALLBACK_MODEL;
 
-console.log(`[AI] Course content model: ${GEMINI_COURSE_MODEL} (fallback: ${GEMINI_FALLBACK_MODEL})`);
+// Determine primary engine for startup log
+const _xaiConfigured = !!process.env.XAI_API_KEY;
+console.log(
+  `[AI] Course content primary: ${_xaiConfigured ? `${XAI_COURSE_MODEL} via xAI` : "gemini (xAI key not set)"} ` +
+  `| fallback: ${GEMINI_COURSE_MODEL}`
+);
 
 const DEFAULT_MODELS: Record<string, string> = {
   openai: GEMINI_COURSE_MODEL,
@@ -276,8 +288,40 @@ class OpenRouterProvider implements AIProvider {
   }
 }
 
+// ── GrokProvider — uses xAI's OpenAI-compatible API ─────────────────────────
+class GrokProvider implements AIProvider {
+  name = "grok";
+  private client: OpenAI;
+  private model: string;
+
+  constructor() {
+    this.client = new OpenAI({
+      apiKey: process.env.XAI_API_KEY,
+      baseURL: "https://api.x.ai/v1",
+    });
+    this.model = XAI_COURSE_MODEL;
+  }
+
+  isConfigured(): boolean {
+    return !!process.env.XAI_API_KEY;
+  }
+
+  async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
+    const model = options?.model || this.model;
+    const response = await this.client.chat.completions.create({
+      model,
+      messages: messages as any,
+      temperature: options?.temperature ?? 0.7,
+      max_tokens: options?.maxTokens,
+      response_format: options?.responseFormat === "json" ? { type: "json_object" } : undefined,
+    });
+    return response.choices[0]?.message?.content || "";
+  }
+}
+
 const defaultOpenAIProvider = new OpenAIProvider();
 const defaultGeminiProvider = new GeminiProvider();
+const defaultGrokProvider = new GrokProvider();
 
 export function getAIProvider(config: ProviderConfig): AIProvider {
   switch (config.provider) {
@@ -318,16 +362,19 @@ export function getDefaultProvider(): AIProvider {
 /**
  * TWO-TIER AI ARCHITECTURE:
  *
- * 1. COURSE CONTENT (Gemini - platform pays)
+ * 1. COURSE CONTENT (xAI Grok primary, Gemini fallback — platform pays)
  *    - Lesson units, roadmaps, practice tests, custom topics
  *    - Uses: getCourseContentProvider() or generateCourseContent()
  *    - Shared across all users, generated once and cached in database
- *    - Model: GEMINI_COURSE_MODEL env var (default: gemini-2.0-flash)
- *      Override without a redeploy: set GEMINI_COURSE_MODEL to any valid model ID.
- *      If the model returns a 404, GeminiProvider automatically falls back to
- *      gemini-2.0-flash and logs a warning so the issue is never silent.
+ *    - Primary: GrokProvider (XAI_API_KEY required)
+ *        Model: XAI_COURSE_MODEL env var (default: grok-4.20-reasoning)
+ *    - Fallback: GeminiProvider — used automatically when XAI_API_KEY is absent
+ *        or when xAI returns any error. Logs a warning so failures are never silent.
+ *        Model: GEMINI_COURSE_MODEL env var (default: gemini-2.0-flash)
+ *    - Note: infographic-generator.ts uses Gemini directly for IMAGE generation
+ *        (raw PNG bytes via responseModalities). That path is separate and unchanged.
  *
- * 2. USER CHAT/Q&A (User's choice - user pays via their API keys)
+ * 2. USER CHAT/Q&A (User's choice — user pays via their own API keys)
  *    - Interactive tutoring, follow-up questions, exploration
  *    - Uses: getUserChatProvider() with user's provider config
  *    - Personal to each user, unlimited if they use their own keys
@@ -335,24 +382,36 @@ export function getDefaultProvider(): AIProvider {
 
 /**
  * Get the provider for generating shared course content.
- * ALWAYS returns the platform Gemini provider — user preferences are ignored.
- * Use this for: lesson units, roadmaps, practice tests, topic content.
+ * Returns GrokProvider when XAI_API_KEY is set; falls back to GeminiProvider.
+ * User preferences are always ignored for course content.
  */
 export function getCourseContentProvider(): AIProvider {
-  return defaultGeminiProvider;
+  return defaultGrokProvider.isConfigured() ? defaultGrokProvider : defaultGeminiProvider;
 }
 
 /**
- * Generate course content via Gemini.
- * This is a convenience wrapper that ensures course content is always
- * generated with consistent quality using the platform's AI credits.
- * The active model is controlled by GEMINI_COURSE_MODEL (default: gemini-2.0-flash).
+ * Generate course content. Uses Grok (xAI) as the primary engine when
+ * XAI_API_KEY is set, automatically falling back to Gemini on any error.
+ * Generated content is shared across all users and cached in the database.
  */
 export async function generateCourseContent(
   messages: { role: string; content: string }[],
   options?: ChatOptions
 ): Promise<string> {
-  return defaultGeminiProvider.chat(messages, options);
+  if (!defaultGrokProvider.isConfigured()) {
+    return defaultGeminiProvider.chat(messages, options);
+  }
+
+  try {
+    return await defaultGrokProvider.chat(messages, options);
+  } catch (err: unknown) {
+    const errMsg = err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[AI] Grok request failed (${errMsg.slice(0, 120)}) — falling back to Gemini. ` +
+      `Check XAI_API_KEY or set XAI_COURSE_MODEL to a valid model.`
+    );
+    return defaultGeminiProvider.chat(messages, options);
+  }
 }
 
 /**
