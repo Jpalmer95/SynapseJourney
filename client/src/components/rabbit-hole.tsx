@@ -489,6 +489,26 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
     },
   });
 
+  // On mount (admin only): check if a bulk regen job is already running and auto-attach polling
+  useEffect(() => {
+    if (!isAdmin) return;
+    const checkInitial = async () => {
+      try {
+        const res = await fetch("/api/admin/regeneration-status", { credentials: "include" });
+        if (res.ok) {
+          const status = await res.json();
+          setBulkRegenStatus(status);
+          if (status.isRunning) {
+            setIsBulkRegenPolling(true);
+          }
+        }
+      } catch {
+        // silent
+      }
+    };
+    checkInitial();
+  }, [isAdmin]);
+
   // Poll regeneration status every 5 seconds while running
   useEffect(() => {
     if (!isBulkRegenPolling) return;
@@ -1682,7 +1702,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   </DialogTitle>
                   <DialogDescription className="space-y-2 pt-2">
                     <span className="block">
-                      This will delete and recreate lesson units for <strong>all {20} courses</strong> using the latest dynamic-count prompt.
+                      This will delete and recreate lesson units for <strong>all courses</strong> in the catalog using the latest dynamic-count prompt.
                     </span>
                     <span className="block font-medium text-destructive">
                       Warning: All existing user progress (quiz scores, completion status) will be lost because unit IDs will change.
