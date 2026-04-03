@@ -3437,9 +3437,33 @@ CRITICAL RULES:
       throw new Error("Invalid AI response format");
     }
 
-    // Normalize unitIndex values and clamp per-tier counts between 2 and 6
-    // (guards against AI returning wrong indices or out-of-range unit counts)
+    // Normalize unitIndex values and enforce per-tier counts of 2–6.
+    // If a tier is out of range, default to exactly 3 units (spec requirement).
     const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"];
+    // Generic 3-unit fallback per difficulty when the AI returns too few or too many
+    const tierDefaults: Record<string, any[]> = {
+      beginner: [
+        { difficulty: "beginner", title: "Introduction & Basics", outline: `Get started with the fundamentals of ${topicTitle}` },
+        { difficulty: "beginner", title: "Core Concepts", outline: "Learn the essential terms and ideas" },
+        { difficulty: "beginner", title: "Simple Examples", outline: "See the concepts in action with easy examples" },
+      ],
+      intermediate: [
+        { difficulty: "intermediate", title: "Deeper Mechanisms", outline: "Understand how things work under the hood" },
+        { difficulty: "intermediate", title: "Practical Applications", outline: "Apply your knowledge to real scenarios" },
+        { difficulty: "intermediate", title: "Common Patterns", outline: "Recognize recurring themes and approaches" },
+      ],
+      advanced: [
+        { difficulty: "advanced", title: "Edge Cases", outline: "Explore unusual situations and exceptions" },
+        { difficulty: "advanced", title: "Current Research", outline: "Discover what experts are working on today" },
+        { difficulty: "advanced", title: "Expert Applications", outline: "See how professionals use these concepts" },
+      ],
+      nextgen: [
+        { difficulty: "nextgen", title: "Open Research Questions", outline: "Explore unsolved problems and cutting-edge questions in the field" },
+        { difficulty: "nextgen", title: "Industry Frontiers", outline: "Discover active challenges and emerging opportunities" },
+        { difficulty: "nextgen", title: "Creative Synthesis", outline: "Combine ideas from different domains for breakthrough insights" },
+      ],
+    };
+
     const unitsByDiff: Record<string, any[]> = {};
     for (const u of parsed.units) {
       if (!unitsByDiff[u.difficulty]) unitsByDiff[u.difficulty] = [];
@@ -3448,16 +3472,24 @@ CRITICAL RULES:
     const normalizedUnits: any[] = [];
     for (const diff of DIFFICULTIES) {
       let diffUnits = unitsByDiff[diff] || [];
-      // Clamp to [2, 6]: if out of range fall back to 3 default slots
       if (diffUnits.length < 2 || diffUnits.length > 6) {
-        console.warn(`[Outline] Tier "${diff}" has ${diffUnits.length} units (expected 2-6), clamping to 3`);
-        diffUnits = diffUnits.length > 6 ? diffUnits.slice(0, 6) : diffUnits;
-        // If still fewer than 2, the default fallback handles this tier gracefully
+        const originalCount = diffUnits.length;
+        if (diffUnits.length > 6) {
+          // Too many: take first 3 from the AI-returned units
+          diffUnits = diffUnits.slice(0, 3);
+        } else {
+          // Too few (0 or 1): replace entirely with 3 generic defaults for this tier
+          diffUnits = tierDefaults[diff] || tierDefaults["beginner"];
+        }
+        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected 2–6); defaulted to ${diffUnits.length} units`);
       }
+      // Re-assign sequential unitIndex regardless of what the AI returned
       diffUnits.forEach((u, i) => {
-        normalizedUnits.push({ ...u, unitIndex: i });
+        normalizedUnits.push({ ...u, difficulty: diff, unitIndex: i });
       });
     }
+    console.log(`[Outline] Normalized ${normalizedUnits.length} units: ` +
+      DIFFICULTIES.map(d => `${d}=${normalizedUnits.filter(u => u.difficulty === d).length}`).join(", "));
 
     // Save units to database
     const { storage } = await import("./storage");
