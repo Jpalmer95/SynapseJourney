@@ -711,6 +711,8 @@ Be conversational, warm, and genuinely curious about helping the learner underst
       if (units.length === 0) {
         // Generate outline using AI
         units = await generateLessonOutline(topicId, topic.title, topic.description);
+        // Fire background batch pre-generation for all new non-nextgen units
+        batchPregenerateUnits(units, topic, req.user.claims.sub).catch(console.error);
       }
 
       // Get user's mastery status
@@ -2631,7 +2633,7 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
       });
       
       // Start generating the topic in the background
-      generateCustomTopicContent(customTopic.id, title, description).catch(console.error);
+      generateCustomTopicContent(customTopic.id, title, description, req.user.claims.sub).catch(console.error);
       
       res.json(customTopic);
     } catch (error) {
@@ -2679,7 +2681,7 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
       await storage.updateCustomTopicStatus(topicId, "pending");
       
       // Start generating the topic in the background
-      generateCustomTopicContent(topicId, customTopic.title, customTopic.description).catch(console.error);
+      generateCustomTopicContent(topicId, customTopic.title, customTopic.description, req.user.claims.sub).catch(console.error);
       
       console.log(`[CustomTopic] Retry requested for topic ${topicId}: "${customTopic.title}" by user ${req.user.claims.sub}`);
 
@@ -3267,7 +3269,7 @@ async function preTTSForUnit(userId: string, unitId: number, content: unknown, i
 }
 
 // Generate custom topic content using AI
-async function generateCustomTopicContent(customTopicId: number, title: string, description: string) {
+async function generateCustomTopicContent(customTopicId: number, title: string, description: string, userId?: string) {
   try {
     await storage.updateCustomTopicStatus(customTopicId, "generating");
     
@@ -3303,22 +3305,16 @@ async function generateCustomTopicContent(customTopicId: number, title: string, 
       difficulty: "beginner",
     });
     
-    // Generate lesson outline
+    // Generate lesson outline (also saves units to DB internally)
     const units = await generateLessonOutline(topic.id, title, description);
-    
-    // Create lesson units
-    for (const unit of units) {
-      await storage.createLessonUnit({
-        topicId: topic.id,
-        difficulty: unit.difficulty,
-        unitIndex: unit.unitIndex,
-        title: unit.title,
-        outline: unit.outline,
-      });
-    }
-    
-    // Update custom topic status
+
+    // Mark topic as ready before batch pre-generation so frontend can show the outline
     await storage.updateCustomTopicStatus(customTopicId, "ready", topic.id, category.id);
+
+    // Fire background batch pre-generation for all non-nextgen units
+    if (userId) {
+      batchPregenerateUnits(units, { title, description }, userId).catch(console.error);
+    }
     
   } catch (error) {
     console.error("Error generating custom topic:", error);
@@ -3345,15 +3341,62 @@ function isUnitUnlocked(
   }
 }
 
+// Background batch pre-generation helper — called fire-and-forget after outline creation.
+// Generates lesson content for all non-nextgen units that don't yet have content.
+async function batchPregenerateUnits(
+  units: { id: number; title: string; difficulty: string; outline?: string | null; contentJson?: unknown }[],
+  topic: { title: string; description: string },
+  userId: string
+): Promise<void> {
+  try {
+    const unitsToGenerate = units.filter(u => u.difficulty !== "nextgen" && !u.contentJson);
+    if (unitsToGenerate.length === 0) {
+      console.log(`[BatchPregen] All units for "${topic.title}" already have content — skipping`);
+      return;
+    }
+
+    console.log(`[BatchPregen] Starting pre-generation for ${unitsToGenerate.length} non-nextgen units of "${topic.title}"`);
+
+    const masteredTopics = await storage.getUserMasteredTopics(userId);
+    const contentMap = await generateBatchLessonContent(topic, unitsToGenerate, masteredTopics);
+
+    let savedCount = 0;
+    for (const [unitId, content] of contentMap.entries()) {
+      try {
+        // Re-fetch to avoid overwriting content saved by a concurrent on-demand request
+        const latestUnit = await storage.getLessonUnit(unitId);
+        if (latestUnit && !latestUnit.contentJson) {
+          await storage.updateLessonContent(unitId, content);
+          console.log(`[BatchPregen] unit_id=${unitId} content_hash=${contentHash(content)} (saved)`);
+          savedCount++;
+        } else {
+          console.log(`[BatchPregen] unit_id=${unitId} already has content — skipping save`);
+        }
+      } catch (err) {
+        console.warn(`[BatchPregen] Failed to save content for unit ${unitId}:`, err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    console.log(`[BatchPregen] Completed: ${savedCount}/${unitsToGenerate.length} units saved for "${topic.title}"`);
+  } catch (err) {
+    console.warn(`[BatchPregen] Error during batch pre-generation for "${topic.title}":`, err instanceof Error ? err.message : String(err));
+  }
+}
+
 // Generate lesson outline using AI
 async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
   const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
 
 Topic Description: ${topicDescription}
 
-Create a course outline with units across FOUR difficulty levels. Each level MUST have exactly 3 units that cover DIFFERENT subtopics and progressively build understanding. Every unit in a tier must have a UNIQUE title covering distinct material — no two units in the same tier may overlap.
+Create a course outline with units across FOUR difficulty levels. Choose the number of units per tier based on topic breadth and depth:
+- Narrow or tool-focused topics (e.g. "How to use git stash", "Introduction to printf"): 2 units per tier
+- Average topics (most subjects): 3 units per tier
+- Broad science, engineering, or rich interdisciplinary topics (e.g. "Quantum Field Theory", "Machine Learning"): 4–6 units per tier
 
-Respond with a JSON object in this exact format (showing a Physics example — replace with real content for "${topicTitle}"):
+Each tier MUST have between 2 and 6 units. Every unit must have a UNIQUE title covering DISTINCT material — no two units in the same tier may overlap in content.
+
+Respond with a JSON object in this exact format (showing a Physics example with variable unit counts — replace with real content for "${topicTitle}"):
 {
   "units": [
     {"difficulty": "beginner", "unitIndex": 0, "title": "What Is Energy?", "outline": "Introduce energy as the capacity to do work, using everyday examples like food, batteries, and sunlight."},
@@ -3373,7 +3416,8 @@ Respond with a JSON object in this exact format (showing a Physics example — r
 
 CRITICAL RULES:
 - Every unit title must be UNIQUE and cover a DIFFERENT aspect of "${topicTitle}" — no overlapping content within a tier.
-- unitIndex MUST be sequential starting from 0 within each difficulty: beginner 0,1,2 — intermediate 0,1,2 — advanced 0,1,2 — nextgen 0,1,2.
+- Each tier must contain between 2 and 6 units. Choose the count that best fits the topic's breadth for that level.
+- unitIndex MUST be sequential starting from 0 within each difficulty (0, 1, 2, ... up to however many units you create for that tier).
 - Titles must be specific to "${topicTitle}", not generic placeholders.
 - Outlines must describe exactly what that specific unit covers (1-2 sentences).
 - Beginner: everyday language, no jargon, spark curiosity.
@@ -3393,8 +3437,8 @@ CRITICAL RULES:
       throw new Error("Invalid AI response format");
     }
 
-    // Normalize unitIndex values to ensure they are sequential within each difficulty
-    // (guard against AI returning wrong indices like all 0s)
+    // Normalize unitIndex values and clamp per-tier counts between 2 and 6
+    // (guards against AI returning wrong indices or out-of-range unit counts)
     const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"];
     const unitsByDiff: Record<string, any[]> = {};
     for (const u of parsed.units) {
@@ -3403,7 +3447,13 @@ CRITICAL RULES:
     }
     const normalizedUnits: any[] = [];
     for (const diff of DIFFICULTIES) {
-      const diffUnits = unitsByDiff[diff] || [];
+      let diffUnits = unitsByDiff[diff] || [];
+      // Clamp to [2, 6]: if out of range fall back to 3 default slots
+      if (diffUnits.length < 2 || diffUnits.length > 6) {
+        console.warn(`[Outline] Tier "${diff}" has ${diffUnits.length} units (expected 2-6), clamping to 3`);
+        diffUnits = diffUnits.length > 6 ? diffUnits.slice(0, 6) : diffUnits;
+        // If still fewer than 2, the default fallback handles this tier gracefully
+      }
       diffUnits.forEach((u, i) => {
         normalizedUnits.push({ ...u, unitIndex: i });
       });
