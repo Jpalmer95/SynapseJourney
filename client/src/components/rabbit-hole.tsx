@@ -55,7 +55,6 @@ import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Label } from "@/components/ui/label";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Dialog,
   DialogContent,
@@ -746,8 +745,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
           </div>
         </header>
 
-        <ScrollArea className="h-[calc(100vh-64px)] w-full overflow-x-hidden">
-          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 overflow-hidden w-full box-border">
+        <div className="h-[calc(100vh-64px)] w-full overflow-y-auto overflow-x-hidden">
+          <main className="max-w-3xl mx-auto px-4 py-8 md:px-8 w-full box-border min-w-0">
             {isLoadingContent ? (
               <div className="flex items-center justify-center py-20">
                 <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1491,7 +1490,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
               </div>
             )}
           </main>
-        </ScrollArea>
+        </div>
 
         <AnimatePresence>
           {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
