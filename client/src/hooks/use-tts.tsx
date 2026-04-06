@@ -526,7 +526,7 @@ function useTTSImpl(): UseTTSReturn {
         sw.port.start();
         bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
       } catch (swErr) {
-        console.warn("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
+        console.debug("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
         sharedWorkerAvailable = false;
       }
     }
