@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { cn } from "@/lib/utils";
+import { cn, isIOS } from "@/lib/utils";
 import { KOKORO_VOICES, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
 
 interface TTSButtonProps {
@@ -115,7 +115,7 @@ export function TTSButton({
 
   // Kokoro first-load toast: fires once when the Kokoro model starts downloading (only if Kokoro engine is active).
   useEffect(() => {
-    if (kokoroLoading && serverVoicePreset === "kokoro" && !kokoroWarmShownRef.current) {
+    if (kokoroLoading && serverVoicePreset === "kokoro" && !isIOS() && !kokoroWarmShownRef.current) {
       kokoroWarmShownRef.current = true;
       toast({
         title: "Downloading Kokoro model…",
@@ -218,10 +218,11 @@ export function TTSButton({
   };
 
   const getTooltipText = () => {
-    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") return "Downloading Kokoro model — first time only…";
+    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro" && !onIOS) return "Downloading Kokoro model — first time only…";
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
     if (serverVoicePreset === "kokoro") {
+      if (onIOS) return "Read aloud · Server TTS";
       if (kokoroLoading) return "Downloading Kokoro model — first time only…";
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
@@ -251,20 +252,28 @@ export function TTSButton({
 
   const isCached = cacheStatus?.cached === true;
 
+  const onIOS = isIOS();
+
   // ── Engine row component ────────────────────────────────────────────────────
-  const EngineRow = ({ engineId, label, sublabel, icon, badge, active }: {
+  const EngineRow = ({ engineId, label, sublabel, icon, badge, active, disabled }: {
     engineId: string;
     label: string;
     sublabel: string;
     icon: React.ReactNode;
     badge?: React.ReactNode;
     active: boolean;
+    disabled?: boolean;
   }) => (
     <button
-      onClick={() => handleEngineSelect(engineId)}
+      onClick={disabled ? undefined : () => handleEngineSelect(engineId)}
+      disabled={disabled}
       className={cn(
-        "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted/60",
-        active ? "border-primary bg-primary/5" : "border-border"
+        "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors",
+        disabled
+          ? "opacity-40 cursor-not-allowed border-border"
+          : active
+            ? "border-primary bg-primary/5 hover:bg-muted/60"
+            : "border-border hover:bg-muted/60"
       )}
       data-testid={`button-engine-${engineId}`}
     >
@@ -276,7 +285,7 @@ export function TTSButton({
         </div>
         <span className="text-muted-foreground leading-tight">{sublabel}</span>
       </div>
-      {active && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+      {active && !disabled && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
     </button>
   );
 
@@ -305,17 +314,17 @@ export function TTSButton({
             <h4 className="text-sm font-semibold">Voice Settings</h4>
             {getTierBadge(activeTier)}
           </div>
-          {kokoroLoading && (
+          {!onIOS && kokoroLoading && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…
             </p>
           )}
-          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
+          {!onIOS && !kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
           )}
-          {kokoroReady && serverVoicePreset === "kokoro" && (
+          {!onIOS && kokoroReady && serverVoicePreset === "kokoro" && (
             <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
               <Check className="h-2.5 w-2.5" />Kokoro ready · instant playback
             </p>
@@ -329,10 +338,11 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel="Local · offline, no token needed"
+              sublabel={onIOS ? "Not available on iOS" : "Local · offline, no token needed"}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
+              disabled={onIOS}
             />
 
             {/* Kokoro voice sub-grid */}
@@ -706,7 +716,7 @@ export function TTSButton({
   }
 
   // Default mode
-  const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
+  const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && !onIOS && (
     kokoroLoading ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-loading">
         <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />Loading model…

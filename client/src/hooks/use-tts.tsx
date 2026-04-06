@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE, QWEN_DEFAULT_VOICE, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
 import { useToast } from "@/hooks/use-toast";
+import { isIOS } from "@/lib/utils";
 
 // localStorage keys used by the TTS engine
 const HF_TOKEN_KEY = "hf_token";
@@ -722,7 +723,9 @@ function useTTSImpl(): UseTTSReturn {
 
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      if (voiceTier === "local") {
+      // iOS Safari cannot run the Kokoro ONNX model — loading it in a Web Worker
+      // exhausts the per-tab memory budget and crashes the tab. Skip entirely on iOS.
+      if (voiceTier === "local" && !isIOS()) {
         // Primary path: Kokoro local worker using the saved kokoro sub-voice
         let kokoroDone = false;
         try {
@@ -983,7 +986,8 @@ function useTTSImpl(): UseTTSReturn {
         const sectionText = sections[i].text;
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        if (voiceTier === "local") {
+        // Skip on iOS: loading the ONNX model in a Web Worker crashes the tab.
+        if (voiceTier === "local" && !isIOS()) {
           // Primary: Kokoro local worker using the saved kokoro sub-voice
           let kokoroDone = false;
           try {
