@@ -798,13 +798,33 @@ export function TTSButton({
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <div className="flex flex-col gap-1">
+            <div className="flex flex-col gap-1 min-w-[150px]">
               <div className="flex items-center gap-1.5">
                 {getTooltipText()}
                 {isCached && !isSpeaking && activeTier === "local" && (
                   <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
                 )}
               </div>
+              {kokoroLoading && (
+                <div className="mt-0.5 space-y-0.5">
+                  <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                    <span>{kokoroProgressLabel}</span>
+                    {kokoroProgressPct !== null && (
+                      <span className="font-mono ml-2">{kokoroProgressPct}%</span>
+                    )}
+                  </div>
+                  <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                    {kokoroProgressPct !== null ? (
+                      <div
+                        className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                        style={{ width: `${kokoroProgressPct}%` }}
+                      />
+                    ) : (
+                      <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
+                    )}
+                  </div>
+                </div>
+              )}
               {ttsError && (
                 <p className="text-xs text-red-400 max-w-[200px]">{ttsError}</p>
               )}
