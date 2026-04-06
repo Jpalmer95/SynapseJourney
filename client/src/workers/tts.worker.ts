@@ -27,7 +27,7 @@ type Responder = {
 
 // ── Shared model state (module scope — one instance shared across all ports) ──
 let kokoroTTS: KokoroTTS | null = null;
-let engineId: KokoroEngine = "webgpu-fp32";
+let engineId: KokoroEngine = "wasm-q8";
 let loadMs = 0;
 let fromCache = false;
 let loadingPromise: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
@@ -188,7 +188,7 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
   });
 
   // ── Timeout race ────────────────────────────────────────────────────────────
-  // If both WebGPU and WASM hang (e.g. ONNX runtime stall on low-memory mobile)
+  // If the WASM ONNX runtime hangs (e.g. stall on very low-memory mobile)
   // the UI would be stuck indefinitely. Race with a timeout so the hook receives
   // an error and can clear its loading state.
   let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
