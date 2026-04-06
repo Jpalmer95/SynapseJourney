@@ -65,8 +65,6 @@ interface UseTTSReturn extends TTSState {
   clearHFToken: () => void;
   kokoroReady: boolean;
   kokoroLoading: boolean;
-  kokoroDownloadPercent: number | null;
-  kokoroDownloadPhase: "download" | "compile" | null;
   hfWarming: boolean;
   kokoroVoice: string;
   setKokoroVoice: (voiceId: string) => void;
@@ -198,13 +196,10 @@ function useTTSImpl(): UseTTSReturn {
   );
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
-  const [kokoroDownloadPercent, setKokoroDownloadPercent] = useState<number | null>(null);
-  const [kokoroDownloadPhase, setKokoroDownloadPhase] = useState<"download" | "compile" | null>(null);
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const audioCtxRef = useRef<AudioContext | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
@@ -469,31 +464,18 @@ function useTTSImpl(): UseTTSReturn {
     const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" });
 
     w.onmessage = ({ data }: MessageEvent) => {
-      const { id, type, samples, sampleRate, message, percent, phase } = data as {
+      const { id, type, samples, sampleRate, message } = data as {
         id: number;
-        type: "ready" | "audio" | "error" | "progress";
+        type: "ready" | "audio" | "error";
         samples?: Float32Array;
         sampleRate?: number;
         message?: string;
-        percent?: number;
-        phase?: "download" | "compile";
       };
-
-      // Progress broadcasts use id=-1 (sentinel) — not tied to any pending request.
-      if (id === -1 && type === "progress") {
-        if (percent !== undefined) setKokoroDownloadPercent(percent);
-        if (phase) setKokoroDownloadPhase(phase);
-        return;
-      }
-
       const p = pendingRef.current.get(id);
       if (!p) return;
       pendingRef.current.delete(id);
 
       if (type === "ready") {
-        // Clear download progress now that model is fully ready.
-        setKokoroDownloadPercent(null);
-        setKokoroDownloadPhase(null);
         p.resolve(undefined);
       } else if (type === "audio") {
         if (samples && sampleRate) {
@@ -515,8 +497,6 @@ function useTTSImpl(): UseTTSReturn {
       workerReadyPromiseRef.current = null;
       setKokoroReady(false);
       setKokoroLoading(false);
-      setKokoroDownloadPercent(null);
-      setKokoroDownloadPhase(null);
     };
 
     workerRef.current = w;
@@ -540,8 +520,6 @@ function useTTSImpl(): UseTTSReturn {
         reject: (err) => {
           workerReadyPromiseRef.current = null;
           setKokoroLoading(false);
-          setKokoroDownloadPercent(null);
-          setKokoroDownloadPhase(null);
           reject(err);
         },
       });
@@ -1190,26 +1168,14 @@ function useTTSImpl(): UseTTSReturn {
   // isSpeaking stays true so the async loop continues to wait on the audio element.
   // isPaused flag is set true so UI knows we're in a paused-but-active state.
   const pause = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.pause();
-    } else if (audioCtxRef.current && audioCtxRef.current.state === "running") {
-      // Suspend the Web Audio context — pauses AudioBufferSourceNode playback.
-      audioCtxRef.current.suspend().catch(() => {});
-    } else if (BROWSER_SPEECH_SUPPORTED) {
-      try { window.speechSynthesis.pause(); } catch { /* ignore */ }
-    }
+    if (audioRef.current) audioRef.current.pause();
+    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.pause(); } catch { /* ignore */ } }
     setState(prev => ({ ...prev, isPaused: true }));
   }, []);
 
   const resume = useCallback(() => {
-    if (audioRef.current) {
-      audioRef.current.play().catch(console.error);
-    } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-      // Resume the Web Audio context to continue AudioBufferSourceNode playback.
-      audioCtxRef.current.resume().catch(console.error);
-    } else if (BROWSER_SPEECH_SUPPORTED) {
-      try { window.speechSynthesis.resume(); } catch { /* ignore */ }
-    }
+    if (audioRef.current) audioRef.current.play().catch(console.error);
+    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.resume(); } catch { /* ignore */ } }
     setState(prev => ({ ...prev, isPaused: false }));
   }, []);
 
@@ -1280,8 +1246,6 @@ function useTTSImpl(): UseTTSReturn {
     clearHFToken,
     kokoroReady,
     kokoroLoading,
-    kokoroDownloadPercent,
-    kokoroDownloadPhase,
     hfWarming,
     kokoroVoice,
     setKokoroVoice,
