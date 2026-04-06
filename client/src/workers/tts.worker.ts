@@ -42,7 +42,7 @@ const connectedPorts = new Set<MessagePort>();
 function broadcast(payload: ProgressPayload) {
   if (connectedPorts.size > 0) {
     connectedPorts.forEach((port) => {
-      try { port.postMessage(payload); } catch { /* port may be closed */ }
+      try { port.postMessage(payload); } catch { connectedPorts.delete(port); /* prune closed port */ }
     });
   } else {
     // DedicatedWorker — post directly to the worker global scope.
