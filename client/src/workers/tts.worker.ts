@@ -54,9 +54,11 @@ async function checkFromCache(): Promise<boolean> {
   try {
     const cache = await caches.open("transformers-cache");
     const keys = await cache.keys();
-    // Check for the primary ONNX model artifact — specific enough to avoid false positives.
+    // Check specifically for the q8 ONNX artifact — the model this worker loads.
+    // Using "model_q8" avoids a false positive from a stale / partial fp32 entry
+    // that may have been left behind by a previous browser crash.
     return keys.some(
-      (req) => req.url.includes("Kokoro-82M-v1.0-ONNX") && req.url.includes("/onnx/model_"),
+      (req) => req.url.includes("Kokoro-82M-v1.0-ONNX") && req.url.includes("model_q8"),
     );
   } catch {
     return false;
@@ -156,35 +158,18 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
 
     const t0 = performance.now();
 
-    // ── WebGPU fp32 attempt ──────────────────────────────────────────────────
-    try {
-      console.log("[TTS Worker] Trying WebGPU fp32…");
-      kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-        dtype: "fp32",
-        device: "webgpu",
-        progress_callback: makeProgressCallback(),
-      });
-      engineId = "webgpu-fp32";
-      console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
-    } catch (webgpuErr) {
-      console.warn(
-        "[TTS Worker] WebGPU fp32 failed:",
-        webgpuErr instanceof Error ? webgpuErr.message : String(webgpuErr),
-      );
-      console.log("[TTS Worker] Falling back to WASM q8…");
-
-      // Reset progress state for the WASM retry so the UI shows a fresh
-      // download bar rather than remaining in a stale "compile" state.
-      broadcast({ id: -1, type: "progress", percent: 0, phase: "download" });
-
-      kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-        dtype: "q8",
-        device: "wasm",
-        progress_callback: makeProgressCallback(),
-      });
-      engineId = "wasm-q8";
-      console.log("[TTS Worker] ✓ WASM q8 loaded");
-    }
+    // ── WASM q8 (primary engine) ─────────────────────────────────────────────
+    // WebGPU fp32 was tried first previously but the fp32 model is ~350 MB and
+    // causes an OOM page crash on mobile during GPU compilation. WASM q8 is ~80 MB,
+    // needs no GPU memory, and produces indistinguishable TTS audio quality.
+    console.log("[TTS Worker] Loading WASM q8…");
+    kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+      dtype: "q8",
+      device: "wasm",
+      progress_callback: makeProgressCallback(),
+    });
+    engineId = "wasm-q8";
+    console.log("[TTS Worker] ✓ WASM q8 loaded");
 
     loadMs = Math.round(performance.now() - t0);
     fromCache = cachedBefore;
