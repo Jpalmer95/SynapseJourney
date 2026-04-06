@@ -213,6 +213,11 @@ function useTTSImpl(): UseTTSReturn {
   const hfToastShownRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  // Persistent AudioContext singleton. Pre-unlocked during the user gesture so
+  // Web Audio API playback works on iOS even after a long async WASM synthesis.
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  // Track the currently-playing AudioBufferSourceNode so it can be cancelled.
+  const audioSrcNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
@@ -413,23 +418,46 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, []);
 
-  const unlockAudio = useCallback(() => {
-    if (audioUnlockedRef.current) return;
+  // Returns (or lazily creates) the persistent AudioContext singleton.
+  // Must be called during or before a user gesture to ensure iOS allows playback.
+  const getAudioCtx = useCallback((): AudioContext | null => {
+    if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
+      return audioCtxRef.current;
+    }
     try {
       const ACtx = (window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext);
-      if (ACtx) {
-        const ctx = new ACtx();
-        const src = ctx.createBufferSource();
-        src.buffer = ctx.createBuffer(1, 1, 22050);
-        src.connect(ctx.destination);
-        src.start(0);
-        ctx.close().catch(() => {});
+      if (!ACtx) return null;
+      audioCtxRef.current = new ACtx();
+      return audioCtxRef.current;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const unlockAudio = useCallback(() => {
+    // Resume (or create) the persistent AudioContext within the user gesture.
+    // Unlike the old approach of creating+closing a temporary context, keeping
+    // the context alive means Web Audio API playback works even after a long
+    // async WASM synthesis delay — the iOS permission persists with the context.
+    try {
+      const ctx = getAudioCtx();
+      if (ctx && ctx.state === "suspended") {
+        ctx.resume().catch(() => {});
+      }
+      if (!audioUnlockedRef.current) {
+        // Play a silent 1-sample buffer to satisfy iOS autoplay policy.
+        if (ctx) {
+          const src = ctx.createBufferSource();
+          src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
+          src.connect(ctx.destination);
+          src.start(0);
+        }
         audioUnlockedRef.current = true;
       }
     } catch {
       // ignore — audio unlock is best-effort
     }
-  }, []);
+  }, [getAudioCtx]);
 
   // ── Float32Array → WAV Blob converter (runs on main thread) ─────────────
 
@@ -630,29 +658,105 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, [ensureKokoroInit, getWorker]);
 
-  // ── Blob audio player ─────────────────────────────────────────────────────
+  // ── Sentence splitter for Kokoro chunking ─────────────────────────────────
+  // Splits text at sentence boundaries so each chunk is synthesised and played
+  // independently. Users hear audio within seconds rather than waiting for an
+  // entire paragraph to be processed by the WASM runtime.
+  function splitIntoSentences(text: string): string[] {
+    // Split at sentence-ending punctuation followed by whitespace or end of string.
+    // Keeps the delimiter with the preceding sentence.
+    const raw = text
+      .replace(/([.!?;])\s+/g, "$1\n")
+      .split("\n")
+      .map(s => s.trim())
+      .filter(s => s.length > 0);
+
+    // Merge very short fragments (< 20 chars) with the following sentence to
+    // avoid generating near-silent audio blobs for things like "Dr." or "e.g.".
+    const merged: string[] = [];
+    for (const s of raw) {
+      if (merged.length > 0 && merged[merged.length - 1].length < 20) {
+        merged[merged.length - 1] += " " + s;
+      } else {
+        merged.push(s);
+      }
+    }
+    return merged.length > 0 ? merged : [text];
+  }
+
+  // Wraps kokoroSpeak with a per-chunk synthesis timeout (default 30 s).
+  // If WASM hangs during generation, rejects so the caller can fall through
+  // to the server TTS fallback rather than staying stuck.
+  const KOKORO_SYNTH_TIMEOUT_MS = 30_000;
+  const kokoroSpeakWithTimeout = useCallback(async (text: string, voice: string): Promise<Blob> => {
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timeoutHandle = setTimeout(() => {
+        reject(new Error("Kokoro synthesis timed out"));
+      }, KOKORO_SYNTH_TIMEOUT_MS);
+    });
+    try {
+      const blob = await Promise.race([kokoroSpeak(text, voice), timeoutPromise]);
+      return blob;
+    } finally {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+    }
+  }, [kokoroSpeak]);
+
+  // ── Blob audio player (Web Audio API) ────────────────────────────────────
+  // Uses the persistent AudioContext so playback works on iOS even after long
+  // async WASM synthesis (the gesture unlock persists with the context lifetime).
 
   const playBlobAudio = useCallback(async (blob: Blob): Promise<void> => {
-    return new Promise((resolve, reject) => {
+    if (cancelledRef.current) throw new Error("cancelled");
+
+    const ctx = getAudioCtx();
+    if (!ctx) {
+      // Web Audio API unavailable — fall back to HTMLAudioElement
+      return new Promise((resolve, reject) => {
+        if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+        let blobUrl: string | null = URL.createObjectURL(blob);
+        const audio = new Audio(blobUrl);
+        audio.playbackRate = Math.max(0.5, Math.min(4, rateRef.current));
+        audioRef.current = audio;
+        const cleanup = () => { if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; } };
+        audio.onended = () => { audioRef.current = null; cleanup(); resolve(); };
+        audio.onerror = () => { audioRef.current = null; cleanup(); reject(new Error("audio_error")); };
+        audio.onpause = () => { if (cancelledRef.current) { cleanup(); reject(new Error("cancelled")); } };
+        audio.play().catch((err) => { cleanup(); reject(err); });
+      });
+    }
+
+    // Resume context if suspended (e.g. browser auto-suspends after inactivity).
+    if (ctx.state === "suspended") {
+      await ctx.resume();
+    }
+
+    const arrayBuffer = await blob.arrayBuffer();
+    if (cancelledRef.current) throw new Error("cancelled");
+
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    if (cancelledRef.current) throw new Error("cancelled");
+
+    return new Promise<void>((resolve, reject) => {
       if (cancelledRef.current) { reject(new Error("cancelled")); return; }
 
-      let blobUrl: string | null = URL.createObjectURL(blob);
-      const audio = new Audio(blobUrl);
-      audio.playbackRate = Math.max(0.5, Math.min(4, rateRef.current));
-      audioRef.current = audio;
+      const src = ctx.createBufferSource();
+      src.buffer = audioBuffer;
+      // Apply playback speed via detune (cents) or playbackRate.
+      src.playbackRate.value = Math.max(0.5, Math.min(4, rateRef.current));
+      src.connect(ctx.destination);
+      audioSrcNodeRef.current = src;
 
-      const cleanup = () => {
-        if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+      src.onended = () => {
+        audioSrcNodeRef.current = null;
+        if (cancelledRef.current) reject(new Error("cancelled"));
+        else resolve();
       };
 
-      audio.onended = () => { audioRef.current = null; cleanup(); resolve(); };
-      audio.onerror = () => { audioRef.current = null; cleanup(); reject(new Error("audio_error")); };
-      audio.onpause = () => {
-        if (cancelledRef.current) { cleanup(); reject(new Error("cancelled")); }
-      };
-      audio.play().catch((err) => { cleanup(); reject(err); });
+      src.start(0);
     });
-  }, []);
+  }, [getAudioCtx]);
 
   // ── HF cloud TTS (ZeroGPU Space / Inference API) ─────────────────────────
   // Handles cold-start 503 retries and optional reference audio for voice cloning.
@@ -809,13 +913,19 @@ function useTTSImpl(): UseTTSReturn {
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
       if (voiceTier === "local") {
-        // Primary path: Kokoro local worker using the saved kokoro sub-voice
+        // Split text into sentences and synthesise + play each one individually.
+        // This lets the user hear audio within seconds on mobile rather than
+        // waiting for the WASM runtime to process the entire text block at once.
         let kokoroDone = false;
         try {
-          const blob = await kokoroSpeak(text, kokoroVoiceRef.current);
-          if (cancelledRef.current) return;
+          const sentences = splitIntoSentences(text);
           setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-          await playBlobAudio(blob);
+          for (let si = 0; si < sentences.length; si++) {
+            if (cancelledRef.current) break;
+            const blob = await kokoroSpeakWithTimeout(sentences[si], kokoroVoiceRef.current);
+            if (cancelledRef.current) break;
+            await playBlobAudio(blob);
+          }
           if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
           kokoroDone = true;
           return;
@@ -1003,7 +1113,7 @@ function useTTSImpl(): UseTTSReturn {
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeak, playBlobAudio, fetchQwenCloudTTS]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, fetchQwenCloudTTS]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
   // Pre-fetches the next section's audio while the current section plays to minimize gaps.
@@ -1017,6 +1127,10 @@ function useTTSImpl(): UseTTSReturn {
     cancelledRef.current = true;
     if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    if (audioSrcNodeRef.current) {
+      try { audioSrcNodeRef.current.stop(); } catch { /* ignore */ }
+      audioSrcNodeRef.current = null;
+    }
     // Yield one tick so pending promise rejections from old playback settle
     await new Promise<void>(resolve => setTimeout(resolve, 0));
 
@@ -1070,14 +1184,20 @@ function useTTSImpl(): UseTTSReturn {
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
         if (voiceTier === "local") {
-          // Primary: Kokoro local worker using the saved kokoro sub-voice
+          // Split each section into sentences and synthesise + play one at a time.
+          // The first sentence plays within seconds; subsequent sentences are
+          // synthesised during the playback of the previous one (serial pipeline).
           let kokoroDone = false;
           try {
-            const blob = await kokoroSpeak(sectionText, kokoroVoiceRef.current);
-            if (cancelledRef.current) break;
+            const sentences = splitIntoSentences(sectionText);
             setState(prev => ({ ...prev, usingServerTTS: false }));
-            await playBlobAudio(blob);
-            kokoroDone = true;
+            for (const sentence of sentences) {
+              if (cancelledRef.current) break;
+              const blob = await kokoroSpeakWithTimeout(sentence, kokoroVoiceRef.current);
+              if (cancelledRef.current) break;
+              await playBlobAudio(blob);
+            }
+            kokoroDone = !cancelledRef.current;
           } catch (kokoroErr) {
             if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
             console.warn("[TTS sections] Kokoro failed for section", i, ":", kokoroErr);
@@ -1230,7 +1350,7 @@ function useTTSImpl(): UseTTSReturn {
         totalSections: 0,
       }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeak, playBlobAudio, fetchQwenCloudTTS]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, fetchQwenCloudTTS]);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
@@ -1238,6 +1358,11 @@ function useTTSImpl(): UseTTSReturn {
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current = null;
+    }
+    // Stop any in-progress Web Audio API playback.
+    if (audioSrcNodeRef.current) {
+      try { audioSrcNodeRef.current.stop(); } catch { /* ignore — already stopped */ }
+      audioSrcNodeRef.current = null;
     }
     setState(prev => ({
       ...prev,
