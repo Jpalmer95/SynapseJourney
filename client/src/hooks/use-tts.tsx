@@ -571,6 +571,7 @@ function useTTSImpl(): UseTTSReturn {
         reject: (err) => {
           workerReadyPromiseRef.current = null;
           setKokoroLoading(false);
+          setKokoroDownloadPercent(null);
           reject(err);
         },
       });

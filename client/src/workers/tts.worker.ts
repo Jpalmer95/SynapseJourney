@@ -92,7 +92,13 @@ function makeProgressCallback(phase: { current: "download" | "compile" }) {
     const file = info.file ?? info.name ?? "";
     const pct  = typeof info.progress === "number" ? info.progress : null;
 
-    if (status === "progress" && pct !== null) {
+    if (status === "initiate" && file) {
+      // A new file is starting — seed it at 0 so the bar shows "Downloading…" immediately.
+      if (!fileProgress.has(file)) {
+        fileProgress.set(file, 0);
+        broadcast({ id: -1, type: "progress", percent: 0, phase: "download", file });
+      }
+    } else if (status === "progress" && pct !== null) {
       const prev = fileProgress.get(file) ?? 0;
       if (pct > prev) {
         fileProgress.set(file, pct);
