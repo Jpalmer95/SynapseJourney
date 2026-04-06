@@ -65,6 +65,7 @@ interface UseTTSReturn extends TTSState {
   clearHFToken: () => void;
   kokoroReady: boolean;
   kokoroLoading: boolean;
+  kokoroDownloadPercent: number | null;
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
@@ -199,6 +200,7 @@ function useTTSImpl(): UseTTSReturn {
   );
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
+  const [kokoroDownloadPercent, setKokoroDownloadPercent] = useState<number | null>(null);
   const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
   const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
   const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
@@ -471,16 +473,24 @@ function useTTSImpl(): UseTTSReturn {
     const workerUrl = new URL("../workers/tts.worker.ts", import.meta.url);
 
     const onMessage = ({ data }: MessageEvent) => {
-      const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc } = data as {
+      const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc, percent } = data as {
         id: number;
-        type: "ready" | "audio" | "error";
+        type: "ready" | "audio" | "error" | "progress";
         samples?: Float32Array;
         sampleRate?: number;
         message?: string;
         engine?: "webgpu-fp32" | "wasm-q8";
         loadMs?: number;
         fromCache?: boolean;
+        percent?: number;
       };
+
+      // Progress broadcasts (id === -1) are not tied to any pending request.
+      if (type === "progress") {
+        if (percent !== undefined) setKokoroDownloadPercent(percent);
+        return;
+      }
+
       const p = pendingRef.current.get(id);
       if (!p) return;
       pendingRef.current.delete(id);
@@ -489,6 +499,8 @@ function useTTSImpl(): UseTTSReturn {
         if (engine) setKokoroEngine(engine);
         if (lms !== undefined) setKokoroLoadMs(lms);
         if (fc !== undefined) setKokoroFromCache(fc);
+        // Clear download progress now that the model is fully ready.
+        setKokoroDownloadPercent(null);
         p.resolve(undefined);
       } else if (type === "audio") {
         if (samples && sampleRate) {
@@ -510,12 +522,12 @@ function useTTSImpl(): UseTTSReturn {
       workerReadyPromiseRef.current = null;
       setKokoroReady(false);
       setKokoroLoading(false);
+      setKokoroDownloadPercent(null);
     };
 
-    let bridge: WorkerBridge;
+    let bridge: WorkerBridge | null = null;
 
-    let sharedWorkerAvailable = typeof SharedWorker !== "undefined";
-    if (sharedWorkerAvailable) {
+    if (typeof SharedWorker !== "undefined") {
       try {
         // SharedWorker: one model instance shared across all open tabs.
         // Wrapped in try/catch because some browsers declare SharedWorker but
@@ -527,10 +539,10 @@ function useTTSImpl(): UseTTSReturn {
         bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
       } catch (swErr) {
         console.debug("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
-        sharedWorkerAvailable = false;
       }
     }
-    if (!sharedWorkerAvailable) {
+
+    if (!bridge) {
       // DedicatedWorker fallback for older browsers / engines without module SharedWorker support.
       const w = new Worker(workerUrl, { type: "module" });
       w.onmessage = onMessage;
@@ -1285,6 +1297,7 @@ function useTTSImpl(): UseTTSReturn {
     clearHFToken,
     kokoroReady,
     kokoroLoading,
+    kokoroDownloadPercent,
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,

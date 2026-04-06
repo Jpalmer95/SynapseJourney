@@ -12,10 +12,12 @@ type KokoroVoice = NonNullable<GenerateOptions["voice"]>;
 export type KokoroEngine = "webgpu-fp32" | "wasm-q8";
 
 // ── Typed message payloads ───────────────────────────────────────────────────
-type ReadyPayload   = { id: number; type: "ready";  engine: KokoroEngine; loadMs: number; fromCache: boolean };
-type AudioPayload   = { id: number; type: "audio";  samples: Float32Array; sampleRate: number };
-type ErrorPayload   = { id: number; type: "error";  message: string };
-type WorkerPayload  = ReadyPayload | AudioPayload | ErrorPayload;
+type ReadyPayload    = { id: number; type: "ready";    engine: KokoroEngine; loadMs: number; fromCache: boolean };
+type AudioPayload    = { id: number; type: "audio";    samples: Float32Array; sampleRate: number };
+type ErrorPayload    = { id: number; type: "error";    message: string };
+// Progress payload has id=-1 (broadcast, not tied to a specific request).
+type ProgressPayload = { id: -1;    type: "progress"; percent: number; phase: "download" | "compile"; file?: string };
+type WorkerPayload   = ReadyPayload | AudioPayload | ErrorPayload | ProgressPayload;
 
 // Both MessagePort and DedicatedWorkerGlobalScope expose postMessage with this signature.
 type Responder = {
@@ -31,6 +33,23 @@ let fromCache = false;
 let loadingPromise: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
 let isReady = false;
 
+// ── Connected ports registry (SharedWorker only) ──────────────────────────────
+// All ports that have ever connected are tracked here so progress broadcasts
+// reach every open tab simultaneously.
+const connectedPorts = new Set<MessagePort>();
+
+/** Broadcast a progress event to all connected ports (SharedWorker) or self (DedicatedWorker). */
+function broadcast(payload: ProgressPayload) {
+  if (connectedPorts.size > 0) {
+    connectedPorts.forEach((port) => {
+      try { port.postMessage(payload); } catch { /* port may be closed */ }
+    });
+  } else {
+    // DedicatedWorker — post directly to the worker global scope.
+    (self as DedicatedWorkerGlobalScope).postMessage(payload);
+  }
+}
+
 async function checkFromCache(): Promise<boolean> {
   try {
     const cache = await caches.open("transformers-cache");
@@ -44,6 +63,56 @@ async function checkFromCache(): Promise<boolean> {
   }
 }
 
+// Minimal subset of @huggingface/transformers ProgressInfo we actually use.
+type HFProgressInfo = {
+  status: "initiate" | "download" | "progress" | "done" | "ready" | string;
+  file?: string;
+  name?: string;
+  progress?: number;
+  loaded?: number;
+  total?: number;
+};
+
+/**
+ * Build a progress_callback for from_pretrained.
+ *
+ * The HF transformers library fires callbacks with:
+ *   { status: "initiate" | "download" | "progress" | "done" | "ready", file?, progress? }
+ *
+ * Strategy: track the highest `progress` value seen across all files.
+ * The ONNX model file (~82 MB) dominates, so this closely tracks real download progress.
+ * After all files are done we emit a "compile" phase at 100% while the model initialises.
+ */
+function makeProgressCallback(phase: { current: "download" | "compile" }) {
+  // per-file max progress seen so far
+  const fileProgress = new Map<string, number>();
+
+  return (info: HFProgressInfo) => {
+    const { status } = info;
+    const file = info.file ?? info.name ?? "";
+    const pct  = typeof info.progress === "number" ? info.progress : null;
+
+    if (status === "progress" && pct !== null) {
+      const prev = fileProgress.get(file) ?? 0;
+      if (pct > prev) {
+        fileProgress.set(file, pct);
+        // Compute overall progress: average across all files we've seen.
+        const values = Array.from(fileProgress.values());
+        const avg = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+        // Keep it in [0, 99] during download — 100 is reserved for the compile/ready phase.
+        const clamped = Math.min(avg, 99);
+        broadcast({ id: -1, type: "progress", percent: clamped, phase: "download", file });
+      }
+    } else if (status === "done" && file) {
+      fileProgress.set(file, 100);
+    } else if (status === "ready") {
+      // Model is compiled and ready — emit the final compile phase at 100%.
+      phase.current = "compile";
+      broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
+    }
+  };
+}
+
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
   if (loadingPromise) return loadingPromise;
@@ -54,11 +123,15 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
 
     const t0 = performance.now();
 
+    // Phase tracker shared between the callback and the outer load logic.
+    const phase: { current: "download" | "compile" } = { current: "download" };
+
     try {
       console.log("[TTS Worker] Trying WebGPU fp32…");
       kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: "fp32",
         device: "webgpu",
+        progress_callback: makeProgressCallback(phase),
       });
       engineId = "webgpu-fp32";
       console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
@@ -68,9 +141,12 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
         webgpuErr instanceof Error ? webgpuErr.message : String(webgpuErr),
       );
       console.log("[TTS Worker] Falling back to WASM q8…");
+      // Reset phase for the retry attempt.
+      phase.current = "download";
       kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: "q8",
         device: "wasm",
+        progress_callback: makeProgressCallback(phase),
       });
       engineId = "wasm-q8";
       console.log("[TTS Worker] ✓ WASM q8 loaded");
@@ -151,6 +227,7 @@ if (isSharedWorker) {
   // SharedWorker mode: all tabs share this single worker and its model instance.
   (self as unknown as SharedWorkerGlobalScope).onconnect = (e: MessageEvent) => {
     const port = e.ports[0];
+    connectedPorts.add(port);
     port.onmessage = ({ data }: MessageEvent) => {
       const { id, type, text, voice } = data as {
         id: number;

@@ -61,6 +61,7 @@ export function TTSButton({
     clearHFToken,
     hfWarming,
     kokoroLoading,
+    kokoroDownloadPercent,
     kokoroReady,
     kokoroEngine,
     kokoroLoadMs,
@@ -221,11 +222,19 @@ export function TTSButton({
   };
 
   const getTooltipText = () => {
-    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") return "Downloading Kokoro model — first time only…";
+    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") {
+      return kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+        ? `Downloading Kokoro model… ${kokoroDownloadPercent}%`
+        : "Compiling Kokoro model…";
+    }
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
     if (serverVoicePreset === "kokoro") {
-      if (kokoroLoading) return "Downloading Kokoro model — first time only…";
+      if (kokoroLoading) {
+        return kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+          ? `Downloading Kokoro model… ${kokoroDownloadPercent}%`
+          : "Compiling Kokoro model…";
+      }
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
     }
@@ -323,9 +332,29 @@ export function TTSButton({
             {getTierBadge(activeTier)}
           </div>
           {kokoroLoading && (
-            <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
-              <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…
-            </p>
+            <div className="mt-1.5 space-y-0.5">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
+                  {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+                    ? "Downloading model…"
+                    : "Compiling model…"}
+                </span>
+                {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100 && (
+                  <span className="font-mono">{kokoroDownloadPercent}%</span>
+                )}
+              </div>
+              <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100 ? (
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                    style={{ width: `${kokoroDownloadPercent}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
+                )}
+              </div>
+            </div>
           )}
           {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
@@ -678,7 +707,13 @@ export function TTSButton({
             )}
             <span className="text-xs font-medium text-foreground truncate">
               {isLoading
-                ? (hfWarming ? "Warming up cloud engine…" : kokoroLoading ? "Downloading Kokoro model — first time only…" : "Generating audio…")
+                ? (hfWarming
+                    ? "Warming up cloud engine…"
+                    : kokoroLoading
+                      ? (kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+                          ? `Downloading Kokoro… ${kokoroDownloadPercent}%`
+                          : "Compiling Kokoro model…")
+                      : "Generating audio…")
                 : currentLabel ?? "Listening…"}
             </span>
             {getTierBadge(activeTier, true)}
@@ -725,9 +760,29 @@ export function TTSButton({
   // Default mode
   const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
     kokoroLoading ? (
-      <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-loading">
-        <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />Loading model…
-      </p>
+      <div className="space-y-0.5" data-testid="status-kokoro-loading">
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
+            {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+              ? "Downloading model…"
+              : "Compiling model…"}
+          </span>
+          {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100 && (
+            <span className="font-mono">{kokoroDownloadPercent}%</span>
+          )}
+        </div>
+        <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+          {kokoroDownloadPercent !== null && kokoroDownloadPercent < 100 ? (
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+              style={{ width: `${kokoroDownloadPercent}%` }}
+            />
+          ) : (
+            <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
+          )}
+        </div>
+      </div>
     ) : !kokoroReady ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-idle">
         <Zap className="h-2.5 w-2.5 text-emerald-500 shrink-0" />Loads on first Listen
@@ -757,7 +812,13 @@ export function TTSButton({
               {getIcon()}
               {showLabel && (
                 <span className="ml-2 flex items-center gap-1.5">
-                  {isLoading ? (kokoroLoading ? "Loading model…" : "Generating…") : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
+                  {isLoading
+                    ? (kokoroLoading
+                        ? (kokoroDownloadPercent !== null && kokoroDownloadPercent < 100
+                            ? `Downloading… ${kokoroDownloadPercent}%`
+                            : "Compiling…")
+                        : "Generating…")
+                    : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
                   {!isLoading && !isSpeaking && getTierBadge(activeTier, true)}
                 </span>
               )}
