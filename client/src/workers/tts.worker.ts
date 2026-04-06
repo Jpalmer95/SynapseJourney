@@ -111,8 +111,9 @@ function makeProgressCallback(phase: { current: "download" | "compile" }) {
       }
     } else if (status === "done" && file) {
       fileProgress.set(file, 100);
-    } else if (status === "ready") {
-      // Model is compiled and ready — emit the final compile phase at 100%.
+      // A file finished downloading — emit compile/load phase signal.
+      // This fires between the last download "done" and the model being ready,
+      // covering the GPU compilation or WASM instantiation interval.
       phase.current = "compile";
       broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
     }
