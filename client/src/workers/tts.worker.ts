@@ -27,7 +27,7 @@ type Responder = {
 
 // ── Shared model state (module scope — one instance shared across all ports) ──
 let kokoroTTS: KokoroTTS | null = null;
-let engineId: KokoroEngine = "wasm-q8";
+let engineId: KokoroEngine = "webgpu-fp32";
 let loadMs = 0;
 let fromCache = false;
 let loadingPromise: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
@@ -54,11 +54,9 @@ async function checkFromCache(): Promise<boolean> {
   try {
     const cache = await caches.open("transformers-cache");
     const keys = await cache.keys();
-    // Check specifically for the q8 ONNX artifact — the model this worker loads.
-    // Using "model_q8" avoids a false positive from a stale / partial fp32 entry
-    // that may have been left behind by a previous browser crash.
+    // Check for the primary ONNX model artifact — specific enough to avoid false positives.
     return keys.some(
-      (req) => req.url.includes("Kokoro-82M-v1.0-ONNX") && req.url.includes("model_q8"),
+      (req) => req.url.includes("Kokoro-82M-v1.0-ONNX") && req.url.includes("/onnx/model_"),
     );
   } catch {
     return false;
@@ -83,17 +81,11 @@ type HFProgressInfo = {
  *
  * Strategy: track the highest `progress` value seen across all files.
  * The ONNX model file (~82 MB) dominates, so this closely tracks real download progress.
- *
- * FIX: only transition to "compile" phase once ALL tracked files have reported "done".
- * Previously the phase flipped on the FIRST "done" (e.g. config.json), while the
- * large ONNX file was still downloading — causing the UI to show "Compiling…" for the
- * entire 2+ minute download on mobile.
+ * After all files are done we emit a "compile" phase at 100% while the model initialises.
  */
-function makeProgressCallback() {
-  // per-file max progress seen so far (0 = initiate seeded, 100 = done)
+function makeProgressCallback(phase: { current: "download" | "compile" }) {
+  // per-file max progress seen so far
   const fileProgress = new Map<string, number>();
-  // track files that are fully done so we know when ALL are done
-  const fileDone = new Set<string>();
 
   return (info: HFProgressInfo) => {
     const { status } = info;
@@ -106,7 +98,7 @@ function makeProgressCallback() {
         fileProgress.set(file, 0);
         broadcast({ id: -1, type: "progress", percent: 0, phase: "download", file });
       }
-    } else if (status === "progress" && pct !== null && file) {
+    } else if (status === "progress" && pct !== null) {
       const prev = fileProgress.get(file) ?? 0;
       if (pct > prev) {
         fileProgress.set(file, pct);
@@ -119,38 +111,18 @@ function makeProgressCallback() {
       }
     } else if (status === "done" && file) {
       fileProgress.set(file, 100);
-      fileDone.add(file);
-
-      // Only switch to "compile" phase when EVERY file we've seen is done.
-      // This prevents the phase flipping on config.json while the 82MB ONNX
-      // model is still downloading (the root cause of the "stuck compiling" bug).
-      const allDone = fileProgress.size > 0 && fileDone.size === fileProgress.size;
-      if (allDone) {
-        broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
-      } else {
-        // Recompute overall average (this file just hit 100) and keep download phase.
-        const values = Array.from(fileProgress.values());
-        const avg = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
-        const clamped = Math.min(avg, 99);
-        broadcast({ id: -1, type: "progress", percent: clamped, phase: "download", file });
-      }
+      // A file finished downloading — emit compile/load phase signal.
+      // This fires between the last download "done" and the model being ready,
+      // covering the GPU compilation or WASM instantiation interval.
+      phase.current = "compile";
+      broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
     }
   };
 }
 
-// Timeout (ms) after which a loadModel attempt is considered hung.
-const LOAD_TIMEOUT_MS = 90_000; // 90 seconds
-
-// Timeout-raced version of loadingPromise shared across all concurrent callers.
-// Stored separately so that re-entrant calls during an in-progress load also get
-// bounded wait semantics (not just the first initiating call).
-let loadingWithTimeout: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
-
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
-  // Return the timeout-raced shared promise so ALL concurrent callers get the same
-  // bounded 90 s deadline (not just the first one that started the load).
-  if (loadingWithTimeout) return loadingWithTimeout;
+  if (loadingPromise) return loadingPromise;
 
   loadingPromise = (async () => {
     const cachedBefore = await checkFromCache();
@@ -158,18 +130,34 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
 
     const t0 = performance.now();
 
-    // ── WASM q8 (primary engine) ─────────────────────────────────────────────
-    // WebGPU fp32 was tried first previously but the fp32 model is ~350 MB and
-    // causes an OOM page crash on mobile during GPU compilation. WASM q8 is ~80 MB,
-    // needs no GPU memory, and produces indistinguishable TTS audio quality.
-    console.log("[TTS Worker] Loading WASM q8…");
-    kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-      dtype: "q8",
-      device: "wasm",
-      progress_callback: makeProgressCallback(),
-    });
-    engineId = "wasm-q8";
-    console.log("[TTS Worker] ✓ WASM q8 loaded");
+    // Phase tracker shared between the callback and the outer load logic.
+    const phase: { current: "download" | "compile" } = { current: "download" };
+
+    try {
+      console.log("[TTS Worker] Trying WebGPU fp32…");
+      kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+        dtype: "fp32",
+        device: "webgpu",
+        progress_callback: makeProgressCallback(phase),
+      });
+      engineId = "webgpu-fp32";
+      console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
+    } catch (webgpuErr) {
+      console.warn(
+        "[TTS Worker] WebGPU fp32 failed:",
+        webgpuErr instanceof Error ? webgpuErr.message : String(webgpuErr),
+      );
+      console.log("[TTS Worker] Falling back to WASM q8…");
+      // Reset phase for the retry attempt.
+      phase.current = "download";
+      kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+        dtype: "q8",
+        device: "wasm",
+        progress_callback: makeProgressCallback(phase),
+      });
+      engineId = "wasm-q8";
+      console.log("[TTS Worker] ✓ WASM q8 loaded");
+    }
 
     loadMs = Math.round(performance.now() - t0);
     fromCache = cachedBefore;
@@ -187,34 +175,7 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     throw err;
   });
 
-  // ── Timeout race ────────────────────────────────────────────────────────────
-  // If the WASM ONNX runtime hangs (e.g. stall on very low-memory mobile)
-  // the UI would be stuck indefinitely. Race with a timeout so the hook receives
-  // an error and can clear its loading state.
-  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
-  const timeoutPromise = new Promise<never>((_, reject) => {
-    timeoutHandle = setTimeout(() => {
-      loadingPromise = null;
-      loadingWithTimeout = null;
-      reject(new Error("Kokoro model load timed out — please refresh and try again"));
-    }, LOAD_TIMEOUT_MS);
-  });
-
-  loadingWithTimeout = Promise.race([loadingPromise, timeoutPromise]).then(
-    (result) => {
-      // Clear the timeout timer on success to avoid late side-effects.
-      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-      loadingWithTimeout = null;
-      return result;
-    },
-    (err) => {
-      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
-      loadingWithTimeout = null;
-      throw err;
-    },
-  );
-
-  return loadingWithTimeout;
+  return loadingPromise;
 }
 
 async function handleMessage(
