@@ -133,7 +133,7 @@ export function TTSButton({
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
-    enabled: !!unitId && serverVoicePreset !== "browser",
+    enabled: !!unitId && effectivePreset !== "browser",
     staleTime: 30000,
     retry: false,
   });
@@ -299,7 +299,7 @@ export function TTSButton({
             <Button
               variant="ghost"
               size="icon"
-              className={cn(serverVoicePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
+              className={cn(effectivePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
               data-testid="button-tts-settings"
             >
               <Settings2 className="h-4 w-4" />
