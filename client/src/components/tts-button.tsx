@@ -84,7 +84,10 @@ export function TTSButton({
   const warmShownRef = useRef(false);
   const kokoroWarmShownRef = useRef(false);
 
-  const activeTier = getVoiceTier(serverVoicePreset);
+  // On iOS, Kokoro is unavailable — treat it as "browser" for all display/logic purposes
+  // so the UI doesn't show Kokoro as active when audio actually routes through server TTS.
+  const effectivePreset = isIOS() && serverVoicePreset === "kokoro" ? "browser" : serverVoicePreset;
+  const activeTier = getVoiceTier(effectivePreset);
 
   // Cold-start toast: fires after 3 s when loading a cloud voice.
   useEffect(() => {
@@ -218,11 +221,10 @@ export function TTSButton({
   };
 
   const getTooltipText = () => {
-    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro" && !onIOS) return "Downloading Kokoro model — first time only…";
+    if (isLoading && kokoroLoading && effectivePreset === "kokoro") return "Downloading Kokoro model — first time only…";
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
-    if (serverVoicePreset === "kokoro") {
-      if (onIOS) return "Read aloud · Server TTS";
+    if (effectivePreset === "kokoro") {
       if (kokoroLoading) return "Downloading Kokoro model — first time only…";
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
@@ -319,12 +321,12 @@ export function TTSButton({
               <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…
             </p>
           )}
-          {!onIOS && !kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
+          {!onIOS && !kokoroLoading && effectivePreset === "kokoro" && !kokoroReady && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
           )}
-          {!onIOS && kokoroReady && serverVoicePreset === "kokoro" && (
+          {!onIOS && kokoroReady && effectivePreset === "kokoro" && (
             <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
               <Check className="h-2.5 w-2.5" />Kokoro ready · instant playback
             </p>
@@ -341,12 +343,12 @@ export function TTSButton({
               sublabel={onIOS ? "Not available on iOS" : "Local · offline, no token needed"}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
-              active={serverVoicePreset === "kokoro"}
+              active={effectivePreset === "kokoro"}
               disabled={onIOS}
             />
 
             {/* Kokoro voice sub-grid */}
-            {serverVoicePreset === "kokoro" && (
+            {effectivePreset === "kokoro" && (
               <div className="ml-3 pl-3 border-l border-border">
                 <p className="text-[10px] text-muted-foreground mb-1.5">Choose voice</p>
                 <div className="grid grid-cols-3 gap-1">
@@ -383,7 +385,7 @@ export function TTSButton({
               label="Browser TTS"
               sublabel="Device speech engine · no AI"
               icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
-              active={serverVoicePreset === "browser"}
+              active={effectivePreset === "browser"}
             />
 
             {/* ── Qwen Cloud Engine Row ── */}
@@ -393,11 +395,11 @@ export function TTSButton({
               sublabel="HF ZeroGPU · requires token"
               icon={<Cloud className="h-4 w-4 text-blue-500" />}
               badge={getTierBadge("cloud", true)}
-              active={serverVoicePreset === "qwen" || serverVoicePreset === "custom"}
+              active={effectivePreset === "qwen" || effectivePreset === "custom"}
             />
 
             {/* Qwen sub-section */}
-            {(serverVoicePreset === "qwen" || serverVoicePreset === "custom") && (
+            {(effectivePreset === "qwen" || effectivePreset === "custom") && (
               <div className="ml-3 pl-3 border-l border-border space-y-2.5">
                 {/* Qwen voice character cards */}
                 <div>
@@ -716,7 +718,7 @@ export function TTSButton({
   }
 
   // Default mode
-  const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && !onIOS && (
+  const kokoroStatusLine = effectivePreset === "kokoro" && !isSpeaking && !onIOS && (
     kokoroLoading ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-loading">
         <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />Loading model…
