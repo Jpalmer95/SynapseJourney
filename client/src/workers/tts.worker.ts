@@ -86,7 +86,11 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     );
 
     return { engine: engineId, loadMs, fromCache };
-  })();
+  })().catch((err) => {
+    // Reset so future init calls can retry after a recoverable failure.
+    loadingPromise = null;
+    throw err;
+  });
 
   return loadingPromise;
 }
