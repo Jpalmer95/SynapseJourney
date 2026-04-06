@@ -11,6 +11,18 @@ type KokoroVoice = NonNullable<GenerateOptions["voice"]>;
 
 export type KokoroEngine = "webgpu-fp32" | "wasm-q8";
 
+// ── Typed message payloads ───────────────────────────────────────────────────
+type ReadyPayload   = { id: number; type: "ready";  engine: KokoroEngine; loadMs: number; fromCache: boolean };
+type AudioPayload   = { id: number; type: "audio";  samples: Float32Array; sampleRate: number };
+type ErrorPayload   = { id: number; type: "error";  message: string };
+type WorkerPayload  = ReadyPayload | AudioPayload | ErrorPayload;
+
+// Both MessagePort and DedicatedWorkerGlobalScope expose postMessage with this signature.
+type Responder = {
+  postMessage(data: WorkerPayload): void;
+  postMessage(data: WorkerPayload, transfer: Transferable[]): void;
+};
+
 // ── Shared model state (module scope — one instance shared across all ports) ──
 let kokoroTTS: KokoroTTS | null = null;
 let engineId: KokoroEngine = "webgpu-fp32";
@@ -23,7 +35,10 @@ async function checkFromCache(): Promise<boolean> {
   try {
     const cache = await caches.open("transformers-cache");
     const keys = await cache.keys();
-    return keys.some((req) => req.url.includes("Kokoro-82M"));
+    // Check for the primary ONNX model artifact — specific enough to avoid false positives.
+    return keys.some(
+      (req) => req.url.includes("Kokoro-82M-v1.0-ONNX") && req.url.includes("/onnx/model_"),
+    );
   } catch {
     return false;
   }
@@ -65,8 +80,9 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     fromCache = cachedBefore;
     isReady = true;
 
+    const loadSecs = (loadMs / 1000).toFixed(1);
     console.log(
-      `[TTS Worker] Ready · engine=${engineId} · source=${fromCache ? "cache" : "download"} · ${loadMs}ms`,
+      `[TTS Worker] Ready · engine=${engineId} · source=${fromCache ? "cache" : "download"} · ${loadSecs}s`,
     );
 
     return { engine: engineId, loadMs, fromCache };
@@ -74,10 +90,6 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
 
   return loadingPromise;
 }
-
-// Minimal interface satisfied by both MessagePort and DedicatedWorkerGlobalScope
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Responder = { postMessage(data: any, transfer?: Transferable[]): void };
 
 async function handleMessage(
   respond: Responder,
@@ -126,7 +138,12 @@ async function handleMessage(
 }
 
 // ── Route to SharedWorker or DedicatedWorker based on context ────────────
-if ("SharedWorkerGlobalScope" in globalThis) {
+// Use instanceof for reliable detection: "SharedWorkerGlobalScope" in globalThis can
+// be true in some environments even when running as a DedicatedWorker.
+const isSharedWorker =
+  typeof SharedWorkerGlobalScope !== "undefined" && self instanceof SharedWorkerGlobalScope;
+
+if (isSharedWorker) {
   // SharedWorker mode: all tabs share this single worker and its model instance.
   (self as unknown as SharedWorkerGlobalScope).onconnect = (e: MessageEvent) => {
     const port = e.ports[0];
