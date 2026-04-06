@@ -66,6 +66,7 @@ interface UseTTSReturn extends TTSState {
   kokoroReady: boolean;
   kokoroLoading: boolean;
   kokoroDownloadPercent: number | null;
+  kokoroDownloadPhase: "download" | "compile" | null;
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
@@ -201,6 +202,7 @@ function useTTSImpl(): UseTTSReturn {
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
   const [kokoroDownloadPercent, setKokoroDownloadPercent] = useState<number | null>(null);
+  const [kokoroDownloadPhase, setKokoroDownloadPhase] = useState<"download" | "compile" | null>(null);
   const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
   const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
   const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
@@ -488,6 +490,15 @@ function useTTSImpl(): UseTTSReturn {
       // Progress broadcasts (id === -1) are not tied to any pending request.
       if (type === "progress") {
         if (percent !== undefined) setKokoroDownloadPercent(percent);
+        if ((data as { phase?: string }).phase) {
+          setKokoroDownloadPhase((data as { phase: "download" | "compile" }).phase);
+        }
+        // Passive tabs (not the initiating tab) may receive progress broadcasts
+        // before they call ensureKokoroInit. Set loading=true so the progress UI
+        // renders immediately on those tabs too.
+        if (!workerReadyRef.current) {
+          setKokoroLoading(true);
+        }
         return;
       }
 
@@ -501,6 +512,7 @@ function useTTSImpl(): UseTTSReturn {
         if (fc !== undefined) setKokoroFromCache(fc);
         // Clear download progress now that the model is fully ready.
         setKokoroDownloadPercent(null);
+        setKokoroDownloadPhase(null);
         p.resolve(undefined);
       } else if (type === "audio") {
         if (samples && sampleRate) {
@@ -523,6 +535,7 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroReady(false);
       setKokoroLoading(false);
       setKokoroDownloadPercent(null);
+      setKokoroDownloadPhase(null);
     };
 
     let bridge: WorkerBridge | null = null;
@@ -554,6 +567,17 @@ function useTTSImpl(): UseTTSReturn {
     return bridge;
   }, []);
 
+  // Early Kokoro worker connection: when the selected preset is Kokoro and the
+  // worker hasn't been created yet, eagerly connect it so the SharedWorker
+  // registers this tab and can broadcast progress events to it even before
+  // the user presses Listen.
+  useEffect(() => {
+    if (serverVoicePreset === "kokoro" && !workerRef.current && !kokoroReady) {
+      getWorker();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [serverVoicePreset, kokoroReady]);
+
   const ensureKokoroInit = useCallback(async (): Promise<void> => {
     if (workerReadyRef.current) return;
     if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
@@ -572,6 +596,7 @@ function useTTSImpl(): UseTTSReturn {
           workerReadyPromiseRef.current = null;
           setKokoroLoading(false);
           setKokoroDownloadPercent(null);
+          setKokoroDownloadPhase(null);
           reject(err);
         },
       });
@@ -1299,6 +1324,7 @@ function useTTSImpl(): UseTTSReturn {
     kokoroReady,
     kokoroLoading,
     kokoroDownloadPercent,
+    kokoroDownloadPhase,
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,
