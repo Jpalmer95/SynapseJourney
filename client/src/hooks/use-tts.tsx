@@ -514,15 +514,24 @@ function useTTSImpl(): UseTTSReturn {
 
     let bridge: WorkerBridge;
 
-    if (typeof SharedWorker !== "undefined") {
-      // SharedWorker: one model instance shared across all open tabs.
-      const sw = new SharedWorker(workerUrl, { type: "module" });
-      sw.port.onmessage = onMessage;
-      sw.onerror = onError;
-      sw.port.start();
-      bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
-    } else {
-      // DedicatedWorker fallback for older browsers.
+    let sharedWorkerAvailable = typeof SharedWorker !== "undefined";
+    if (sharedWorkerAvailable) {
+      try {
+        // SharedWorker: one model instance shared across all open tabs.
+        // Wrapped in try/catch because some browsers declare SharedWorker but
+        // do not support module workers, throwing on construction.
+        const sw = new SharedWorker(workerUrl, { type: "module" });
+        sw.port.onmessage = onMessage;
+        sw.onerror = onError;
+        sw.port.start();
+        bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
+      } catch (swErr) {
+        console.warn("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
+        sharedWorkerAvailable = false;
+      }
+    }
+    if (!sharedWorkerAvailable) {
+      // DedicatedWorker fallback for older browsers / engines without module SharedWorker support.
       const w = new Worker(workerUrl, { type: "module" });
       w.onmessage = onMessage;
       w.onerror = onError;
