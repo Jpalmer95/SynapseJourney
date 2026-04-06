@@ -137,7 +137,7 @@ function makeProgressCallback() {
 }
 
 // Timeout (ms) after which a loadModel attempt is considered hung.
-const LOAD_TIMEOUT_MS = 120_000; // 2 minutes
+const LOAD_TIMEOUT_MS = 90_000; // 90 seconds
 
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
