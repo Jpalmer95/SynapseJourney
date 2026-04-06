@@ -210,6 +210,7 @@ function useTTSImpl(): UseTTSReturn {
   const hfToastShownRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioCtxRef = useRef<AudioContext | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
@@ -1245,14 +1246,26 @@ function useTTSImpl(): UseTTSReturn {
   // isSpeaking stays true so the async loop continues to wait on the audio element.
   // isPaused flag is set true so UI knows we're in a paused-but-active state.
   const pause = useCallback(() => {
-    if (audioRef.current) audioRef.current.pause();
-    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.pause(); } catch { /* ignore */ } }
+    if (audioRef.current) {
+      audioRef.current.pause();
+    } else if (audioCtxRef.current && audioCtxRef.current.state === "running") {
+      // Suspend the Web Audio context — pauses AudioBufferSourceNode playback.
+      audioCtxRef.current.suspend().catch(() => {});
+    } else if (BROWSER_SPEECH_SUPPORTED) {
+      try { window.speechSynthesis.pause(); } catch { /* ignore */ }
+    }
     setState(prev => ({ ...prev, isPaused: true }));
   }, []);
 
   const resume = useCallback(() => {
-    if (audioRef.current) audioRef.current.play().catch(console.error);
-    else if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.resume(); } catch { /* ignore */ } }
+    if (audioRef.current) {
+      audioRef.current.play().catch(console.error);
+    } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
+      // Resume the Web Audio context to continue AudioBufferSourceNode playback.
+      audioCtxRef.current.resume().catch(console.error);
+    } else if (BROWSER_SPEECH_SUPPORTED) {
+      try { window.speechSynthesis.resume(); } catch { /* ignore */ }
+    }
     setState(prev => ({ ...prev, isPaused: false }));
   }, []);
 

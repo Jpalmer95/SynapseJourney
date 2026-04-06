@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink, X } from "lucide-react";
+import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
