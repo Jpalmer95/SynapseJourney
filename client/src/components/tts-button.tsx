@@ -346,7 +346,7 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel="Local · offline, no token needed"
+              sublabel={kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local · offline, no token needed"}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
