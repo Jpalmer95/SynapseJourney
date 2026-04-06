@@ -3,7 +3,6 @@ import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE, QWEN_DEFAULT_VOICE, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
 import { useToast } from "@/hooks/use-toast";
-import { isIOS } from "@/lib/utils";
 
 // localStorage keys used by the TTS engine
 const HF_TOKEN_KEY = "hf_token";
@@ -66,6 +65,9 @@ interface UseTTSReturn extends TTSState {
   clearHFToken: () => void;
   kokoroReady: boolean;
   kokoroLoading: boolean;
+  kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
+  kokoroLoadMs: number | null;
+  kokoroFromCache: boolean | null;
   hfWarming: boolean;
   kokoroVoice: string;
   setKokoroVoice: (voiceId: string) => void;
@@ -197,6 +199,9 @@ function useTTSImpl(): UseTTSReturn {
   );
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
+  const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
+  const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
+  const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
@@ -216,8 +221,9 @@ function useTTSImpl(): UseTTSReturn {
   // always read the current engine even when called immediately after switching.
   const serverVoicePresetRef = useRef<string>("browser");
 
-  // Kokoro worker refs
-  const workerRef = useRef<Worker | null>(null);
+  // Kokoro worker bridge (SharedWorker or regular Worker — same postMessage interface)
+  type WorkerBridge = { postMessage: (data: unknown) => void };
+  const workerRef = useRef<WorkerBridge | null>(null);
   const pendingRef = useRef<Map<number, { resolve: (v: Blob | undefined) => void; reject: (e: Error) => void }>>(new Map());
   const msgIdRef = useRef(0);
   const workerReadyRef = useRef(false);
@@ -457,26 +463,32 @@ function useTTSImpl(): UseTTSReturn {
     return new Blob([buf], { type: "audio/wav" });
   }
 
-  // ── Kokoro local worker ──────────────────────────────────────────────────
+  // ── Kokoro worker bridge (SharedWorker preferred, DedicatedWorker fallback) ──
 
-  const getWorker = useCallback((): Worker => {
+  const getWorker = useCallback((): WorkerBridge => {
     if (workerRef.current) return workerRef.current;
 
-    const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" });
+    const workerUrl = new URL("../workers/tts.worker.ts", import.meta.url);
 
-    w.onmessage = ({ data }: MessageEvent) => {
-      const { id, type, samples, sampleRate, message } = data as {
+    const onMessage = ({ data }: MessageEvent) => {
+      const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc } = data as {
         id: number;
         type: "ready" | "audio" | "error";
         samples?: Float32Array;
         sampleRate?: number;
         message?: string;
+        engine?: "webgpu-fp32" | "wasm-q8";
+        loadMs?: number;
+        fromCache?: boolean;
       };
       const p = pendingRef.current.get(id);
       if (!p) return;
       pendingRef.current.delete(id);
 
       if (type === "ready") {
+        if (engine) setKokoroEngine(engine);
+        if (lms !== undefined) setKokoroLoadMs(lms);
+        if (fc !== undefined) setKokoroFromCache(fc);
         p.resolve(undefined);
       } else if (type === "audio") {
         if (samples && sampleRate) {
@@ -491,7 +503,7 @@ function useTTSImpl(): UseTTSReturn {
       }
     };
 
-    w.onerror = () => {
+    const onError = () => {
       Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error("Worker crashed")));
       pendingRef.current.clear();
       workerReadyRef.current = false;
@@ -500,8 +512,25 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroLoading(false);
     };
 
-    workerRef.current = w;
-    return w;
+    let bridge: WorkerBridge;
+
+    if (typeof SharedWorker !== "undefined") {
+      // SharedWorker: one model instance shared across all open tabs.
+      const sw = new SharedWorker(workerUrl, { type: "module" });
+      sw.port.onmessage = onMessage;
+      sw.onerror = onError;
+      sw.port.start();
+      bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
+    } else {
+      // DedicatedWorker fallback for older browsers.
+      const w = new Worker(workerUrl, { type: "module" });
+      w.onmessage = onMessage;
+      w.onerror = onError;
+      bridge = { postMessage: (data: unknown) => w.postMessage(data) };
+    }
+
+    workerRef.current = bridge;
+    return bridge;
   }, []);
 
   const ensureKokoroInit = useCallback(async (): Promise<void> => {
@@ -723,9 +752,7 @@ function useTTSImpl(): UseTTSReturn {
 
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      // iOS Safari cannot run the Kokoro ONNX model — loading it in a Web Worker
-      // exhausts the per-tab memory budget and crashes the tab. Skip entirely on iOS.
-      if (voiceTier === "local" && !isIOS()) {
+      if (voiceTier === "local") {
         // Primary path: Kokoro local worker using the saved kokoro sub-voice
         let kokoroDone = false;
         try {
@@ -986,8 +1013,7 @@ function useTTSImpl(): UseTTSReturn {
         const sectionText = sections[i].text;
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        // Skip on iOS: loading the ONNX model in a Web Worker crashes the tab.
-        if (voiceTier === "local" && !isIOS()) {
+        if (voiceTier === "local") {
           // Primary: Kokoro local worker using the saved kokoro sub-voice
           let kokoroDone = false;
           try {
@@ -1250,6 +1276,9 @@ function useTTSImpl(): UseTTSReturn {
     clearHFToken,
     kokoroReady,
     kokoroLoading,
+    kokoroEngine,
+    kokoroLoadMs,
+    kokoroFromCache,
     hfWarming,
     kokoroVoice,
     setKokoroVoice,

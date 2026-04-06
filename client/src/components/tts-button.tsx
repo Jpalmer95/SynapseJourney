@@ -18,7 +18,7 @@ import { Input } from "@/components/ui/input";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { useToast } from "@/hooks/use-toast";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { cn, isIOS } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { KOKORO_VOICES, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
 
 interface TTSButtonProps {
@@ -62,6 +62,9 @@ export function TTSButton({
     hfWarming,
     kokoroLoading,
     kokoroReady,
+    kokoroEngine,
+    kokoroLoadMs,
+    kokoroFromCache,
     kokoroVoice,
     setKokoroVoice,
     qwenVoice,
@@ -84,10 +87,7 @@ export function TTSButton({
   const warmShownRef = useRef(false);
   const kokoroWarmShownRef = useRef(false);
 
-  // On iOS, Kokoro is unavailable — treat it as "browser" for all display/logic purposes
-  // so the UI doesn't show Kokoro as active when audio actually routes through server TTS.
-  const effectivePreset = isIOS() && serverVoicePreset === "kokoro" ? "browser" : serverVoicePreset;
-  const activeTier = getVoiceTier(effectivePreset);
+  const activeTier = getVoiceTier(serverVoicePreset);
 
   // Cold-start toast: fires after 3 s when loading a cloud voice.
   useEffect(() => {
@@ -118,7 +118,7 @@ export function TTSButton({
 
   // Kokoro first-load toast: fires once when the Kokoro model starts downloading (only if Kokoro engine is active).
   useEffect(() => {
-    if (kokoroLoading && serverVoicePreset === "kokoro" && !isIOS() && !kokoroWarmShownRef.current) {
+    if (kokoroLoading && serverVoicePreset === "kokoro" && !kokoroWarmShownRef.current) {
       kokoroWarmShownRef.current = true;
       toast({
         title: "Downloading Kokoro model…",
@@ -133,7 +133,7 @@ export function TTSButton({
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
-    enabled: !!unitId && effectivePreset !== "browser",
+    enabled: !!unitId && serverVoicePreset !== "browser",
     staleTime: 30000,
     retry: false,
   });
@@ -221,10 +221,10 @@ export function TTSButton({
   };
 
   const getTooltipText = () => {
-    if (isLoading && kokoroLoading && effectivePreset === "kokoro") return "Downloading Kokoro model — first time only…";
+    if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") return "Downloading Kokoro model — first time only…";
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
-    if (effectivePreset === "kokoro") {
+    if (serverVoicePreset === "kokoro") {
       if (kokoroLoading) return "Downloading Kokoro model — first time only…";
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
@@ -254,7 +254,13 @@ export function TTSButton({
 
   const isCached = cacheStatus?.cached === true;
 
-  const onIOS = isIOS();
+  // Build a human-readable engine diagnostic string shown under the Kokoro row when ready.
+  const kokoroDiagnostic = (() => {
+    if (!kokoroReady || !kokoroEngine) return null;
+    const engineLabel = kokoroEngine === "webgpu-fp32" ? "WebGPU · fp32" : "WASM · q8";
+    const sourceLabel = kokoroFromCache ? "cached" : kokoroLoadMs !== null ? `${(kokoroLoadMs / 1000).toFixed(1)}s` : null;
+    return sourceLabel ? `${engineLabel} · ${sourceLabel}` : engineLabel;
+  })();
 
   // ── Engine row component ────────────────────────────────────────────────────
   const EngineRow = ({ engineId, label, sublabel, icon, badge, active, disabled }: {
@@ -299,7 +305,7 @@ export function TTSButton({
             <Button
               variant="ghost"
               size="icon"
-              className={cn(effectivePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
+              className={cn(serverVoicePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
               data-testid="button-tts-settings"
             >
               <Settings2 className="h-4 w-4" />
@@ -316,19 +322,19 @@ export function TTSButton({
             <h4 className="text-sm font-semibold">Voice Settings</h4>
             {getTierBadge(activeTier)}
           </div>
-          {!onIOS && kokoroLoading && (
+          {kokoroLoading && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Loader2 className="h-2.5 w-2.5 animate-spin" />Loading Kokoro model…
             </p>
           )}
-          {!onIOS && !kokoroLoading && effectivePreset === "kokoro" && !kokoroReady && (
+          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
           )}
-          {!onIOS && kokoroReady && effectivePreset === "kokoro" && (
+          {kokoroReady && serverVoicePreset === "kokoro" && (
             <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
-              <Check className="h-2.5 w-2.5" />Kokoro ready · instant playback
+              <Check className="h-2.5 w-2.5" />{kokoroDiagnostic ?? "Kokoro ready · instant playback"}
             </p>
           )}
         </div>
@@ -340,15 +346,14 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel={onIOS ? "Not available on iOS" : "Local · offline, no token needed"}
+              sublabel="Local · offline, no token needed"
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
-              active={effectivePreset === "kokoro"}
-              disabled={onIOS}
+              active={serverVoicePreset === "kokoro"}
             />
 
             {/* Kokoro voice sub-grid */}
-            {effectivePreset === "kokoro" && (
+            {serverVoicePreset === "kokoro" && (
               <div className="ml-3 pl-3 border-l border-border">
                 <p className="text-[10px] text-muted-foreground mb-1.5">Choose voice</p>
                 <div className="grid grid-cols-3 gap-1">
@@ -385,7 +390,7 @@ export function TTSButton({
               label="Browser TTS"
               sublabel="Device speech engine · no AI"
               icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
-              active={effectivePreset === "browser"}
+              active={serverVoicePreset === "browser"}
             />
 
             {/* ── Qwen Cloud Engine Row ── */}
@@ -395,11 +400,11 @@ export function TTSButton({
               sublabel="HF ZeroGPU · requires token"
               icon={<Cloud className="h-4 w-4 text-blue-500" />}
               badge={getTierBadge("cloud", true)}
-              active={effectivePreset === "qwen" || effectivePreset === "custom"}
+              active={serverVoicePreset === "qwen" || serverVoicePreset === "custom"}
             />
 
             {/* Qwen sub-section */}
-            {(effectivePreset === "qwen" || effectivePreset === "custom") && (
+            {(serverVoicePreset === "qwen" || serverVoicePreset === "custom") && (
               <div className="ml-3 pl-3 border-l border-border space-y-2.5">
                 {/* Qwen voice character cards */}
                 <div>
@@ -718,7 +723,7 @@ export function TTSButton({
   }
 
   // Default mode
-  const kokoroStatusLine = effectivePreset === "kokoro" && !isSpeaking && !onIOS && (
+  const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
     kokoroLoading ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-loading">
         <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />Loading model…
@@ -729,7 +734,7 @@ export function TTSButton({
       </p>
     ) : (
       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1" data-testid="status-kokoro-ready">
-        <Check className="h-2.5 w-2.5 shrink-0" />Kokoro ready
+        <Check className="h-2.5 w-2.5 shrink-0" />{kokoroDiagnostic ?? "Kokoro ready"}
       </p>
     )
   );
