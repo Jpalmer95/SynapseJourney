@@ -139,9 +139,16 @@ function makeProgressCallback() {
 // Timeout (ms) after which a loadModel attempt is considered hung.
 const LOAD_TIMEOUT_MS = 90_000; // 90 seconds
 
+// Timeout-raced version of loadingPromise shared across all concurrent callers.
+// Stored separately so that re-entrant calls during an in-progress load also get
+// bounded wait semantics (not just the first initiating call).
+let loadingWithTimeout: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
+
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
-  if (loadingPromise) return loadingPromise;
+  // Return the timeout-raced shared promise so ALL concurrent callers get the same
+  // bounded 90 s deadline (not just the first one that started the load).
+  if (loadingWithTimeout) return loadingWithTimeout;
 
   loadingPromise = (async () => {
     const cachedBefore = await checkFromCache();
@@ -199,14 +206,30 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
   // If both WebGPU and WASM hang (e.g. ONNX runtime stall on low-memory mobile)
   // the UI would be stuck indefinitely. Race with a timeout so the hook receives
   // an error and can clear its loading state.
-  const timeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => {
-      loadingPromise = null; // allow retry on next user action
+  let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(() => {
+      loadingPromise = null;
+      loadingWithTimeout = null;
       reject(new Error("Kokoro model load timed out — please refresh and try again"));
-    }, LOAD_TIMEOUT_MS),
+    }, LOAD_TIMEOUT_MS);
+  });
+
+  loadingWithTimeout = Promise.race([loadingPromise, timeoutPromise]).then(
+    (result) => {
+      // Clear the timeout timer on success to avoid late side-effects.
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      loadingWithTimeout = null;
+      return result;
+    },
+    (err) => {
+      if (timeoutHandle !== null) clearTimeout(timeoutHandle);
+      loadingWithTimeout = null;
+      throw err;
+    },
   );
 
-  return Promise.race([loadingPromise, timeoutPromise]);
+  return loadingWithTimeout;
 }
 
 async function handleMessage(
