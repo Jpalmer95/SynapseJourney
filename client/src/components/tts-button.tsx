@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink } from "lucide-react";
+import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -64,9 +64,6 @@ export function TTSButton({
     kokoroDownloadPercent,
     kokoroDownloadPhase,
     kokoroReady,
-    kokoroEngine,
-    kokoroLoadMs,
-    kokoroFromCache,
     kokoroVoice,
     setKokoroVoice,
     qwenVoice,
@@ -90,6 +87,11 @@ export function TTSButton({
   const kokoroWarmShownRef = useRef(false);
 
   const activeTier = getVoiceTier(serverVoicePreset);
+
+  // Derived progress helpers
+  const isKokoroDownloading = kokoroDownloadPhase === "download" && kokoroDownloadPercent !== null && kokoroDownloadPercent < 100;
+  const kokoroProgressLabel = isKokoroDownloading ? "Downloading model…" : "Compiling model…";
+  const kokoroProgressPct = isKokoroDownloading ? kokoroDownloadPercent : null;
 
   // Cold-start toast: fires after 3 s when loading a cloud voice.
   useEffect(() => {
@@ -143,36 +145,6 @@ export function TTSButton({
   const isInSectionMode = !!(sections && sections.length > 0 && totalSections > 0 &&
     ((isSpeaking || isPaused || isLoading) || !!ttsError));
   const currentLabel = isInSectionMode && currentSectionIndex >= 0 ? sections[currentSectionIndex]?.label : null;
-
-  // Derived Kokoro progress helpers — use explicit phase from worker instead of inferring from percent.
-  const isKokoroDownloading = kokoroLoading && kokoroDownloadPhase === "download";
-  const kokoroProgressLabel = isKokoroDownloading ? "Downloading model…" : "Compiling model…";
-  const kokoroProgressPct   = isKokoroDownloading && kokoroDownloadPercent !== null ? kokoroDownloadPercent : null;
-
-  /** Compact horizontal progress bar shown during Kokoro first-load. */
-  const KokoroProgressBar = kokoroLoading ? (
-    <div className="space-y-0.5">
-      <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-        <span className="flex items-center gap-1">
-          <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
-          {kokoroProgressLabel}
-        </span>
-        {kokoroProgressPct !== null && (
-          <span className="font-mono">{kokoroProgressPct}%</span>
-        )}
-      </div>
-      <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
-        {kokoroProgressPct !== null ? (
-          <div
-            className="h-full bg-emerald-500 rounded-full transition-all duration-300"
-            style={{ width: `${kokoroProgressPct}%` }}
-          />
-        ) : (
-          <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
-        )}
-      </div>
-    </div>
-  ) : null;
 
   const handleClick = () => {
     if (isLoading) return;
@@ -255,7 +227,7 @@ export function TTSButton({
   const getTooltipText = () => {
     if (isLoading && kokoroLoading && serverVoicePreset === "kokoro") {
       return isKokoroDownloading
-        ? `Downloading Kokoro model… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
+        ? `Downloading Kokoro model… ${kokoroProgressPct}%`
         : "Compiling Kokoro model…";
     }
     if (isLoading) return "Generating audio…";
@@ -263,7 +235,7 @@ export function TTSButton({
     if (serverVoicePreset === "kokoro") {
       if (kokoroLoading) {
         return isKokoroDownloading
-          ? `Downloading Kokoro model… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
+          ? `Downloading Kokoro model… ${kokoroProgressPct}%`
           : "Compiling Kokoro model…";
       }
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
@@ -294,34 +266,20 @@ export function TTSButton({
 
   const isCached = cacheStatus?.cached === true;
 
-  // Build a human-readable engine diagnostic string shown under the Kokoro row when ready.
-  const kokoroDiagnostic = (() => {
-    if (!kokoroReady || !kokoroEngine) return null;
-    const engineLabel = kokoroEngine === "webgpu-fp32" ? "WebGPU · fp32" : "WASM · q8";
-    const sourceLabel = kokoroFromCache ? "cached" : kokoroLoadMs !== null ? `${(kokoroLoadMs / 1000).toFixed(1)}s` : null;
-    return sourceLabel ? `${engineLabel} · ${sourceLabel}` : engineLabel;
-  })();
-
   // ── Engine row component ────────────────────────────────────────────────────
-  const EngineRow = ({ engineId, label, sublabel, icon, badge, active, disabled }: {
+  const EngineRow = ({ engineId, label, sublabel, icon, badge, active }: {
     engineId: string;
     label: string;
     sublabel: string;
     icon: React.ReactNode;
     badge?: React.ReactNode;
     active: boolean;
-    disabled?: boolean;
   }) => (
     <button
-      onClick={disabled ? undefined : () => handleEngineSelect(engineId)}
-      disabled={disabled}
+      onClick={() => handleEngineSelect(engineId)}
       className={cn(
-        "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors",
-        disabled
-          ? "opacity-40 cursor-not-allowed border-border"
-          : active
-            ? "border-primary bg-primary/5 hover:bg-muted/60"
-            : "border-border hover:bg-muted/60"
+        "w-full flex items-center gap-2.5 rounded-lg border px-3 py-2.5 text-left text-xs transition-colors hover:bg-muted/60",
+        active ? "border-primary bg-primary/5" : "border-border"
       )}
       data-testid={`button-engine-${engineId}`}
     >
@@ -333,7 +291,7 @@ export function TTSButton({
         </div>
         <span className="text-muted-foreground leading-tight">{sublabel}</span>
       </div>
-      {active && !disabled && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
+      {active && <Check className="h-3.5 w-3.5 text-primary shrink-0" />}
     </button>
   );
 
@@ -362,8 +320,28 @@ export function TTSButton({
             <h4 className="text-sm font-semibold">Voice Settings</h4>
             {getTierBadge(activeTier)}
           </div>
-          {KokoroProgressBar && (
-            <div className="mt-1.5">{KokoroProgressBar}</div>
+          {kokoroLoading && (
+            <div className="mt-1.5 space-y-0.5">
+              <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
+                  {kokoroProgressLabel}
+                </span>
+                {kokoroProgressPct !== null && (
+                  <span className="font-mono">{kokoroProgressPct}%</span>
+                )}
+              </div>
+              <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+                {kokoroProgressPct !== null ? (
+                  <div
+                    className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+                    style={{ width: `${kokoroProgressPct}%` }}
+                  />
+                ) : (
+                  <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
+                )}
+              </div>
+            </div>
           )}
           {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
@@ -372,7 +350,7 @@ export function TTSButton({
           )}
           {kokoroReady && serverVoicePreset === "kokoro" && (
             <p className="text-[10px] text-emerald-600 dark:text-emerald-400 mt-1 flex items-center gap-1">
-              <Check className="h-2.5 w-2.5" />{kokoroDiagnostic ?? "Kokoro ready · instant playback"}
+              <Check className="h-2.5 w-2.5" />Kokoro ready · instant playback
             </p>
           )}
         </div>
@@ -384,7 +362,7 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel={kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local · offline, no token needed"}
+              sublabel="Local · offline, no token needed"
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
@@ -716,13 +694,7 @@ export function TTSButton({
             )}
             <span className="text-xs font-medium text-foreground truncate">
               {isLoading
-                ? (hfWarming
-                    ? "Warming up cloud engine…"
-                    : kokoroLoading
-                      ? (isKokoroDownloading
-                          ? `Downloading Kokoro… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
-                          : "Compiling Kokoro model…")
-                      : "Generating audio…")
+                ? (hfWarming ? "Warming up cloud engine…" : kokoroLoading ? (isKokoroDownloading ? `Downloading Kokoro… ${kokoroProgressPct}%` : "Compiling Kokoro model…") : "Generating audio…")
                 : currentLabel ?? "Listening…"}
             </span>
             {getTierBadge(activeTier, true)}
@@ -768,15 +740,35 @@ export function TTSButton({
 
   // Default mode
   const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
-    KokoroProgressBar ? (
-      <div data-testid="status-kokoro-loading">{KokoroProgressBar}</div>
+    kokoroLoading ? (
+      <div className="space-y-0.5" data-testid="status-kokoro-loading">
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+          <span className="flex items-center gap-1">
+            <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />
+            {kokoroProgressLabel}
+          </span>
+          {kokoroProgressPct !== null && (
+            <span className="font-mono">{kokoroProgressPct}%</span>
+          )}
+        </div>
+        <div className="h-1 w-full rounded-full bg-muted overflow-hidden">
+          {kokoroProgressPct !== null ? (
+            <div
+              className="h-full bg-emerald-500 rounded-full transition-all duration-300"
+              style={{ width: `${kokoroProgressPct}%` }}
+            />
+          ) : (
+            <div className="h-full w-full bg-emerald-500/40 animate-pulse rounded-full" />
+          )}
+        </div>
+      </div>
     ) : !kokoroReady ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-idle">
         <Zap className="h-2.5 w-2.5 text-emerald-500 shrink-0" />Loads on first Listen
       </p>
     ) : (
       <p className="text-[10px] text-emerald-600 dark:text-emerald-400 flex items-center gap-1" data-testid="status-kokoro-ready">
-        <Check className="h-2.5 w-2.5 shrink-0" />{kokoroDiagnostic ?? "Kokoro ready"}
+        <Check className="h-2.5 w-2.5 shrink-0" />Kokoro ready
       </p>
     )
   );
@@ -799,29 +791,20 @@ export function TTSButton({
               {getIcon()}
               {showLabel && (
                 <span className="ml-2 flex items-center gap-1.5">
-                  {isLoading
-                    ? (kokoroLoading
-                        ? (isKokoroDownloading
-                            ? `Downloading… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
-                            : "Compiling…")
-                        : "Generating…")
-                    : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
+                  {isLoading ? (kokoroLoading ? (isKokoroDownloading ? `Downloading… ${kokoroProgressPct}%` : "Compiling…") : "Generating…") : isSpeaking ? (isPaused ? "Resume" : "Pause") : "Listen"}
                   {!isLoading && !isSpeaking && getTierBadge(activeTier, true)}
                 </span>
               )}
             </Button>
           </TooltipTrigger>
           <TooltipContent>
-            <div className="flex flex-col gap-1 min-w-[150px]">
+            <div className="flex flex-col gap-1">
               <div className="flex items-center gap-1.5">
                 {getTooltipText()}
                 {isCached && !isSpeaking && activeTier === "local" && (
                   <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
                 )}
               </div>
-              {KokoroProgressBar && (
-                <div className="mt-0.5">{KokoroProgressBar}</div>
-              )}
               {ttsError && (
                 <p className="text-xs text-red-400 max-w-[200px]">{ttsError}</p>
               )}

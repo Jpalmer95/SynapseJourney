@@ -67,9 +67,6 @@ interface UseTTSReturn extends TTSState {
   kokoroLoading: boolean;
   kokoroDownloadPercent: number | null;
   kokoroDownloadPhase: "download" | "compile" | null;
-  kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
-  kokoroLoadMs: number | null;
-  kokoroFromCache: boolean | null;
   hfWarming: boolean;
   kokoroVoice: string;
   setKokoroVoice: (voiceId: string) => void;
@@ -203,9 +200,6 @@ function useTTSImpl(): UseTTSReturn {
   const [kokoroLoading, setKokoroLoading] = useState(false);
   const [kokoroDownloadPercent, setKokoroDownloadPercent] = useState<number | null>(null);
   const [kokoroDownloadPhase, setKokoroDownloadPhase] = useState<"download" | "compile" | null>(null);
-  const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
-  const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
-  const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
@@ -226,9 +220,8 @@ function useTTSImpl(): UseTTSReturn {
   // always read the current engine even when called immediately after switching.
   const serverVoicePresetRef = useRef<string>("browser");
 
-  // Kokoro worker bridge (SharedWorker or regular Worker — same postMessage interface)
-  type WorkerBridge = { postMessage: (data: unknown) => void };
-  const workerRef = useRef<WorkerBridge | null>(null);
+  // Kokoro worker refs
+  const workerRef = useRef<Worker | null>(null);
   const pendingRef = useRef<Map<number, { resolve: (v: Blob | undefined) => void; reject: (e: Error) => void }>>(new Map());
   const msgIdRef = useRef(0);
   const workerReadyRef = useRef(false);
@@ -468,38 +461,28 @@ function useTTSImpl(): UseTTSReturn {
     return new Blob([buf], { type: "audio/wav" });
   }
 
-  // ── Kokoro worker bridge (SharedWorker preferred, DedicatedWorker fallback) ──
+  // ── Kokoro local worker ──────────────────────────────────────────────────
 
-  const getWorker = useCallback((): WorkerBridge => {
+  const getWorker = useCallback((): Worker => {
     if (workerRef.current) return workerRef.current;
 
-    const workerUrl = new URL("../workers/tts.worker.ts", import.meta.url);
+    const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" });
 
-    const onMessage = ({ data }: MessageEvent) => {
-      const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc, percent } = data as {
+    w.onmessage = ({ data }: MessageEvent) => {
+      const { id, type, samples, sampleRate, message, percent, phase } = data as {
         id: number;
         type: "ready" | "audio" | "error" | "progress";
         samples?: Float32Array;
         sampleRate?: number;
         message?: string;
-        engine?: "webgpu-fp32" | "wasm-q8";
-        loadMs?: number;
-        fromCache?: boolean;
         percent?: number;
+        phase?: "download" | "compile";
       };
 
-      // Progress broadcasts (id === -1) are not tied to any pending request.
-      if (type === "progress") {
+      // Progress broadcasts use id=-1 (sentinel) — not tied to any pending request.
+      if (id === -1 && type === "progress") {
         if (percent !== undefined) setKokoroDownloadPercent(percent);
-        if ((data as { phase?: string }).phase) {
-          setKokoroDownloadPhase((data as { phase: "download" | "compile" }).phase);
-        }
-        // Passive tabs (not the initiating tab) may receive progress broadcasts
-        // before they call ensureKokoroInit. Set loading=true so the progress UI
-        // renders immediately on those tabs too.
-        if (!workerReadyRef.current) {
-          setKokoroLoading(true);
-        }
+        if (phase) setKokoroDownloadPhase(phase);
         return;
       }
 
@@ -508,10 +491,7 @@ function useTTSImpl(): UseTTSReturn {
       pendingRef.current.delete(id);
 
       if (type === "ready") {
-        if (engine) setKokoroEngine(engine);
-        if (lms !== undefined) setKokoroLoadMs(lms);
-        if (fc !== undefined) setKokoroFromCache(fc);
-        // Clear download progress now that the model is fully ready.
+        // Clear download progress now that model is fully ready.
         setKokoroDownloadPercent(null);
         setKokoroDownloadPhase(null);
         p.resolve(undefined);
@@ -528,7 +508,7 @@ function useTTSImpl(): UseTTSReturn {
       }
     };
 
-    const onError = () => {
+    w.onerror = () => {
       Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error("Worker crashed")));
       pendingRef.current.clear();
       workerReadyRef.current = false;
@@ -539,45 +519,9 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroDownloadPhase(null);
     };
 
-    let bridge: WorkerBridge | null = null;
-
-    if (typeof SharedWorker !== "undefined") {
-      try {
-        // SharedWorker: one model instance shared across all open tabs.
-        // Wrapped in try/catch because some browsers declare SharedWorker but
-        // do not support module workers, throwing on construction.
-        const sw = new SharedWorker(workerUrl, { type: "module" });
-        sw.port.onmessage = onMessage;
-        sw.onerror = onError;
-        sw.port.start();
-        bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
-      } catch (swErr) {
-        console.debug("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
-      }
-    }
-
-    if (!bridge) {
-      // DedicatedWorker fallback for older browsers / engines without module SharedWorker support.
-      const w = new Worker(workerUrl, { type: "module" });
-      w.onmessage = onMessage;
-      w.onerror = onError;
-      bridge = { postMessage: (data: unknown) => w.postMessage(data) };
-    }
-
-    workerRef.current = bridge;
-    return bridge;
+    workerRef.current = w;
+    return w;
   }, []);
-
-  // Early Kokoro worker connection: when the selected preset is Kokoro and the
-  // worker hasn't been created yet, eagerly connect it so the SharedWorker
-  // registers this tab and can broadcast progress events to it even before
-  // the user presses Listen.
-  useEffect(() => {
-    if (serverVoicePreset === "kokoro" && !workerRef.current && !kokoroReady) {
-      getWorker();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverVoicePreset, kokoroReady]);
 
   const ensureKokoroInit = useCallback(async (): Promise<void> => {
     if (workerReadyRef.current) return;
@@ -1338,9 +1282,6 @@ function useTTSImpl(): UseTTSReturn {
     kokoroLoading,
     kokoroDownloadPercent,
     kokoroDownloadPhase,
-    kokoroEngine,
-    kokoroLoadMs,
-    kokoroFromCache,
     hfWarming,
     kokoroVoice,
     setKokoroVoice,
