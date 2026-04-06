@@ -67,6 +67,7 @@ interface UseTTSReturn extends TTSState {
   kokoroLoading: boolean;
   kokoroDownloadPercent: number | null;
   kokoroDownloadPhase: "download" | "compile" | null;
+  kokoroLoadError: string | null;
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
@@ -206,6 +207,8 @@ function useTTSImpl(): UseTTSReturn {
   const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
   const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
   const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
+  // Surfaced to UI when the Kokoro model fails to load (e.g. timeout, OOM).
+  const [kokoroLoadError, setKokoroLoadError] = useState<string | null>(null);
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
@@ -510,9 +513,10 @@ function useTTSImpl(): UseTTSReturn {
         if (engine) setKokoroEngine(engine);
         if (lms !== undefined) setKokoroLoadMs(lms);
         if (fc !== undefined) setKokoroFromCache(fc);
-        // Clear download progress now that the model is fully ready.
+        // Clear download progress and any prior load error now that the model is ready.
         setKokoroDownloadPercent(null);
         setKokoroDownloadPhase(null);
+        setKokoroLoadError(null);
         p.resolve(undefined);
       } else if (type === "audio") {
         if (samples && sampleRate) {
@@ -536,6 +540,7 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroLoading(false);
       setKokoroDownloadPercent(null);
       setKokoroDownloadPhase(null);
+      setKokoroLoadError("Kokoro worker crashed — please refresh the page.");
     };
 
     let bridge: WorkerBridge | null = null;
@@ -583,6 +588,8 @@ function useTTSImpl(): UseTTSReturn {
     if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
 
     setKokoroLoading(true);
+    // Clear any previous load error so the UI returns to the progress bar state.
+    setKokoroLoadError(null);
     workerReadyPromiseRef.current = new Promise<void>((resolve, reject) => {
       const id = ++msgIdRef.current;
       pendingRef.current.set(id, {
@@ -597,6 +604,8 @@ function useTTSImpl(): UseTTSReturn {
           setKokoroLoading(false);
           setKokoroDownloadPercent(null);
           setKokoroDownloadPhase(null);
+          // Surface the error so the TTS button can display it.
+          setKokoroLoadError(err instanceof Error ? err.message : "Kokoro failed to load");
           reject(err);
         },
       });
@@ -1325,6 +1334,7 @@ function useTTSImpl(): UseTTSReturn {
     kokoroLoading,
     kokoroDownloadPercent,
     kokoroDownloadPhase,
+    kokoroLoadError,
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,

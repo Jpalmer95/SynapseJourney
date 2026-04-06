@@ -63,6 +63,7 @@ export function TTSButton({
     kokoroLoading,
     kokoroDownloadPercent,
     kokoroDownloadPhase,
+    kokoroLoadError,
     kokoroReady,
     kokoroEngine,
     kokoroLoadMs,
@@ -266,6 +267,7 @@ export function TTSButton({
           ? `Downloading Kokoro model… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
           : "Compiling Kokoro model…";
       }
+      if (kokoroLoadError && !kokoroReady) return `Kokoro error — tap Listen to retry`;
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
     }
@@ -365,7 +367,12 @@ export function TTSButton({
           {KokoroProgressBar && (
             <div className="mt-1.5">{KokoroProgressBar}</div>
           )}
-          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && (
+          {!kokoroLoading && serverVoicePreset === "kokoro" && kokoroLoadError && (
+            <p className="text-[10px] text-red-500 dark:text-red-400 mt-1 flex items-start gap-1" data-testid="status-kokoro-error">
+              <X className="h-2.5 w-2.5 shrink-0 mt-0.5" />{kokoroLoadError}
+            </p>
+          )}
+          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && !kokoroLoadError && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
@@ -770,6 +777,10 @@ export function TTSButton({
   const kokoroStatusLine = serverVoicePreset === "kokoro" && !isSpeaking && (
     KokoroProgressBar ? (
       <div data-testid="status-kokoro-loading">{KokoroProgressBar}</div>
+    ) : kokoroLoadError && !kokoroReady ? (
+      <p className="text-[10px] text-red-500 dark:text-red-400 flex items-start gap-1 max-w-[200px]" data-testid="status-kokoro-error-inline">
+        <X className="h-2.5 w-2.5 shrink-0 mt-0.5" />{kokoroLoadError}
+      </p>
     ) : !kokoroReady ? (
       <p className="text-[10px] text-muted-foreground flex items-center gap-1" data-testid="status-kokoro-idle">
         <Zap className="h-2.5 w-2.5 text-emerald-500 shrink-0" />Loads on first Listen

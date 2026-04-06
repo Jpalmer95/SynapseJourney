@@ -81,11 +81,17 @@ type HFProgressInfo = {
  *
  * Strategy: track the highest `progress` value seen across all files.
  * The ONNX model file (~82 MB) dominates, so this closely tracks real download progress.
- * After all files are done we emit a "compile" phase at 100% while the model initialises.
+ *
+ * FIX: only transition to "compile" phase once ALL tracked files have reported "done".
+ * Previously the phase flipped on the FIRST "done" (e.g. config.json), while the
+ * large ONNX file was still downloading — causing the UI to show "Compiling…" for the
+ * entire 2+ minute download on mobile.
  */
-function makeProgressCallback(phase: { current: "download" | "compile" }) {
-  // per-file max progress seen so far
+function makeProgressCallback() {
+  // per-file max progress seen so far (0 = initiate seeded, 100 = done)
   const fileProgress = new Map<string, number>();
+  // track files that are fully done so we know when ALL are done
+  const fileDone = new Set<string>();
 
   return (info: HFProgressInfo) => {
     const { status } = info;
@@ -98,7 +104,7 @@ function makeProgressCallback(phase: { current: "download" | "compile" }) {
         fileProgress.set(file, 0);
         broadcast({ id: -1, type: "progress", percent: 0, phase: "download", file });
       }
-    } else if (status === "progress" && pct !== null) {
+    } else if (status === "progress" && pct !== null && file) {
       const prev = fileProgress.get(file) ?? 0;
       if (pct > prev) {
         fileProgress.set(file, pct);
@@ -111,14 +117,27 @@ function makeProgressCallback(phase: { current: "download" | "compile" }) {
       }
     } else if (status === "done" && file) {
       fileProgress.set(file, 100);
-      // A file finished downloading — emit compile/load phase signal.
-      // This fires between the last download "done" and the model being ready,
-      // covering the GPU compilation or WASM instantiation interval.
-      phase.current = "compile";
-      broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
+      fileDone.add(file);
+
+      // Only switch to "compile" phase when EVERY file we've seen is done.
+      // This prevents the phase flipping on config.json while the 82MB ONNX
+      // model is still downloading (the root cause of the "stuck compiling" bug).
+      const allDone = fileProgress.size > 0 && fileDone.size === fileProgress.size;
+      if (allDone) {
+        broadcast({ id: -1, type: "progress", percent: 100, phase: "compile" });
+      } else {
+        // Recompute overall average (this file just hit 100) and keep download phase.
+        const values = Array.from(fileProgress.values());
+        const avg = Math.round(values.reduce((a, b) => a + b, 0) / values.length);
+        const clamped = Math.min(avg, 99);
+        broadcast({ id: -1, type: "progress", percent: clamped, phase: "download", file });
+      }
     }
   };
 }
+
+// Timeout (ms) after which a loadModel attempt is considered hung.
+const LOAD_TIMEOUT_MS = 120_000; // 2 minutes
 
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
@@ -130,15 +149,13 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
 
     const t0 = performance.now();
 
-    // Phase tracker shared between the callback and the outer load logic.
-    const phase: { current: "download" | "compile" } = { current: "download" };
-
+    // ── WebGPU fp32 attempt ──────────────────────────────────────────────────
     try {
       console.log("[TTS Worker] Trying WebGPU fp32…");
       kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: "fp32",
         device: "webgpu",
-        progress_callback: makeProgressCallback(phase),
+        progress_callback: makeProgressCallback(),
       });
       engineId = "webgpu-fp32";
       console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
@@ -148,12 +165,15 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
         webgpuErr instanceof Error ? webgpuErr.message : String(webgpuErr),
       );
       console.log("[TTS Worker] Falling back to WASM q8…");
-      // Reset phase for the retry attempt.
-      phase.current = "download";
+
+      // Reset progress state for the WASM retry so the UI shows a fresh
+      // download bar rather than remaining in a stale "compile" state.
+      broadcast({ id: -1, type: "progress", percent: 0, phase: "download" });
+
       kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: "q8",
         device: "wasm",
-        progress_callback: makeProgressCallback(phase),
+        progress_callback: makeProgressCallback(),
       });
       engineId = "wasm-q8";
       console.log("[TTS Worker] ✓ WASM q8 loaded");
@@ -175,7 +195,18 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     throw err;
   });
 
-  return loadingPromise;
+  // ── Timeout race ────────────────────────────────────────────────────────────
+  // If both WebGPU and WASM hang (e.g. ONNX runtime stall on low-memory mobile)
+  // the UI would be stuck indefinitely. Race with a timeout so the hook receives
+  // an error and can clear its loading state.
+  const timeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => {
+      loadingPromise = null; // allow retry on next user action
+      reject(new Error("Kokoro model load timed out — please refresh and try again"));
+    }, LOAD_TIMEOUT_MS),
+  );
+
+  return Promise.race([loadingPromise, timeoutPromise]);
 }
 
 async function handleMessage(
