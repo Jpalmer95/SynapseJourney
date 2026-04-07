@@ -7,7 +7,7 @@ import { env } from "@huggingface/transformers";
 // useBrowserCache maps to the browser-native Cache API (available in workers).
 env.useBrowserCache = true;
 // v2 namespace busts stale WASM-format files cached during Tasks #21-25.
-env.cacheKey = "transformers-cache-kokoro-v2";
+env.cacheDir = "kokoro-v2";
 
 let kokoroTTS: KokoroTTS | null = null;
 
