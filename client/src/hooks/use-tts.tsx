@@ -503,27 +503,41 @@ function useTTSImpl(): UseTTSReturn {
     return w;
   }, []);
 
+  const INIT_TIMEOUT_MS = 3 * 60 * 1000; // 3 minutes
+
   const ensureKokoroInit = useCallback(async (): Promise<void> => {
     if (workerReadyRef.current) return;
     if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
 
     setKokoroLoading(true);
-    workerReadyPromiseRef.current = new Promise<void>((resolve, reject) => {
-      const id = ++msgIdRef.current;
-      pendingRef.current.set(id, {
-        resolve: () => {
-          workerReadyRef.current = true;
-          setKokoroReady(true);
-          setKokoroLoading(false);
-          resolve();
-        },
-        reject: (err) => {
-          workerReadyPromiseRef.current = null;
-          setKokoroLoading(false);
-          reject(err);
-        },
-      });
-      getWorker().postMessage({ id, type: "init" });
+    workerReadyPromiseRef.current = Promise.race([
+      new Promise<void>((resolve, reject) => {
+        const id = ++msgIdRef.current;
+        pendingRef.current.set(id, {
+          resolve: () => {
+            workerReadyRef.current = true;
+            setKokoroReady(true);
+            setKokoroLoading(false);
+            resolve();
+          },
+          reject: (err) => {
+            workerReadyPromiseRef.current = null;
+            setKokoroLoading(false);
+            reject(err);
+          },
+        });
+        getWorker().postMessage({ id, type: "init" });
+      }),
+      new Promise<void>((_, reject) =>
+        setTimeout(
+          () => reject(new Error("Model load timed out — please try again")),
+          INIT_TIMEOUT_MS,
+        )
+      ),
+    ]).catch((err) => {
+      workerReadyPromiseRef.current = null;
+      setKokoroLoading(false);
+      throw err;
     });
 
     return workerReadyPromiseRef.current;
