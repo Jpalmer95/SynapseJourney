@@ -510,30 +510,36 @@ function useTTSImpl(): UseTTSReturn {
     if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
 
     setKokoroLoading(true);
+    const initId = ++msgIdRef.current;
+    let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     workerReadyPromiseRef.current = Promise.race([
       new Promise<void>((resolve, reject) => {
-        const id = ++msgIdRef.current;
-        pendingRef.current.set(id, {
+        pendingRef.current.set(initId, {
           resolve: () => {
+            if (timeoutHandle !== null) clearTimeout(timeoutHandle);
             workerReadyRef.current = true;
             setKokoroReady(true);
             setKokoroLoading(false);
             resolve();
           },
           reject: (err) => {
+            if (timeoutHandle !== null) clearTimeout(timeoutHandle);
             workerReadyPromiseRef.current = null;
             setKokoroLoading(false);
             reject(err);
           },
         });
-        getWorker().postMessage({ id, type: "init" });
+        getWorker().postMessage({ id: initId, type: "init" });
       }),
-      new Promise<void>((_, reject) =>
-        setTimeout(
-          () => reject(new Error("Model load timed out — please try again")),
+      new Promise<void>((_, reject) => {
+        timeoutHandle = setTimeout(
+          () => {
+            pendingRef.current.delete(initId);
+            reject(new Error("Model load timed out — please try again"));
+          },
           INIT_TIMEOUT_MS,
-        )
-      ),
+        );
+      }),
     ]).catch((err) => {
       workerReadyPromiseRef.current = null;
       setKokoroLoading(false);
