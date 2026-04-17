@@ -22,8 +22,8 @@ SynapseJourney is evolving. Here are incredibly powerful mechanics and ideas we 
 2. **Global Curiosity Feed & Social P2P Mentorship**
    * *Concept:* A collaborative dashboard where users' most profound "Aha!" moments and high-value AI chat questions are anonymized and surfaced. Users can seamlessly branch their own curriculum off another user's public learning pathway.
 
-3. **Audio-First "Podcast" Mode (Endless Audio Curriculum)**
-   * *Concept:* Combine the existing gapless WebGPU TTS pipeline with conversational LLM generation to synthesize custom, on-the-fly "Podcast Episodes." The AI simulates two hosts dynamically discussing the user's daily due SRS topics, allowing for hands-free learning during commutes or chores.
+3. **Socratic Method Learning Option**
+   * *Concept:* Provide a dedicated learning track where the platform focuses on question/answer dialogue. Rather than simply explaining topics, the AI acts as a Socratic guide, probing the user with logic-inducing questions to spark curiosity and help them arrive at profound conclusions on their own.
 
 4. **Micro-credentialing & Crypto Web3 Verification**
    * *Concept:* Upon mastering complex pathways, users receive verifiable blockchain credentials alongside their Pioneer Nova Coins. By integrating with the Lightning Network and Dogecoin, expert users can stake micro-bounties for human tutoring on 'Unsolved Roadblocks' in the NextGen tier.
