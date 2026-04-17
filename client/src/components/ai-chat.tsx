@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import type { Topic } from "@shared/schema";
@@ -42,6 +43,7 @@ export function AiChat({ topic, onClose }: AiChatProps) {
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [socraticMode, setSocraticMode] = useState(false);
   const [showProviderSetup, setShowProviderSetup] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -73,6 +75,7 @@ export function AiChat({ topic, onClose }: AiChatProps) {
         body: JSON.stringify({
           message: userMessage.content,
           topicId: topic?.id,
+          socraticMode,
           history: messages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
@@ -193,14 +196,24 @@ export function AiChat({ topic, onClose }: AiChatProps) {
             </p>
           </div>
         </div>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onClose}
-          data-testid="button-close-chat"
-        >
-          <X className="h-5 w-5" />
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 mr-2">
+            <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Socratic Mode</span>
+            <Switch 
+              checked={socraticMode}
+              onCheckedChange={setSocraticMode}
+              className="data-[state=checked]:bg-primary"
+            />
+          </div>
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onClose}
+            data-testid="button-close-chat"
+          >
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
       </header>
 
       {/* Provider Setup Overlay */}

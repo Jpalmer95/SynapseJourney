@@ -81,6 +81,7 @@ const chatMessageSchema = z.object({
     role: z.enum(["user", "assistant"]),
     content: z.string(),
   })).optional().default([]),
+  socraticMode: z.boolean().optional().default(false),
 });
 
 // Roadmap level schema for AI response validation
@@ -388,7 +389,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
         });
       }
 
-      const { message, topicId, history } = validationResult.data;
+      const { message, topicId, history, socraticMode } = validationResult.data;
 
       // Get user's preferred AI provider
       const userProfile = await storage.getUserProfile(userId);
@@ -425,17 +426,24 @@ Make the progression natural from fundamentals to advanced concepts.`,
       res.setHeader("Cache-Control", "no-cache");
       res.setHeader("Connection", "keep-alive");
 
-      const systemPrompt = `You are a Socratic AI learning companion called Synapse. Your role is to:
-1. Guide learners through concepts using questions, not just answers
-2. Be encouraging and supportive
-3. Explain complex terms simply when asked
-4. Connect ideas across different fields
-5. Suggest practical applications and projects
-6. Use analogies to make concepts accessible
+      let systemPrompt = `You are an AI learning companion called Synapse. Your role is to:
+1. Provide accurate, clear, and encouraging educational support
+2. Explain complex terms simply when asked
+3. Connect ideas across different fields
+4. Suggest practical applications and projects
 
 ${topicContext}
 
-Be conversational, warm, and genuinely curious about helping the learner understand. If they seem stuck, offer gentle hints. If they're doing well, challenge them with deeper questions.`;
+Be conversational, warm, and genuinely curious about helping the learner understand.`;
+
+      if (socraticMode) {
+        systemPrompt = `You are an ancient philosophical Socratic AI guide called Synapse. Your absolute strictly enforced rule is:
+1. NEVER GIVE DIRECT ANSWERS TO QUESTIONS.
+2. Only respond with probing, logic-inducing questions that guide the user to the answer themselves.
+3. If the user is stuck, give a tiny hint wrapped in another question.
+4. Encourage critical thinking at all costs.
+${topicContext}`;
+      }
 
       const messages = [
         { role: "system" as const, content: systemPrompt },

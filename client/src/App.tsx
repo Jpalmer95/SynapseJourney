@@ -22,6 +22,9 @@ import PracticeTestPage from "@/pages/practice-test";
 import PracticeTestResultsPage from "@/pages/practice-test-results";
 import { Loader2 } from "lucide-react";
 import { TTSProvider } from "@/hooks/use-tts";
+import { HelmetProvider, Helmet } from "react-helmet-async";
+import { motion, AnimatePresence } from "framer-motion";
+import { useLocation } from "wouter";
 
 function AppContent() {
   const { user, isLoading, isAuthenticated } = useAuth();
@@ -41,9 +44,25 @@ function AppContent() {
     return <LandingPage />;
   }
 
+  const [location] = useLocation();
+
   return (
-    <Switch>
-      <Route path="/" component={HomePage} />
+    <>
+      <Helmet>
+        <title>SynapseJourney</title>
+        <meta name="description" content="Discover interconnected knowledge pathways across infinite topics." />
+      </Helmet>
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={location}
+          initial={{ opacity: 0, y: 10, filter: "blur(4px)" }}
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={{ opacity: 0, y: -10, filter: "blur(4px)" }}
+          transition={{ duration: 0.2 }}
+          className="min-h-screen"
+        >
+          <Switch>
+            <Route path="/" component={HomePage} />
       <Route path="/map" component={MapPage} />
       <Route path="/saved" component={SavedPage} />
       <Route path="/profile" component={ProfilePage} />
@@ -55,24 +74,29 @@ function AppContent() {
       <Route path="/rabbit-hole" component={RabbitHolePage} />
       <Route path="/collection" component={CollectionPage} />
       <Route path="/practice-test/:id" component={PracticeTestPage} />
-      <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
-      <Route component={NotFound} />
-    </Switch>
+            <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
+            <Route component={NotFound} />
+          </Switch>
+        </motion.div>
+      </AnimatePresence>
+    </>
   );
 }
 
 function App() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="dark">
-        <TooltipProvider>
-          <TTSProvider>
-            <Toaster />
-            <AppContent />
-          </TTSProvider>
-        </TooltipProvider>
-      </ThemeProvider>
-    </QueryClientProvider>
+    <HelmetProvider>
+      <QueryClientProvider client={queryClient}>
+        <ThemeProvider defaultTheme="dark">
+          <TooltipProvider>
+            <TTSProvider>
+              <Toaster />
+              <AppContent />
+            </TTSProvider>
+          </TooltipProvider>
+        </ThemeProvider>
+      </QueryClientProvider>
+    </HelmetProvider>
   );
 }
 

@@ -26,7 +26,7 @@
   --popover: 240 6% 92%;
   --popover-foreground: 240 6% 10%;
   --popover-border: 240 6% 86%;
-  --primary: 262 83% 58%;
+  --primary: 217 91% 60%;
   --primary-foreground: 0 0% 100%;
   --secondary: 240 8% 88%;
   --secondary-foreground: 240 6% 10%;
@@ -37,7 +37,7 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
   --input: 240 6% 75%;
-  --ring: 262 83% 58%;
+  --ring: 217 91% 60%;
   --chart-1: 262 83% 45%;
   --chart-2: 192 91% 36%;
   --chart-3: 280 65% 47%;
@@ -93,12 +93,12 @@
   --opaque-button-border-intensity: 9;
   --elevate-1: rgba(255,255,255, .04);
   --elevate-2: rgba(255,255,255, .09);
-  --background: 240 6% 8%;
-  --foreground: 240 5% 96%;
-  --border: 240 6% 18%;
-  --card: 240 6% 10%;
-  --card-foreground: 240 5% 96%;
-  --card-border: 240 6% 13%;
+  --background: 222 47% 11%;
+  --foreground: 210 40% 98%;
+  --border: 217 33% 17%;
+  --card: 222 47% 11%;
+  --card-foreground: 210 40% 98%;
+  --card-border: 217 33% 17%;
   --sidebar: 240 6% 12%;
   --sidebar-foreground: 240 5% 96%;
   --sidebar-border: 240 6% 16%;
@@ -110,7 +110,7 @@
   --popover: 240 6% 14%;
   --popover-foreground: 240 5% 96%;
   --popover-border: 240 6% 18%;
-  --primary: 262 83% 58%;
+  --primary: 217 91% 60%;
   --primary-foreground: 0 0% 100%;
   --secondary: 240 8% 18%;
   --secondary-foreground: 240 5% 96%;
@@ -121,7 +121,7 @@
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 98%;
   --input: 240 6% 30%;
-  --ring: 262 83% 58%;
+  --ring: 217 91% 60%;
   --chart-1: 262 83% 65%;
   --chart-2: 192 91% 55%;
   --chart-3: 280 65% 65%;
