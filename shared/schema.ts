@@ -242,7 +242,8 @@ export const pathwayTopics = pgTable("pathway_topics", {
   id: serial("id").primaryKey(),
   pathwayId: integer("pathway_id").references(() => pathways.id).notNull(),
   topicId: integer("topic_id").references(() => topics.id).notNull(),
-  order: integer("order").default(0).notNull(),
+  order: integer("order").default(0).notNull(), // kept for general top-down ordering constraint
+  prerequisiteTopicIds: integer("prerequisite_topic_ids").array(), // For DAG explicit graph branches mapping topicIds
   isRequired: boolean("is_required").default(true).notNull(),
 });
 

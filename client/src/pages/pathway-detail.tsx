@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { AppLayout } from "@/components/app-layout";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
+import { SkillTree } from "@/components/skill-tree";
 
 interface Topic {
   id: number;
@@ -25,6 +26,7 @@ interface Topic {
 interface PathwayTopic {
   topic: Topic;
   order: number;
+  prerequisiteTopicIds?: number[] | null;
 }
 
 interface Pathway {
@@ -90,6 +92,12 @@ export default function PathwayDetailPage() {
     queryKey: [`/api/pathways/${pathwayId}`],
     enabled: !!pathwayId,
   });
+
+  const { data: mastered = [] } = useQuery<{topicId: number; topicTitle: string}[]>({
+    queryKey: ["/api/user/mastered-topics"],
+  });
+
+  const masteredTopicIds = new Set(mastered.map(m => m.topicId));
 
   const handleTopicClick = (topicId: number) => {
     setLocation(`/rabbit-hole?topic=${topicId}`);
@@ -199,45 +207,11 @@ export default function PathwayDetailPage() {
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-3">
-              {sortedTopics.map((pt, index) => (
-                <motion.div
-                  key={pt.topic.id}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.05 }}
-                >
-                  <Card 
-                    className="hover-elevate cursor-pointer" 
-                    onClick={() => handleTopicClick(pt.topic.id)}
-                    data-testid={`card-topic-${pt.topic.id}`}
-                  >
-                    <CardContent className="p-4">
-                      <div className="flex items-center gap-4">
-                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-muted text-muted-foreground font-medium text-sm shrink-0">
-                          {index + 1}
-                        </div>
-                        <div className="flex-1 min-w-0">
-                          <h3 className="font-medium break-words" data-testid={`text-topic-name-${pt.topic.id}`}>
-                            {pt.topic.name}
-                          </h3>
-                          <p className="text-sm text-muted-foreground line-clamp-1 break-words">
-                            {pt.topic.description}
-                          </p>
-                        </div>
-                        <Badge 
-                          variant="outline" 
-                          className={`capitalize shrink-0 ${difficultyColors[pt.topic.difficulty] || ""}`}
-                        >
-                          {pt.topic.difficulty}
-                        </Badge>
-                        <ChevronRight className="h-5 w-5 text-muted-foreground shrink-0" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </motion.div>
-              ))}
-            </div>
+            <SkillTree 
+              topics={sortedTopics} 
+              masteredTopicIds={masteredTopicIds} 
+              onTopicClick={handleTopicClick} 
+            />
           )}
         </motion.div>
       </div>

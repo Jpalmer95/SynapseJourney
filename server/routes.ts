@@ -338,6 +338,18 @@ Make the progression natural from fundamentals to advanced concepts.`,
     }
   });
 
+  // Mastered Topics
+  app.get("/api/user/mastered-topics", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const masteredTopics = await storage.getUserMasteredTopics(userId);
+      res.json(masteredTopics);
+    } catch (error) {
+      console.error("Error fetching mastered topics:", error);
+      res.status(500).json({ error: "Failed to fetch mastered topics" });
+    }
+  });
+
   // Recent Topics
   app.get("/api/user/recent-topics", isAuthenticated, async (req: any, res: Response) => {
     try {

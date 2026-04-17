@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { KnowledgeCard as KnowledgeCardType, Topic, Category } from "@shared/schema";
+import { useSFX } from "@/hooks/use-sfx";
 
 interface KnowledgeCardProps {
   card: KnowledgeCardType;
@@ -49,6 +50,7 @@ export function KnowledgeCard({
   isSaved = false,
 }: KnowledgeCardProps) {
   const [dragDirection, setDragDirection] = useState<number>(0);
+  const { playWhoosh, playClick } = useSFX();
 
   const handleDrag = (_: unknown, info: PanInfo) => {
     setDragDirection(info.offset.y);
@@ -57,6 +59,7 @@ export function KnowledgeCard({
   const handleDragEnd = (_: unknown, info: PanInfo) => {
     const threshold = 100;
     if (Math.abs(info.offset.y) > threshold) {
+      playWhoosh(info.offset.y < 0 ? "up" : "down");
       onSwipe?.(info.offset.y < 0 ? "up" : "down");
     }
     setDragDirection(0);
@@ -147,7 +150,10 @@ export function KnowledgeCard({
           <Button
             variant="outline"
             size="lg"
-            onClick={onSave}
+            onClick={() => {
+              playClick("light");
+              onSave?.();
+            }}
             className={cn(
               "gap-2 backdrop-blur-md",
               isSaved && "text-red-500 border-red-500/50"
@@ -160,7 +166,10 @@ export function KnowledgeCard({
           
           <Button
             size="lg"
-            onClick={onDive}
+            onClick={() => {
+              playClick("deep");
+              onDive?.();
+            }}
             className="gap-2"
             data-testid="button-dive"
           >

@@ -162,7 +162,7 @@ export interface IStorage {
   getPathways(): Promise<Pathway[]>;
   getPathwayById(id: number): Promise<Pathway | undefined>;
   createPathway(pathway: InsertPathway): Promise<Pathway>;
-  getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean }[]>;
+  getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean; prerequisiteTopicIds?: number[] | null }[]>;
   addTopicToPathway(pathwayId: number, topicId: number, order: number, isRequired: boolean): Promise<PathwayTopic>;
   getUserPathways(userId: string): Promise<{ pathway: Pathway; enrollment: UserPathway }[]>;
   getCustomPathways(userId: string): Promise<Pathway[]>;
@@ -971,7 +971,7 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
-  async getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean }[]> {
+  async getPathwayTopics(pathwayId: number): Promise<{ topic: Topic; order: number; isRequired: boolean; prerequisiteTopicIds?: number[] | null }[]> {
     const results = await db.select({
       pathwayTopic: pathwayTopics,
       topic: topics,
@@ -985,6 +985,7 @@ export class DatabaseStorage implements IStorage {
       topic: r.topic,
       order: r.pathwayTopic.order,
       isRequired: r.pathwayTopic.isRequired,
+      prerequisiteTopicIds: r.pathwayTopic.prerequisiteTopicIds,
     }));
   }
 
