@@ -257,6 +257,27 @@ export const userPathways = pgTable("user_pathways", {
   completedAt: timestamp("completed_at"),
 });
 
+// Open Science Global Feed (User submitted research theories)
+export const openScienceIdeas = pgTable("open_science_ideas", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  authorName: text("author_name").notNull(),
+  topicId: integer("topic_id").references(() => topics.id), // optional relation to existing topic
+  title: text("title").notNull(),
+  content: text("content").notNull(),
+  upvotes: integer("upvotes").default(0).notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+export const openScienceComments = pgTable("open_science_comments", {
+  id: serial("id").primaryKey(),
+  ideaId: integer("idea_id").references(() => openScienceIdeas.id).notNull(),
+  userId: varchar("user_id").notNull(),
+  authorName: text("author_name").notNull(),
+  content: text("content").notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Achievements System
 export const achievements = pgTable("achievements", {
   id: serial("id").primaryKey(),
@@ -582,6 +603,9 @@ export const insertFlashcardReviewSchema = createInsertSchema(flashcardReviews).
 export type Category = typeof categories.$inferSelect;
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type Topic = typeof topics.$inferSelect;
+export const insertOpenScienceIdeaSchema = createInsertSchema(openScienceIdeas).omit({ id: true, createdAt: true, upvotes: true });
+export const insertOpenScienceCommentSchema = createInsertSchema(openScienceComments).omit({ id: true, createdAt: true });
+
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type KnowledgeCard = typeof knowledgeCards.$inferSelect;
 export type InsertKnowledgeCard = z.infer<typeof insertKnowledgeCardSchema>;
@@ -617,6 +641,10 @@ export type KeyPurchaseRequest = typeof keyPurchaseRequests.$inferSelect;
 export type InsertKeyPurchaseRequest = z.infer<typeof insertKeyPurchaseRequestSchema>;
 export type UserProfile = typeof userProfiles.$inferSelect;
 export type InsertUserProfile = z.infer<typeof insertUserProfileSchema>;
+export type OpenScienceIdea = typeof openScienceIdeas.$inferSelect;
+export type InsertOpenScienceIdea = z.infer<typeof insertOpenScienceIdeaSchema>;
+export type OpenScienceComment = typeof openScienceComments.$inferSelect;
+export type InsertOpenScienceComment = z.infer<typeof insertOpenScienceCommentSchema>;
 export type Pathway = typeof pathways.$inferSelect;
 export type InsertPathway = z.infer<typeof insertPathwaySchema>;
 export type PathwayTopic = typeof pathwayTopics.$inferSelect;

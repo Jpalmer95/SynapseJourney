@@ -20,6 +20,7 @@ import RabbitHolePage from "@/pages/rabbit-hole";
 import CollectionPage from "@/pages/collection";
 import PracticeTestPage from "@/pages/practice-test";
 import PracticeTestResultsPage from "@/pages/practice-test-results";
+import { OpenSciencePage } from "@/pages/open-science";
 import { Loader2 } from "lucide-react";
 import { TTSProvider } from "@/hooks/use-tts";
 import { HelmetProvider, Helmet } from "react-helmet-async";
@@ -73,8 +74,9 @@ function AppContent() {
       <Route path="/explore" component={ExplorePage} />
       <Route path="/rabbit-hole" component={RabbitHolePage} />
       <Route path="/collection" component={CollectionPage} />
+      <Route path="/open-science" component={OpenSciencePage} />
       <Route path="/practice-test/:id" component={PracticeTestPage} />
-            <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
+      <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
             <Route component={NotFound} />
           </Switch>
         </motion.div>

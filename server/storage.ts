@@ -9,6 +9,7 @@ import {
   unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
   ideaContributions, novaCoins,
   ttsAudioCache, flashcards, flashcardReviews,
+  openScienceIdeas, openScienceComments,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -56,6 +57,10 @@ import {
   type InsertFlashcard,
   type FlashcardReview,
   type InsertFlashcardReview,
+  type OpenScienceIdea,
+  type InsertOpenScienceIdea,
+  type OpenScienceComment,
+  type InsertOpenScienceComment,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -196,6 +201,13 @@ export interface IStorage {
   getUserCustomTopics(userId: string): Promise<CustomTopic[]>;
   getCustomTopicById(id: number): Promise<CustomTopic | undefined>;
   updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic>;
+
+  // Open Science
+  getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic })[]>;
+  createOpenScienceIdea(idea: InsertOpenScienceIdea): Promise<OpenScienceIdea>;
+  upvoteOpenScienceIdea(id: number): Promise<OpenScienceIdea>;
+  getOpenScienceComments(ideaId: number): Promise<OpenScienceComment[]>;
+  createOpenScienceComment(comment: InsertOpenScienceComment): Promise<OpenScienceComment>;
 
   // User Infographics
   createUserInfographic(infographic: InsertUserInfographic): Promise<UserInfographic>;
@@ -1297,6 +1309,48 @@ export class DatabaseStorage implements IStorage {
       default:
         return 1;
     }
+  }
+
+  // Open Science
+  async getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic })[]> {
+    const ideas = await db.select({
+      idea: openScienceIdeas,
+      topic: topics,
+    })
+    .from(openScienceIdeas)
+    .leftJoin(topics, eq(openScienceIdeas.topicId, topics.id))
+    .orderBy(desc(openScienceIdeas.createdAt));
+
+    return ideas.map(row => ({
+      ...row.idea,
+      ...(row.topic ? { topic: row.topic } : {})
+    }));
+  }
+
+  async createOpenScienceIdea(idea: InsertOpenScienceIdea): Promise<OpenScienceIdea> {
+    const [created] = await db.insert(openScienceIdeas).values(idea).returning();
+    return created;
+  }
+
+  async upvoteOpenScienceIdea(id: number): Promise<OpenScienceIdea> {
+    // We increment by 1
+    const [updated] = await db.update(openScienceIdeas)
+      .set({ upvotes: sql`${openScienceIdeas.upvotes} + 1` })
+      .where(eq(openScienceIdeas.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getOpenScienceComments(ideaId: number): Promise<OpenScienceComment[]> {
+    return db.select()
+      .from(openScienceComments)
+      .where(eq(openScienceComments.ideaId, ideaId))
+      .orderBy(sql`${openScienceComments.createdAt} ASC`);
+  }
+
+  async createOpenScienceComment(comment: InsertOpenScienceComment): Promise<OpenScienceComment> {
+    const [created] = await db.insert(openScienceComments).values(comment).returning();
+    return created;
   }
 
   // User Infographics
