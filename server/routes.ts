@@ -82,6 +82,9 @@ const chatMessageSchema = z.object({
     content: z.string(),
   })).optional().default([]),
   socraticMode: z.boolean().optional().default(false),
+  feynmanMode: z.boolean().optional().default(false),
+  feynmanGraded: z.boolean().optional().default(false),
+  synthesisQuest: z.string().optional(),
 });
 
 // Roadmap level schema for AI response validation
@@ -389,7 +392,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
         });
       }
 
-      const { message, topicId, history, socraticMode } = validationResult.data;
+      const { message, topicId, history, socraticMode, feynmanMode, feynmanGraded, synthesisQuest } = validationResult.data;
 
       // Get user's preferred AI provider
       const userProfile = await storage.getUserProfile(userId);
@@ -436,13 +439,35 @@ ${topicContext}
 
 Be conversational, warm, and genuinely curious about helping the learner understand.`;
 
-      if (socraticMode) {
+      if (synthesisQuest) {
+        systemPrompt = `You are a Grandmaster AI named Synapse conducting a "Synthesis Quest".
+1. Your goal is to strictly test the user's ability to combine and synthesize the following disparate, mastered topics they have learned: ${synthesisQuest}.
+2. Give them an incredibly creative, multidisciplinary, open-ended scenario or problem that requires deep concepts from ALL of these topics simultaneously.
+3. Critically evaluate their proposed solution for logical consistency and accurate application of knowledge.
+4. Do NOT give them the answer. Make them work for it.`;
+      } else if (socraticMode) {
         systemPrompt = `You are an ancient philosophical Socratic AI guide called Synapse. Your absolute strictly enforced rule is:
 1. NEVER GIVE DIRECT ANSWERS TO QUESTIONS.
 2. Only respond with probing, logic-inducing questions that guide the user to the answer themselves.
 3. If the user is stuck, give a tiny hint wrapped in another question.
 4. Encourage critical thinking at all costs.
 ${topicContext}`;
+      } else if (feynmanMode) {
+        if (feynmanGraded) {
+          systemPrompt = `You are an incredibly critical, strict AI Professor evaluating the user's explanation of a concept using the Feynman Technique. 
+1. The user will attempt to teach you a concept to prove they have mastered it. 
+2. Actively search for flaws, hidden assumptions, or gaps in their logic.
+3. Be brutally honest, critical, and strict. If they use jargon without explaining it, immediately call them out.
+4. Provide a harsh letter grade at the end of their explanation and refuse to accept it until it is completely flawless and understandable.
+${topicContext}`;
+        } else {
+          systemPrompt = `You are a highly curious, slightly confused beginner acting as the user's student. 
+1. The user is using the Feynman Technique to try and teach you a concept.
+2. Play completely dumb. Constantly ask "But *why* does that happen?" and beg for simple analogies.
+3. If their explanation is too complex, tell them you don't understand those big words.
+4. Naturally lead them through innocent curiosity to realize their own knowledge gaps.
+${topicContext}`;
+        }
       }
 
       const messages = [

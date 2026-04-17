@@ -6,17 +6,17 @@ import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Slider } from "@/components/ui/slider";
-import { RotateCcw, Info, Minus, Plus, Search, X, Focus, Expand } from "lucide-react";
+import { RotateCcw, Info, Search, X, Focus, Expand, Flame } from "lucide-react";
 import { Link } from "wouter";
-import { useIsMobile } from "@/hooks/use-mobile";
+import ForceGraph3D from "react-force-graph-3d";
+import * as THREE from "three";
+import { AiChat } from "@/components/ai-chat";
 
 interface GraphNode {
   id: number;
   title: string;
   category?: string;
   color: string;
-  x: number;
-  y: number;
   mastery: number;
   status: "mastered" | "learning" | "discovered" | "unexplored";
 }
@@ -29,7 +29,7 @@ interface GraphEdge {
 
 export function KnowledgeGraph3D() {
   const containerRef = useRef<HTMLDivElement>(null);
-  const isMobile = useIsMobile();
+  const graphRef = useRef<any>();
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -37,12 +37,8 @@ export function KnowledgeGraph3D() {
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
   const [timeRange, setTimeRange] = useState([100]);
-  const [zoom, setZoom] = useState(1);
-  const [pan, setPan] = useState({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [rotation, setRotation] = useState(0);
-  const [isAutoRotating, setIsAutoRotating] = useState(true);
+  const [showSynthesis, setShowSynthesis] = useState(false);
+  const [synthesisTopicsStr, setSynthesisTopicsStr] = useState("");
 
   useEffect(() => {
     const updateSize = () => {
@@ -69,144 +65,32 @@ export function KnowledgeGraph3D() {
     queryKey: ["/api/knowledge-graph"],
   });
 
-  const viewBoxWidth = 800;
-  const viewBoxHeight = 600;
-  const graphCenterX = viewBoxWidth / 2;
-  const graphCenterY = viewBoxHeight / 2;
-
-  const mobileScale = useMemo(() => {
-    if (!isMobile) return 1;
-    const aspectRatio = containerSize.width / containerSize.height;
-    if (aspectRatio < 0.6) return 0.55;
-    if (aspectRatio < 0.8) return 0.65;
-    return 0.75;
-  }, [isMobile, containerSize]);
-
-  const sampleNodes: GraphNode[] = useMemo(() => {
-    const centerX = graphCenterX;
-    const centerY = graphCenterY;
-    const scale = mobileScale;
-    
-    return [
-      // AI & ML cluster (center-right)
-      { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", x: centerX, y: centerY, mastery: 75, status: "learning" as const },
-      { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: centerX + 100 * scale, y: centerY - 60 * scale, mastery: 60, status: "learning" as const },
-      { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: centerX + 110 * scale, y: centerY - 100 * scale, mastery: 30, status: "discovered" as const },
-      { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: centerX + 40 * scale, y: centerY - 120 * scale, mastery: 40, status: "discovered" as const },
-      { id: 16, title: "Hugging Face", category: "AI", color: "#fbbf24", x: centerX + 130 * scale, y: centerY + 20 * scale, mastery: 20, status: "discovered" as const },
-      { id: 17, title: "Gradio", category: "AI", color: "#f97316", x: centerX + 160 * scale, y: centerY - 20 * scale, mastery: 15, status: "discovered" as const },
-      
-      // Math cluster (left)
-      { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: centerX - 90 * scale, y: centerY - 80 * scale, mastery: 85, status: "mastered" as const },
-      { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: centerX - 130 * scale, y: centerY + 20 * scale, mastery: 90, status: "mastered" as const },
-      { id: 8, title: "Statistics", category: "Math", color: "#3b82f6", x: centerX - 50 * scale, y: centerY + 80 * scale, mastery: 55, status: "learning" as const },
-      { id: 10, title: "Graph Theory", category: "Math", color: "#3b82f6", x: centerX - 120 * scale, y: centerY - 30 * scale, mastery: 45, status: "discovered" as const },
-      
-      // CS cluster (right)
-      { id: 5, title: "Python", category: "CS", color: "#22c55e", x: centerX + 60 * scale, y: centerY + 90 * scale, mastery: 95, status: "mastered" as const },
-      { id: 6, title: "Data Structures", category: "CS", color: "#22c55e", x: centerX + 120 * scale, y: centerY + 70 * scale, mastery: 70, status: "learning" as const },
-      { id: 18, title: "Open Source", category: "CS", color: "#22c55e", x: centerX + 80 * scale, y: centerY + 130 * scale, mastery: 50, status: "learning" as const },
-      { id: 12, title: "Cryptography", category: "CS", color: "#6366f1", x: centerX + 150 * scale, y: centerY - 70 * scale, mastery: 0, status: "unexplored" as const },
-      
-      // Physics cluster (top-left and bottom)
-      { id: 11, title: "Quantum Mechanics", category: "Physics", color: "#eab308", x: centerX - 150 * scale, y: centerY - 100 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 19, title: "Classical Mechanics", category: "Physics", color: "#eab308", x: centerX - 160 * scale, y: centerY + 60 * scale, mastery: 25, status: "discovered" as const },
-      { id: 20, title: "Orbital Mechanics", category: "Physics", color: "#eab308", x: centerX - 180 * scale, y: centerY + 100 * scale, mastery: 10, status: "discovered" as const },
-      { id: 21, title: "Optics & Light", category: "Physics", color: "#eab308", x: centerX - 30 * scale, y: centerY - 140 * scale, mastery: 15, status: "discovered" as const },
-      { id: 22, title: "Fluid Dynamics", category: "Physics", color: "#eab308", x: centerX - 170 * scale, y: centerY - 50 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 14, title: "Electromagnetism", category: "Physics", color: "#eab308", x: centerX + 20 * scale, y: centerY + 140 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 23, title: "Waves & Frequencies", category: "Physics", color: "#eab308", x: centerX - 80 * scale, y: centerY + 140 * scale, mastery: 20, status: "discovered" as const },
-      
-      // Chemistry cluster (bottom-left)
-      { id: 24, title: "General Chemistry", category: "Chemistry", color: "#14b8a6", x: centerX - 140 * scale, y: centerY + 130 * scale, mastery: 35, status: "learning" as const },
-      { id: 25, title: "Organic Chemistry", category: "Chemistry", color: "#14b8a6", x: centerX - 100 * scale, y: centerY + 170 * scale, mastery: 0, status: "unexplored" as const },
-      
-      // Music (connected to waves/frequencies)
-      { id: 26, title: "Music Theory", category: "Music", color: "#ec4899", x: centerX - 40 * scale, y: centerY + 170 * scale, mastery: 40, status: "learning" as const },
-      
-      // Other
-      { id: 13, title: "Robotics", category: "Engineering", color: "#ec4899", x: centerX + 170 * scale, y: centerY + 110 * scale, mastery: 0, status: "unexplored" as const },
-      { id: 15, title: "Neuroscience", category: "Biology", color: "#f97316", x: centerX - 60 * scale, y: centerY - 170 * scale, mastery: 0, status: "unexplored" as const },
-    ];
-  }, [mobileScale, graphCenterX, graphCenterY]);
+  const sampleNodes: GraphNode[] = useMemo(() => [
+    { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", mastery: 75, status: "learning" as const },
+    { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", mastery: 60, status: "learning" as const },
+    { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", mastery: 30, status: "discovered" as const },
+    { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", mastery: 40, status: "discovered" as const },
+    { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", mastery: 85, status: "mastered" as const },
+    { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", mastery: 90, status: "mastered" as const },
+    { id: 5, title: "Python", category: "CS", color: "#22c55e", mastery: 95, status: "mastered" as const },
+    { id: 6, title: "Data Structures", category: "CS", color: "#22c55e", mastery: 70, status: "learning" as const },
+    { id: 11, title: "Quantum Mechanics", category: "Physics", color: "#eab308", mastery: 0, status: "unexplored" as const },
+    { id: 24, title: "General Chemistry", category: "Chemistry", color: "#14b8a6", mastery: 35, status: "learning" as const },
+  ], []);
 
   const sampleEdges: GraphEdge[] = useMemo(() => [
-    // AI/ML connections
     { from: 1, to: 2, strength: 8 },
     { from: 1, to: 3, strength: 6 },
-    { from: 2, to: 7, strength: 7 },
-    { from: 2, to: 9, strength: 9 },
-    { from: 16, to: 1, strength: 8 },
-    { from: 16, to: 2, strength: 9 },
-    { from: 16, to: 17, strength: 9 },
-    { from: 17, to: 1, strength: 7 },
-    { from: 2, to: 15, strength: 6 },
-    
-    // Math connections
     { from: 3, to: 4, strength: 8 },
-    { from: 3, to: 8, strength: 5 },
-    { from: 8, to: 1, strength: 6 },
-    { from: 4, to: 1, strength: 5 },
-    { from: 10, to: 11, strength: 5 },
-    
-    // CS connections
     { from: 5, to: 1, strength: 6 },
     { from: 5, to: 6, strength: 7 },
-    { from: 6, to: 10, strength: 4 },
-    { from: 6, to: 12, strength: 6 },
-    { from: 18, to: 6, strength: 8 },
-    { from: 18, to: 16, strength: 8 },
-    { from: 18, to: 17, strength: 7 },
-    { from: 11, to: 12, strength: 7 },
-    
-    // Physics connections
-    { from: 4, to: 19, strength: 9 },
-    { from: 19, to: 20, strength: 9 },
-    { from: 19, to: 22, strength: 7 },
-    { from: 21, to: 14, strength: 9 },
-    { from: 14, to: 23, strength: 8 },
-    { from: 21, to: 23, strength: 8 },
-    { from: 4, to: 14, strength: 5 },
-    { from: 11, to: 14, strength: 6 },
-    
-    // Chemistry connections
-    { from: 24, to: 25, strength: 9 },
-    { from: 24, to: 11, strength: 7 },
-    
-    // Music connections
-    { from: 26, to: 23, strength: 7 },
-    
-    // Engineering connections
-    { from: 2, to: 13, strength: 4 },
-    { from: 19, to: 13, strength: 6 },
   ], []);
 
   const allNodes = graphData?.nodes || sampleNodes;
   const allEdges = graphData?.edges || sampleEdges;
-  const stats = graphData?.stats || { total: 27, mastered: 3, learning: 7 };
+  const stats = graphData?.stats || { total: 10, mastered: 2, learning: 4 };
 
-  const getConnectedNodeIds = useCallback((nodeId: number, degrees: number = 2): Set<number> => {
-    const connected = new Set<number>([nodeId]);
-    let frontier = new Set<number>([nodeId]);
-    
-    for (let i = 0; i < degrees; i++) {
-      const newFrontier = new Set<number>();
-      allEdges.forEach(edge => {
-        if (frontier.has(edge.from)) {
-          newFrontier.add(edge.to);
-          connected.add(edge.to);
-        }
-        if (frontier.has(edge.to)) {
-          newFrontier.add(edge.from);
-          connected.add(edge.from);
-        }
-      });
-      frontier = newFrontier;
-    }
-    return connected;
-  }, [allEdges]);
-
-  const { nodes, edges } = useMemo(() => {
+  const { forceNodes, forceEdges } = useMemo(() => {
     let filteredNodes = allNodes;
     let filteredEdges = allEdges;
 
@@ -221,13 +105,28 @@ export function KnowledgeGraph3D() {
     }
 
     if (centeredNode) {
-      const connectedIds = getConnectedNodeIds(centeredNode.id, 2);
-      filteredNodes = allNodes.filter(n => connectedIds.has(n.id));
-      filteredEdges = allEdges.filter(e => connectedIds.has(e.from) && connectedIds.has(e.to));
+      // Show 2 degrees of connections
+      const connected = new Set<number>([centeredNode.id]);
+      let frontier = new Set<number>([centeredNode.id]);
+      
+      for (let i = 0; i < 2; i++) {
+        const newFrontier = new Set<number>();
+        allEdges.forEach(edge => {
+          if (frontier.has(edge.from)) { newFrontier.add(edge.to); connected.add(edge.to); }
+          if (frontier.has(edge.to)) { newFrontier.add(edge.from); connected.add(edge.from); }
+        });
+        frontier = newFrontier;
+      }
+      filteredNodes = allNodes.filter(n => connected.has(n.id));
+      filteredEdges = allEdges.filter(e => connected.has(e.from) && connected.has(e.to));
     }
 
-    return { nodes: filteredNodes, edges: filteredEdges };
-  }, [allNodes, allEdges, searchQuery, centeredNode, getConnectedNodeIds]);
+    // Map to ForceGraph3D exact format
+    const nodes = filteredNodes.map(n => ({...n, val: 1})); // Use val for sizing manually via three
+    const links = filteredEdges.map(e => ({ source: e.from, target: e.to, strength: e.strength }));
+
+    return { forceNodes: nodes, forceEdges: links };
+  }, [allNodes, allEdges, searchQuery, centeredNode]);
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -238,111 +137,75 @@ export function KnowledgeGraph3D() {
     ).slice(0, 8);
   }, [allNodes, searchQuery]);
 
+  // Set camera to orbit
   useEffect(() => {
-    if (!isAutoRotating) return;
-    const interval = setInterval(() => {
-      setRotation((r) => r + 0.001);
-    }, 16);
-    return () => clearInterval(interval);
-  }, [isAutoRotating]);
-
-  const getRotatedPosition = useCallback((node: GraphNode) => {
-    const centerX = graphCenterX;
-    const centerY = graphCenterY;
-    let dx = node.x - centerX;
-    let dy = node.y - centerY;
-
-    if (centeredNode) {
-      dx = (node.x - centeredNode.x) * 0.8;
-      dy = (node.y - centeredNode.y) * 0.8;
-      if (node.id === centeredNode.id) {
-        dx = 0;
-        dy = 0;
-      }
+    if (graphRef.current) {
+      graphRef.current.d3Force('charge').strength(-150);
     }
-
-    const cos = Math.cos(rotation);
-    const sin = Math.sin(rotation);
-    return {
-      x: centerX + dx * cos - dy * sin,
-      y: centerY + dx * sin + dy * cos,
-    };
-  }, [rotation, centeredNode, graphCenterX, graphCenterY]);
+  }, [forceNodes]);
 
   const getNodeColor = (status: string) => {
-    if (status === "mastered") return "#fbbf24";
-    if (status === "learning") return "#8b5cf6";
-    if (status === "discovered") return "#f59e0b";
-    return "#6b7280";
+    if (status === "mastered") return "#fbbf24"; // Gold
+    if (status === "learning") return "#3b82f6"; // Neon Blue
+    if (status === "discovered") return "#f59e0b"; // Amber
+    return "#334155"; // Slate
   };
 
   const getNodeSize = (mastery: number, status: string) => {
-    const baseSize = status === "unexplored" ? 15 : 20;
-    return baseSize + (mastery / 100) * 20;
+    const baseSize = status === "unexplored" ? 4 : 6;
+    return baseSize + (mastery / 100) * 8;
   };
 
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0 && !e.defaultPrevented) {
-      setIsDragging(true);
-      setIsAutoRotating(false);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
-
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
-      });
-    }
-  };
-
-  const handleMouseUp = () => {
-    setIsDragging(false);
-  };
-
-  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.2, 3));
-  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.2, 0.3));
-  const handleReset = () => {
-    setZoom(1);
-    setPan({ x: 0, y: 0 });
-    setRotation(0);
-    setCenteredNode(null);
-    setSearchQuery("");
-    setIsAutoRotating(true);
-  };
-
-  const handleNodeClick = (node: GraphNode) => {
-    setCenteredNode(node);
-    setSelectedNode(node);
-    setIsAutoRotating(false);
+  const handleNodeClick = useCallback((node: any) => {
+    if (!node) return;
+    setCenteredNode(node as GraphNode);
+    setSelectedNode(node as GraphNode);
     setSearchQuery("");
     setShowSearch(false);
-  };
+    
+    // Animate camera to node
+    const distance = 100;
+    const distRatio = 1 + distance/Math.hypot(node.x, node.y, node.z);
+    
+    if (graphRef.current) {
+       graphRef.current.cameraPosition(
+        { x: node.x * distRatio, y: node.y * distRatio, z: node.z * distRatio }, 
+        node, 
+        2000
+      );
+    }
+  }, []);
 
-  const handleSearchSelect = (node: GraphNode) => {
-    handleNodeClick(node);
-  };
-
-  const handleExitCenterMode = () => {
+  const handleReset = () => {
     setCenteredNode(null);
-    setIsAutoRotating(true);
+    setSelectedNode(null);
+    setSearchQuery("");
+    if (graphRef.current) {
+      graphRef.current.cameraPosition({ x: 0, y: 0, z: 300 }, { x: 0, y: 0, z: 0 }, 2000);
+    }
+  };
+
+  const handleSynthesisQuest = () => {
+    const mastered = allNodes.filter(n => n.status === "mastered");
+    if (mastered.length >= 2) {
+      const shuffled = [...mastered].sort(() => 0.5 - Math.random());
+      setSynthesisTopicsStr(`${shuffled[0].title} & ${shuffled[1].title}`);
+      setShowSynthesis(true);
+    }
   };
 
   return (
-    <div className="h-screen w-full relative bg-background overflow-hidden">
-      <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent" />
+    <div className="h-screen w-full relative bg-[#0f172a] overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-b from-primary/5 via-transparent to-transparent pointer-events-none" />
       
       <div className="absolute top-4 left-4 md:left-20 z-10 flex flex-col gap-2 md:gap-4 max-w-[200px] md:max-w-xs">
-        <Card className="p-3 md:p-4 bg-background/80 backdrop-blur-lg">
+        <Card className="p-3 md:p-4 bg-background/80 backdrop-blur-lg border-border">
           <div className="flex items-center justify-between mb-2 md:mb-3 gap-2">
-            <h2 className="text-sm md:text-lg font-semibold">Knowledge Map</h2>
+            <h2 className="text-sm md:text-lg font-semibold text-white">Knowledge Map</h2>
             <Button 
               variant="ghost" 
               size="icon" 
               onClick={() => setShowSearch(!showSearch)}
-              data-testid="button-toggle-search"
             >
               <Search className="h-4 w-4" />
             </Button>
@@ -363,13 +226,11 @@ export function KnowledgeGraph3D() {
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-9 pr-8"
-                    data-testid="input-search-map"
                   />
                   {searchQuery && (
                     <button
-                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white"
                       onClick={() => setSearchQuery("")}
-                      data-testid="button-clear-search"
                     >
                       <X className="h-4 w-4" />
                     </button>
@@ -381,16 +242,15 @@ export function KnowledgeGraph3D() {
                     {searchResults.map(node => (
                       <button
                         key={node.id}
-                        onClick={() => handleSearchSelect(node)}
-                        className="w-full text-left px-3 py-2 rounded-md hover-elevate flex items-center gap-2"
-                        data-testid={`search-result-${node.id}`}
+                        onClick={() => handleNodeClick(node)}
+                        className="w-full text-left px-3 py-2 rounded-md hover:bg-muted/50 flex items-center gap-2"
                       >
                         <div 
                           className="w-3 h-3 rounded-full" 
                           style={{ backgroundColor: getNodeColor(node.status) }}
                         />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium truncate">{node.title}</p>
+                          <p className="text-sm font-medium text-white truncate">{node.title}</p>
                           <p className="text-xs text-muted-foreground">{node.category}</p>
                         </div>
                       </button>
@@ -400,79 +260,35 @@ export function KnowledgeGraph3D() {
               </motion.div>
             )}
           </AnimatePresence>
-
-          <div className="grid grid-cols-3 gap-4 text-center">
-            <div>
-              <p className="text-2xl font-bold text-primary">{stats.total}</p>
-              <p className="text-xs text-muted-foreground">Topics</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-yellow-500">{stats.mastered}</p>
-              <p className="text-xs text-muted-foreground">Mastered</p>
-            </div>
-            <div>
-              <p className="text-2xl font-bold text-violet-500">{stats.learning}</p>
-              <p className="text-xs text-muted-foreground">Learning</p>
-            </div>
-          </div>
         </Card>
 
-        <Card className="p-4 bg-background/80 backdrop-blur-lg">
-          <div className="flex items-center gap-2 mb-3">
-            <Info className="h-4 w-4 text-muted-foreground" />
-            <span className="text-sm font-medium">Legend</span>
-          </div>
-          <div className="space-y-2 text-sm">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-yellow-500 shadow-[0_0_8px_rgba(251,191,36,0.6)]" />
-              <span className="text-muted-foreground">Mastered (Gold)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-violet-500 animate-pulse" />
-              <span className="text-muted-foreground">Learning (Pulse)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-amber-500" />
-              <span className="text-muted-foreground">Discovered</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded-full bg-gray-500 opacity-50" />
-              <span className="text-muted-foreground">Unexplored</span>
-            </div>
-          </div>
-        </Card>
+        {stats.mastered >= 2 && (
+          <motion.div initial={{opacity: 0, scale: 0.9}} animate={{opacity: 1, scale: 1}}>
+            <Button onClick={handleSynthesisQuest} className="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold gap-2 relative overflow-hidden group shadow-[0_0_15px_rgba(234,88,12,0.5)] border border-orange-400/50">
+              <span className="absolute inset-0 w-full h-full bg-gradient-to-r from-transparent via-white/20 to-transparent -translate-x-full group-hover:animate-[shimmer_1.5s_infinite]" />
+              <Flame className="w-4 h-4 text-yellow-300" />
+              Synthesis Quest
+            </Button>
+          </motion.div>
+        )}
 
         {centeredNode && (
           <Card className="p-3 bg-background/80 backdrop-blur-lg">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Focus className="h-4 w-4 text-primary" />
-                <span className="text-sm font-medium">Focused: {centeredNode.title}</span>
+                <span className="text-sm font-medium text-white">Focused: {centeredNode.title}</span>
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleExitCenterMode}
-                data-testid="button-exit-focus"
-              >
+              <Button variant="ghost" size="sm" onClick={handleReset}>
                 <Expand className="h-4 w-4" />
               </Button>
             </div>
-            <p className="text-xs text-muted-foreground mt-1">
-              Showing 2 degrees of connection
-            </p>
           </Card>
         )}
       </div>
 
       <div className="absolute top-4 right-4 z-10 flex flex-col gap-2">
-        <Button variant="outline" size="icon" onClick={handleZoomIn} data-testid="button-zoom-in">
-          <Plus className="h-4 w-4" />
-        </Button>
-        <Button variant="outline" size="icon" onClick={handleZoomOut} data-testid="button-zoom-out">
-          <Minus className="h-4 w-4" />
-        </Button>
-        <Button variant="outline" size="icon" onClick={handleReset} data-testid="button-reset-view">
+        <Button variant="outline" size="icon" onClick={handleReset} className="bg-background/80 backdrop-blur">
           <RotateCcw className="h-4 w-4" />
         </Button>
       </div>
@@ -481,208 +297,44 @@ export function KnowledgeGraph3D() {
         <Card className="p-4 bg-background/80 backdrop-blur-lg max-w-md mx-auto">
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm text-muted-foreground">Timeline</span>
-            <span className="text-sm font-medium">Last {timeRange[0]} days</span>
+            <span className="text-sm font-medium text-white">Last {timeRange[0]} days</span>
           </div>
-          <Slider
-            value={timeRange}
-            onValueChange={setTimeRange}
-            min={7}
-            max={365}
-            step={1}
-            className="w-full"
-            data-testid="slider-timeline"
-          />
+          <Slider value={timeRange} onValueChange={setTimeRange} min={7} max={365} step={1} className="w-full" />
         </Card>
       </div>
 
-      <div
-        ref={containerRef}
-        className="absolute inset-0 cursor-grab active:cursor-grabbing"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
-        <svg
-          className="w-full h-full"
-          viewBox={`0 0 ${viewBoxWidth} ${viewBoxHeight}`}
-          preserveAspectRatio="xMidYMid meet"
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: "center center",
-          }}
-        >
-          <defs>
-            <filter id="glow-gold">
-              <feGaussianBlur stdDeviation="4" result="coloredBlur" />
-              <feFlood floodColor="#fbbf24" floodOpacity="0.5" />
-              <feComposite in2="coloredBlur" operator="in" />
-              <feMerge>
-                <feMergeNode />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="glow-learning">
-              <feGaussianBlur stdDeviation="3" result="coloredBlur" />
-              <feFlood floodColor="#8b5cf6" floodOpacity="0.6" />
-              <feComposite in2="coloredBlur" operator="in" />
-              <feMerge>
-                <feMergeNode />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-            <filter id="glow-hover">
-              <feGaussianBlur stdDeviation="5" result="coloredBlur" />
-              <feMerge>
-                <feMergeNode in="coloredBlur" />
-                <feMergeNode in="SourceGraphic" />
-              </feMerge>
-            </filter>
-          </defs>
-
-          {edges.map((edge, i) => {
-            const fromNode = nodes.find((n) => n.id === edge.from);
-            const toNode = nodes.find((n) => n.id === edge.to);
-            if (!fromNode || !toNode) return null;
-            const fromPos = getRotatedPosition(fromNode);
-            const toPos = getRotatedPosition(toNode);
-            
-            const isConnectedToSelected = selectedNode && 
-              (edge.from === selectedNode.id || edge.to === selectedNode.id);
-            
-            return (
-              <line
-                key={i}
-                x1={fromPos.x}
-                y1={fromPos.y}
-                x2={toPos.x}
-                y2={toPos.y}
-                stroke={isConnectedToSelected ? "hsl(var(--primary))" : "hsl(var(--muted-foreground))"}
-                strokeWidth={isConnectedToSelected ? 2 : 1 + edge.strength / 6}
-                strokeOpacity={isConnectedToSelected ? 0.8 : 0.15 + edge.strength * 0.02}
-                className="transition-all duration-500"
-              />
-            );
-          })}
-
-          {nodes.map((node) => {
-            const pos = getRotatedPosition(node);
+      <div ref={containerRef} className="absolute inset-0 z-0">
+        <ForceGraph3D
+          ref={graphRef}
+          width={containerSize.width}
+          height={containerSize.height}
+          graphData={{ nodes: forceNodes, links: forceEdges }}
+          nodeLabel="title"
+          nodeColor={(node: any) => getNodeColor(node.status)}
+          nodeRelSize={6}
+          nodeThreeObject={(node: any) => {
             const size = getNodeSize(node.mastery, node.status);
             const color = getNodeColor(node.status);
-            const isHovered = hoveredNode?.id === node.id;
-            const isSelected = selectedNode?.id === node.id;
-            const isCentered = centeredNode?.id === node.id;
-            const isLearning = node.status === "learning";
-            const isMastered = node.status === "mastered";
-            const isUnexplored = node.status === "unexplored";
-
-            let filter = undefined;
-            if (isMastered) filter = "url(#glow-gold)";
-            else if (isHovered || isSelected) filter = "url(#glow-hover)";
-
-            return (
-              <g
-                key={node.id}
-                className="cursor-pointer"
-                onMouseEnter={() => setHoveredNode(node)}
-                onMouseLeave={() => setHoveredNode(null)}
-                onClick={(e) => {
-                  e.preventDefault();
-                  handleNodeClick(node);
-                }}
-                data-testid={`node-${node.id}`}
-              >
-                {isLearning && (
-                  <circle
-                    cx={pos.x}
-                    cy={pos.y}
-                    r={size * 1.8}
-                    fill="none"
-                    stroke={color}
-                    strokeWidth={2}
-                    strokeOpacity={0.3}
-                    className="animate-ping"
-                  />
-                )}
-
-                <circle
-                  cx={pos.x}
-                  cy={pos.y}
-                  r={size * 1.4}
-                  fill={color}
-                  opacity={isUnexplored ? 0.05 : 0.15}
-                  className="transition-all duration-300"
-                />
-                
-                <circle
-                  cx={pos.x}
-                  cy={pos.y}
-                  r={size}
-                  fill={color}
-                  opacity={isUnexplored ? 0.4 : 1}
-                  filter={filter}
-                  className="transition-all duration-300"
-                  style={{
-                    transform: `scale(${isHovered || isSelected || isCentered ? 1.2 : 1})`,
-                    transformOrigin: `${pos.x}px ${pos.y}px`,
-                  }}
-                />
-                
-                {isMastered && (
-                  <circle
-                    cx={pos.x}
-                    cy={pos.y}
-                    r={size * 0.5}
-                    fill="#ffffff"
-                    opacity={0.4}
-                    className="transition-all duration-300"
-                  />
-                )}
-                
-                {!isUnexplored && (isHovered || isSelected || isCentered) && (
-                  <text
-                    x={pos.x}
-                    y={pos.y + size + 16}
-                    textAnchor="middle"
-                    fill="currentColor"
-                    className="text-xs font-medium pointer-events-none"
-                    style={{ fontSize: 11 }}
-                  >
-                    {node.title}
-                  </text>
-                )}
-              </g>
-            );
-          })}
-        </svg>
+            
+            // WebGL Neon Sphere for nodes
+            const material = new THREE.MeshPhongMaterial({
+              color: color,
+              emissive: color,
+              emissiveIntensity: node.status === 'learning' || node.status === 'mastered' ? 0.8 : 0.2,
+              transparent: true,
+              opacity: node.status === 'unexplored' ? 0.5 : 0.9,
+            });
+            const geometry = new THREE.SphereGeometry(size, 32, 32);
+            return new THREE.Mesh(geometry, material);
+          }}
+          linkColor={() => "rgba(59, 130, 246, 0.4)"} // Faint Neon Blue links
+          linkWidth={(link: any) => 1 + (link.strength || 1) * 0.2}
+          linkDirectionalParticles={2}
+          linkDirectionalParticleWidth={2}
+          backgroundColor="#0f172a"
+          onNodeClick={handleNodeClick}
+        />
       </div>
-
-      <AnimatePresence>
-        {hoveredNode && !selectedNode && (
-          <motion.div
-            className="absolute pointer-events-none z-20"
-            style={{
-              left: getRotatedPosition(hoveredNode).x * zoom + pan.x + window.innerWidth / 2 - 400 * zoom,
-              top: getRotatedPosition(hoveredNode).y * zoom + pan.y + window.innerHeight / 2 - 300 * zoom - 80,
-              transform: "translateX(-50%)",
-            }}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-          >
-            <Card className="p-3 bg-popover/95 backdrop-blur-md shadow-lg">
-              <p className="font-semibold text-sm">{hoveredNode.title}</p>
-              {hoveredNode.category && (
-                <p className="text-xs text-muted-foreground">{hoveredNode.category}</p>
-              )}
-              {hoveredNode.status !== "unexplored" && (
-                <p className="text-xs mt-1">Mastery: {hoveredNode.mastery}%</p>
-              )}
-              <p className="text-xs text-primary mt-1">Click to focus</p>
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       {selectedNode && (
         <motion.div
@@ -694,30 +346,22 @@ export function KnowledgeGraph3D() {
           <Card className="p-4 w-full md:w-72 max-w-sm mx-auto md:mx-0 bg-background/95 backdrop-blur-lg">
             <div className="flex items-start justify-between mb-2 gap-2">
               <div className="flex-1 min-w-0">
-                <h3 className="font-semibold truncate">{selectedNode.title}</h3>
+                <h3 className="font-semibold text-white truncate">{selectedNode.title}</h3>
                 <div className="flex items-center gap-2 mt-1 flex-wrap">
-                  <Badge variant="secondary">
-                    {selectedNode.category}
-                  </Badge>
+                  <Badge variant="secondary">{selectedNode.category}</Badge>
                   <Badge 
                     variant="outline"
                     className={
-                      selectedNode.status === "mastered" ? "text-yellow-600 border-yellow-600" :
-                      selectedNode.status === "learning" ? "text-violet-600 border-violet-600" :
-                      selectedNode.status === "discovered" ? "text-amber-600 border-amber-600" :
-                      "text-gray-600 border-gray-600"
+                      selectedNode.status === "mastered" ? "text-yellow-500 border-yellow-500" :
+                      selectedNode.status === "learning" ? "text-primary border-primary" :
+                      "text-gray-500 border-gray-500"
                     }
                   >
                     {selectedNode.status}
                   </Badge>
                 </div>
               </div>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setSelectedNode(null)}
-                data-testid="button-close-node-panel"
-              >
+              <Button variant="ghost" size="icon" onClick={() => setSelectedNode(null)}>
                 <X className="h-4 w-4" />
               </Button>
             </div>
@@ -726,7 +370,7 @@ export function KnowledgeGraph3D() {
               <div className="mt-3">
                 <div className="flex justify-between text-sm mb-1">
                   <span className="text-muted-foreground">Mastery</span>
-                  <span className="font-medium">{selectedNode.mastery}%</span>
+                  <span className="font-medium text-white">{selectedNode.mastery}%</span>
                 </div>
                 <div className="h-2 bg-muted rounded-full overflow-hidden">
                   <div
@@ -741,14 +385,29 @@ export function KnowledgeGraph3D() {
             
             <div className="flex gap-2 mt-4">
               <Link href={`/rabbit-hole?topic=${selectedNode.id}`} className="flex-1">
-                <Button size="sm" className="w-full" data-testid="button-explore-topic">
-                  Explore Topic
-                </Button>
+                <Button size="sm" className="w-full text-white">Explore Topic</Button>
               </Link>
             </div>
           </Card>
         </motion.div>
       )}
+
+      {/* Synthesis Quest AI Modal */}
+      <AnimatePresence>
+        {showSynthesis && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 20 }}
+            className="absolute right-4 bottom-4 md:right-8 md:bottom-8 w-full md:w-[400px] h-[600px] max-h-[80vh] bg-background/95 backdrop-blur-xl border rounded-xl shadow-2xl overflow-hidden z-50 flex flex-col"
+          >
+            <AiChat 
+              synthesisTopics={synthesisTopicsStr} 
+              onClose={() => setShowSynthesis(false)} 
+            />
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

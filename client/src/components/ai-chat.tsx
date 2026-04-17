@@ -19,6 +19,7 @@ interface Message {
 
 interface AiChatProps {
   topic?: Topic;
+  synthesisTopics?: string;
   onClose: () => void;
 }
 
@@ -29,14 +30,16 @@ const suggestions = [
   "What should I learn next?",
 ];
 
-export function AiChat({ topic, onClose }: AiChatProps) {
+export function AiChat({ topic, synthesisTopics, onClose }: AiChatProps) {
   const [, setLocation] = useLocation();
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
-      content: topic
-        ? `Hello! I'm your AI learning companion. I see you're exploring "${topic.title}". What would you like to know? I'm here to help you understand this topic better with Socratic questioning and clear explanations.`
+      content: synthesisTopics
+        ? `I see you have mastered **${synthesisTopics}**... Let us see what you are truly capable of. I have constructed a Synthesis Quest to test your multidisciplinary understanding. Are you ready?`
+        : topic
+        ? `Hello! I'm your AI learning companion. I see you're exploring "${topic.title}". What would you like to know? I'm here to help you understand this topic better.`
         : "Hello! I'm your AI learning companion. I'm here to help you explore knowledge, answer questions, and guide your learning journey. What would you like to learn about today?",
       timestamp: new Date(),
     },
@@ -44,6 +47,8 @@ export function AiChat({ topic, onClose }: AiChatProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [socraticMode, setSocraticMode] = useState(false);
+  const [feynmanMode, setFeynmanMode] = useState(false);
+  const [feynmanGraded, setFeynmanGraded] = useState(false);
   const [showProviderSetup, setShowProviderSetup] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -76,6 +81,9 @@ export function AiChat({ topic, onClose }: AiChatProps) {
           message: userMessage.content,
           topicId: topic?.id,
           socraticMode,
+          feynmanMode,
+          feynmanGraded,
+          synthesisQuest: synthesisTopics,
           history: messages.map((m) => ({ role: m.role, content: m.content })),
         }),
       });
@@ -190,20 +198,40 @@ export function AiChat({ topic, onClose }: AiChatProps) {
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h2 className="font-semibold">AI Companion</h2>
+            <h2 className="font-semibold">{synthesisTopics ? "Synthesis Quest" : "AI Companion"}</h2>
             <p className="text-sm text-muted-foreground">
-              {topic ? `Learning: ${topic.title}` : "Ready to help"}
+              {synthesisTopics ? `Topics: ${synthesisTopics}` : topic ? `Learning: ${topic.title}` : "Ready to help"}
             </p>
           </div>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 mr-2">
-            <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">Socratic Mode</span>
+          <div className="flex items-center gap-2 mr-0">
+            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Socratic Tutoring">Socratic</span>
             <Switch 
               checked={socraticMode}
-              onCheckedChange={setSocraticMode}
-              className="data-[state=checked]:bg-primary"
+              onCheckedChange={(v) => { setSocraticMode(v); if (v) setFeynmanMode(false); }}
+              className="data-[state=checked]:bg-primary h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3"
             />
+          </div>
+          <div className="flex items-center gap-1 mr-2 bg-secondary/30 p-1 rounded-md">
+            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Feynman Student Avatar">Feynman</span>
+            <Switch 
+              checked={feynmanMode}
+              onCheckedChange={(v) => { setFeynmanMode(v); if (v) setSocraticMode(false); }}
+              className="data-[state=checked]:bg-amber-500 h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3"
+            />
+            {feynmanMode && (
+              <label className="flex items-center gap-1 ml-1 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={feynmanGraded} 
+                  onChange={(e) => setFeynmanGraded(e.target.checked)}
+                  className="rounded border-gray-400 w-3 h-3 text-amber-600 focus:ring-amber-500"
+                  title="Enable Harsh Grading"
+                />
+                <span className="text-[9px] uppercase font-bold text-amber-600" title="Harsh Grader Mode">Grade Me</span>
+              </label>
+            )}
           </div>
           <Button
             variant="ghost"
