@@ -1,0 +1,29 @@
+VERDICT: APPROVED
+The diff correctly implements the requested behavior: `tts.worker.ts` now attempts `WebGPU + fp32` first and falls back to `WASM + q8` in a catch path, and the default `engineId` is updated to `"webgpu-fp32"`.
+
+Critical findings / aVERDICT: APPROVED
+nalysis:
+- Core requirement met: loading logic now uses try/catch with `KokoroTTS.fromThe diff correctly implements the requested behavior: `tts.worker.ts` now attempts `WebGPU + fp32` first and falls back to `WASM + q8` in a catch path, and the default `engineId` is updated to `"webgpu-fp32"`.
+_pretrained(... { dtype: "fp32", device: "webgpu" })` as pr
+imary and `... { dtype: "q8", device: "wasm" }` as fallbCritical findings / analysis:
+ack.
+- Required metadata behavior met: `engineId` is set to `"w- Core requirement met: loading logic now uses try/catch with `KokoroTTS.from_pretrained(... { dtype: "fp32", device: "webgpu" })` as primary and `... { dtype: "q8", device: "wasm" }` as fallback.
+ebgpu-fp32"` by default and switched to `"wasm-q8"` on fallback.
+- Required comment cleanup met: the prior WASM-only rationale block was removed/replaced with WebGPU-primary intent.
+- Scope compliance: only `client/src/workers/tts.worker.ts` was changed.
+- Additional change in `checkFromCache()` (detecting `model_fp32` OR `model_q8`) is consistent with the new engine strategy and not harmful.
+
+Security: none observed.
+
+Next actions:
+1) Run a quick smoke test on both a WebGPU-capable browser and a non-WebGPU environment to confirm fallback path and `ready.engine` values.
+2) Optionally log/telemetry WebGPU load failure reasons (without failing fallback) to aid future diagnostics.- Required metadata behavior met: `engineId` is set to `"webgpu-fp32"` by default and switched to `"wasm-q8"` on fallback.
+- Required comment cleanup met: the prior WASM-only rationale block was removed/replaced with WebGPU-primary intent.
+- Scope compliance: only `client/src/workers/tts.worker.ts` was changed.
+- Additional change in `checkFromCache()` (detecting `model_fp32` OR `model_q8`) is consistent with the new engine strategy and not harmful.
+
+Security: none observed.
+
+Next actions:
+1) Run a quick smoke test on both a WebGPU-capable browser and a non-WebGPU environment to confirm fallback path and `ready.engine` values.
+2) Optionally log/telemetry WebGPU load failure reasons (without failing fallback) to aid future diagnostics.

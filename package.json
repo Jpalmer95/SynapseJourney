@@ -11,6 +11,7 @@
     "db:push": "drizzle-kit push"
   },
   "dependencies": {
+    "@codesandbox/sandpack-react": "^2.20.0",
     "@google/genai": "^1.39.0",
     "@hookform/resolvers": "^3.10.0",
     "@huggingface/transformers": "^4.0.0",
@@ -60,6 +61,7 @@
     "lucide-react": "^0.453.0",
     "memoizee": "^0.4.17",
     "memorystore": "^1.6.7",
+    "mermaid": "^11.14.0",
     "music-metadata": "^11.12.3",
     "next-themes": "^0.4.6",
     "openai": "^6.15.0",

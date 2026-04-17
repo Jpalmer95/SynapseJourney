@@ -8,7 +8,7 @@ import {
   practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
   unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
   ideaContributions, novaCoins,
-  ttsAudioCache,
+  ttsAudioCache, flashcards, flashcardReviews,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -52,6 +52,10 @@ import {
   type IdeaContribution,
   type InsertIdeaContribution,
   type NovaCoin,
+  type Flashcard,
+  type InsertFlashcard,
+  type FlashcardReview,
+  type InsertFlashcardReview,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -275,6 +279,12 @@ export interface IStorage {
   saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void>;
   getTtsAudioCache(unitId: number, voiceConfigHash: string): Promise<{ audioData: string; audioFormat: string } | null>;
   saveTtsAudioCache(unitId: number, voiceConfigHash: string, audioData: string, audioFormat: string): Promise<void>;
+
+  // Spaced Repetition System (SRS)
+  getDueFlashcards(userId: string, limit?: number): Promise<{ flashcard: Flashcard; review: FlashcardReview | null; topicTitle: string; unitTitle?: string }[]>;
+  createFlashcards(flashcards: InsertFlashcard[]): Promise<Flashcard[]>;
+  getFlashcardsByUnit(unitId: number): Promise<Flashcard[]>;
+  submitFlashcardReview(userId: string, flashcardId: number, quality: number): Promise<FlashcardReview>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -1845,6 +1855,124 @@ export class DatabaseStorage implements IStorage {
     } catch {
       // Ignore duplicate key errors
     }
+  }
+
+  // Spaced Repetition System (SRS)
+  async getDueFlashcards(userId: string, limit = 20): Promise<{ flashcard: Flashcard; review: FlashcardReview | null; topicTitle: string; unitTitle?: string }[]> {
+    // 1. Get due reviews
+    const dueReviewsQuery = await db.select({
+      review: flashcardReviews,
+      flashcard: flashcards,
+      topic: topics,
+      unit: lessonUnits
+    })
+    .from(flashcardReviews)
+    .innerJoin(flashcards, eq(flashcardReviews.flashcardId, flashcards.id))
+    .innerJoin(topics, eq(flashcards.topicId, topics.id))
+    .leftJoin(lessonUnits, eq(flashcards.unitId, lessonUnits.id))
+    .where(and(
+      eq(flashcardReviews.userId, userId),
+      sql`${flashcardReviews.nextReviewDate} <= CURRENT_TIMESTAMP`
+    ))
+    .limit(limit);
+
+    // 2. Get new flashcards (not yet reviewed)
+    const newCardsWanted = limit - dueReviewsQuery.length;
+    let newCardsQuery: any[] = [];
+    
+    if (newCardsWanted > 0) {
+      // Find user's explored/learning topics
+      const progress = await db.select().from(userProgress).where(eq(userProgress.userId, userId));
+      const activeTopicIds = progress.map(p => p.topicId);
+      
+      if (activeTopicIds.length > 0) {
+        newCardsQuery = await db.select({
+          flashcard: flashcards,
+          topic: topics,
+          unit: lessonUnits
+        })
+        .from(flashcards)
+        .innerJoin(topics, eq(flashcards.topicId, topics.id))
+        .leftJoin(lessonUnits, eq(flashcards.unitId, lessonUnits.id))
+        .leftJoin(flashcardReviews, and(
+          eq(flashcards.id, flashcardReviews.flashcardId),
+          eq(flashcardReviews.userId, userId)
+        ))
+        .where(and(
+          inArray(flashcards.topicId, activeTopicIds),
+          sql`${flashcardReviews.id} IS NULL`
+        ))
+        .limit(newCardsWanted);
+      }
+    }
+
+    const results = [
+      ...dueReviewsQuery.map(r => ({ flashcard: r.flashcard, review: r.review, topicTitle: r.topic.title, unitTitle: r.unit?.title })),
+      ...newCardsQuery.map(r => ({ flashcard: r.flashcard, review: null, topicTitle: r.topic.title, unitTitle: r.unit?.title }))
+    ];
+    
+    return results;
+  }
+
+  async createFlashcards(cards: InsertFlashcard[]): Promise<Flashcard[]> {
+    if (!cards.length) return [];
+    return db.insert(flashcards).values(cards).returning();
+  }
+
+  async getFlashcardsByUnit(unitId: number): Promise<Flashcard[]> {
+    return db.select().from(flashcards).where(eq(flashcards.unitId, unitId));
+  }
+
+  async submitFlashcardReview(userId: string, flashcardId: number, quality: number): Promise<FlashcardReview> {
+    // Basic SM-2 implementation format
+    // Quality 0-5 (0 = blackout, 5 = perfect)
+    const [existing] = await db.select().from(flashcardReviews)
+      .where(and(eq(flashcardReviews.userId, userId), eq(flashcardReviews.flashcardId, flashcardId)));
+
+    let repetition = existing?.repetition || 0;
+    let interval = existing?.interval || 0;
+    let easeFactor = existing?.easeFactor ? existing.easeFactor / 1000 : 2.5;
+
+    if (quality >= 3) {
+      if (repetition === 0) interval = 1;
+      else if (repetition === 1) interval = 6;
+      else interval = Math.round(interval * easeFactor);
+      repetition += 1;
+    } else {
+      repetition = 0;
+      interval = 1;
+    }
+
+    easeFactor = easeFactor + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02));
+    if (easeFactor < 1.3) easeFactor = 1.3;
+
+    const nextReviewDate = new Date();
+    nextReviewDate.setDate(nextReviewDate.getDate() + interval);
+
+    if (existing) {
+      const [updated] = await db.update(flashcardReviews)
+        .set({
+          repetition,
+          interval,
+          easeFactor: Math.round(easeFactor * 1000),
+          nextReviewDate,
+          lastReviewedAt: new Date()
+        })
+        .where(eq(flashcardReviews.id, existing.id))
+        .returning();
+      return updated;
+    }
+
+    const [created] = await db.insert(flashcardReviews).values({
+      userId,
+      flashcardId,
+      repetition,
+      interval,
+      easeFactor: Math.round(easeFactor * 1000),
+      nextReviewDate,
+      lastReviewedAt: new Date()
+    }).returning();
+    return created;
   }
 }
 

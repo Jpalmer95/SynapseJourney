@@ -1,0 +1,12 @@
+[1G[0K⠙[1G[0K
+> rest-express@1.0.0 dev
+> NODE_ENV=development tsx server/index.ts
+
+[1G[0K⠙[1G[0K[AI] Course content model: grok-4.20-reasoning via xAI (fallback: gemini-2.0-flash)
+Checking question bank...
+Question bank already has data, skipping seed.
+Checking for topics missing lesson units...
+All topics already have lesson units.
+Checking for placeholder content in lesson units...
+No placeholder content found in lesson units.
+6:37:39 PM [express] serving on port 5000

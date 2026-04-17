@@ -1457,6 +1457,97 @@ Be conversational, warm, and genuinely curious about helping the learner underst
     }
   });
 
+  // ============ SPACED REPETITION SYSTEM (SRS) ============
+
+  // Get due flashcards for the user
+  app.get("/api/user/flashcards/due", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const limit = parseInt(req.query.limit as string) || 20;
+      const flashcards = await storage.getDueFlashcards(req.user.claims.sub, limit);
+      res.json(flashcards);
+    } catch (error) {
+      console.error("Error getting due flashcards:", error);
+      res.status(500).json({ error: "Failed to get due flashcards" });
+    }
+  });
+
+  // Submit flashcard review
+  app.post("/api/flashcards/:id/review", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const flashcardId = parseInt(req.params.id);
+      const { quality } = req.body;
+      
+      if (isNaN(flashcardId) || quality === undefined || quality < 0 || quality > 5) {
+        return res.status(400).json({ error: "Invalid request" });
+      }
+
+      const review = await storage.submitFlashcardReview(req.user.claims.sub, flashcardId, quality);
+      res.json(review);
+    } catch (error) {
+      console.error("Error submitting flashcard review:", error);
+      res.status(500).json({ error: "Failed to submit review" });
+    }
+  });
+
+  // Generate flashcards from lesson content
+  app.post("/api/lessons/:unitId/generate-flashcards", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const unitId = parseInt(req.params.unitId);
+      if (isNaN(unitId)) return res.status(400).json({ error: "Invalid unit ID" });
+
+      // Check if flashcards already exist
+      const existing = await storage.getFlashcardsByUnit(unitId);
+      if (existing.length > 0) {
+        return res.json({ success: true, count: existing.length, flashcards: existing, message: "Flashcards already exist" });
+      }
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit || !unit.contentJson) {
+        return res.status(404).json({ error: "Lesson unit or content not found" });
+      }
+
+      const prompt = `You are an expert educator creating concise, effective spaced-repetition flashcards for the lesson "${unit.title}".
+Review the following lesson content:
+${JSON.stringify(unit.contentJson)}
+
+Generate 5-8 high-quality flashcards testing the core concepts, mechanisms, and key takeaways.
+Each flashcard should have a clear "front" (question/prompt) and a concise "back" (answer/explanation).
+Return a JSON object in this exact format:
+{
+  "flashcards": [
+    { "front": "Question here...", "back": "Answer here...", "cardType": "qna" }
+  ]
+}`;
+
+      // Call AI provider
+      const content = await generateCourseContent(
+        [{ role: "user", content: prompt }],
+        { responseFormat: "json", temperature: 0.5 }
+      ) || '{"flashcards":[]}';
+      
+      const parsed = JSON.parse(content);
+      const cards = parsed.flashcards || [];
+      
+      if (cards.length > 0) {
+        const toInsert = cards.map((c: any) => ({
+          topicId: unit.topicId,
+          unitId: unit.id,
+          front: c.front,
+          back: c.back,
+          cardType: c.cardType || "qna"
+        }));
+        
+        const created = await storage.createFlashcards(toInsert);
+        return res.json({ success: true, count: created.length, flashcards: created });
+      }
+      
+      res.status(400).json({ error: "AI failed to generate flashcards" });
+    } catch (error) {
+      console.error("Error generating flashcards:", error);
+      res.status(500).json({ error: "Failed to generate flashcards" });
+    }
+  });
+
   // ============ ADMIN ROUTES ============
 
   // Check if current user is an admin
@@ -3530,7 +3621,7 @@ async function batchPregenerateUnits(
 }
 
 // Generate lesson outline using AI
-async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
+export async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
   const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
 
 Topic Description: ${topicDescription}
@@ -3715,6 +3806,7 @@ JSON format:
   "0": {
     "concept": "Engaging explanation (2-3 paragraphs with a story hook, real-world relevance, and clear 'why this matters')",
     "keyTakeaways": ["Key point 1", "Key point 2", "Key point 3"],
+    "mermaidDiagram": "Optional. A raw Mermaid.js graph string (no markdown ticks) illustrating the concept",
     "analogy": "Creative, memorable real-world analogy that makes the concept click",
     "example": {
       "title": "Example title",
@@ -3873,10 +3965,10 @@ async function generateLessonContent(
 CRITICAL RESOURCE SPECIFICITY RULES:
 - Every URL must be hyper-specific to "${topic.title}"${categoryName ? ` within the domain of ${categoryName}` : ""}.
 - DO NOT link to generic homepages (e.g. khanacademy.org, youtube.com alone) — link to specific pages, videos, or articles.
-- For YouTube: include the full /watch?v=... URL to a specific video about THIS topic.
-- For OCW/Coursera: link to a specific course or module page about THIS topic.
-- For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX) directly related to THIS topic.
-- You may include a relevant Grokipedia page (https://grokipedia.com/page/${topic.title.replace(/ /g, "_")} or a more specific sub-page) as an additional resource.
+- For YouTube: ALWAYS try to include a full /watch?v=... URL to a specific, highly relevant video about this topic.
+- For OCW/Coursera/KhanAcademy: link to a specific course, module, or lesson page about THIS topic.
+- For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX).
+- ALWAYS include a topic link to a relevant Grokipedia page (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) as it is incredibly useful.
 - Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
 - Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
 
@@ -3904,6 +3996,7 @@ Create the lesson content in this JSON format:
 {
   "concept": "Engaging, in-depth explanation (2-3 substantial paragraphs appropriate for this difficulty tier)",
   "keyTakeaways": ["Key insight 1", "Key insight 2", "Key insight 3", "Key insight 4"],
+  "mermaidDiagram": "Optional. A raw Mermaid.js graph string (e.g. flowchart, map, graph) illustrating the concept. Do NOT include markdown backticks.",
   "analogy": "A creative, memorable real-world analogy that makes this concept click",
   "example": {
     "title": "Example title",
@@ -3937,7 +4030,7 @@ Create the lesson content in this JSON format:
 
 Include exactly 3 quiz questions appropriate for the difficulty level.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}
-The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc). Do not invent URLs.`;
+The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, grokipedia.com, etc). Do not invent URLs.`;
 
   try {
     const content = await generateCourseContent(

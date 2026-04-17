@@ -448,6 +448,30 @@ export const testGapRecommendations = pgTable("test_gap_recommendations", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Spaced Repetition System (SRS) - Flashcards generated from lessons
+export const flashcards = pgTable("flashcards", {
+  id: serial("id").primaryKey(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  unitId: integer("unit_id").references(() => lessonUnits.id),
+  front: text("front").notNull(),
+  back: text("back").notNull(),
+  cardType: text("card_type").default("qna").notNull(), // qna, code, vocab, etc.
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// User Flashcard Reviews (SRS Tracking)
+export const flashcardReviews = pgTable("flashcard_reviews", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  flashcardId: integer("flashcard_id").references(() => flashcards.id).notNull(),
+  interval: integer("interval").default(0).notNull(), // days until next review
+  repetition: integer("repetition").default(0).notNull(), // consecutive correct reviews
+  easeFactor: integer("ease_factor").default(2500).notNull(), // SRS ease factor (1000 = 1.0)
+  nextReviewDate: timestamp("next_review_date").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  lastReviewedAt: timestamp("last_reviewed_at"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Idea Contributions (Pioneer system for novel research ideas)
 export const ideaContributions = pgTable("idea_contributions", {
   id: serial("id").primaryKey(),
@@ -551,6 +575,8 @@ export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecom
 export const insertIdeaContributionSchema = createInsertSchema(ideaContributions).omit({ id: true, submittedAt: true });
 export const insertNovaCoinSchema = createInsertSchema(novaCoins).omit({ id: true, updatedAt: true });
 export const insertTtsAudioCacheSchema = createInsertSchema(ttsAudioCache).omit({ id: true, createdAt: true });
+export const insertFlashcardSchema = createInsertSchema(flashcards).omit({ id: true, createdAt: true });
+export const insertFlashcardReviewSchema = createInsertSchema(flashcardReviews).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -633,11 +659,16 @@ export type NovaCoin = typeof novaCoins.$inferSelect;
 export type InsertNovaCoin = z.infer<typeof insertNovaCoinSchema>;
 export type TtsAudioCache = typeof ttsAudioCache.$inferSelect;
 export type InsertTtsAudioCache = z.infer<typeof insertTtsAudioCacheSchema>;
+export type Flashcard = typeof flashcards.$inferSelect;
+export type InsertFlashcard = z.infer<typeof insertFlashcardSchema>;
+export type FlashcardReview = typeof flashcardReviews.$inferSelect;
+export type InsertFlashcardReview = z.infer<typeof insertFlashcardReviewSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
   concept: string;
   analogy: string;
+  mermaidDiagram?: string; // Optional Mermaid.js syntax string for visual diagrams
   keyTakeaways?: string[];
   example: {
     title: string;

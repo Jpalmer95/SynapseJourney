@@ -1,0 +1,14 @@
+Task #32: Switch Kokoro back to WebGPU fp32 primary, WASM q8 fallback
+
+Changed client/src/workers/tts.worker.ts only. No other files touched.
+
+Three targeted edits:
+1. engineId default (line 33): "wasm-q8" → "webgpu-fp32"
+2. Model loading block (lines 164-185): replaced WASM-only load with try/catch:
+   - try:   WebGPU fp32 via dtype:"fp32", device:"webgpu"  → engineId = "webgpu-fp32"
+   - catch: WASM q8 fallback via dtype:"q8", device:"wasm" → engineId = "wasm-q8"
+   Both paths call makeProgressCallback() so progress bar still works on either engine.
+3. checkFromCache(): updated artifact key check to match fp32 OR q8 filenames,
+   so users with either cached format still get a cache-hit indication.
+
+Removed the WASM-only comment block that explained the earlier decision to drop WebGPU.

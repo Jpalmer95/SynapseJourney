@@ -1,0 +1,37 @@
+VERDICT: APPROVED_WITH_COMMENTS
+
+The diff correctly implements the task’s core requirements: it switches the worker cache namespace from the browser-ignored `env.cacheDir` to the correct browser key `env.cacheKey`, and adds a 3-minute init timeout around `ensVERDICT: APPROVED_WITH_COMMENTS
+ureKokoroInit()` with retry re-enablement (`workerReadyPromiseRef.current = null`) a
+nd loading reset.
+
+Critical findings:
+- `client/src/workers/tts.worker.ts`: `env.cacheKey = "transformers-cache-kokoro-v2"` is the right fix for browser `caches.open(...)` behavior and should force a fresh cache store for model assets.
+- `client/src/hooks/use-tts.tsx`: `Promise.race` timeout logic is present at 180000ms, returns the requested timeout error message, and resets loading/promise state in `.catch(...)`, which provides the intended recovery path.
+- Scope control is correct: only the two specified files were changed; no unrelated button/playback/voice logic was modified.
+
+Comments (non-blocking):
+- On timeout, the init request entry in `pendingRef` is not explicitly removed. If the worker never replies, stale pending entries can accumulate across retries.
+- The timeout timer is not canceled on successful init, so the timeout callback still runs later (usually harmless, but avoidable overhead).
+
+Security: none observed (no authz, secret handling, injection, or dangerous sink regression introduced by this diff).
+
+Next actions:
+1) Optionally clean up `pendingRef` on timeout by tracking init `id` and deleting it in timeout/catch path.
+2) Optionally store timeout handle and clear it when init resolves/rejects to prevent unnecessary timer firing.
+3) Merge as-is if prioritizing immediate functional fix for hang/retry behavior.The diff correctly implements the task’s core requirements: it switches the worker cache namespace from the browser-ignored `env.cacheDir` to the correct browser key `env.cacheKey`, and adds a 3-minute init timeout around `ensureKokoroInit()` with retry re-enablement (`workerReadyPromiseRef.current = null`) and loading reset.
+
+Critical findings:
+- `client/src/workers/tts.worker.ts`: `env.cacheKey = "transformers-cache-kokoro-v2"` is the right fix for browser `caches.open(...)` behavior and should force a fresh cache store for model assets.
+- `client/src/hooks/use-tts.tsx`: `Promise.race` timeout logic is present at 180000ms, returns the requested timeout error message, and resets loading/promise state in `.catch(...)`, which provides the intended recovery path.
+- Scope control is correct: only the two specified files were changed; no unrelated button/playback/voice logic was modified.
+
+Comments (non-blocking):
+- On timeout, the init request entry in `pendingRef` is not explicitly removed. If the worker never replies, stale pending entries can accumulate across retries.
+- The timeout timer is not canceled on successful init, so the timeout callback still runs later (usually harmless, but avoidable overhead).
+
+Security: none observed (no authz, secret handling, injection, or dangerous sink regression introduced by this diff).
+
+Next actions:
+1) Optionally clean up `pendingRef` on timeout by tracking init `id` and deleting it in timeout/catch path.
+2) Optionally store timeout handle and clear it when init resolves/rejects to prevent unnecessary timer firing.
+3) Merge as-is if prioritizing immediate functional fix for hang/retry behavior.

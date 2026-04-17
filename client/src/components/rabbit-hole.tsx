@@ -65,6 +65,8 @@ import {
 } from "@/components/ui/dialog";
 import { AiChat } from "@/components/ai-chat";
 import { TTSButton } from "@/components/tts-button";
+import { MermaidDiagram } from "@/components/mermaid";
+import { CodeSandbox } from "@/components/code-sandbox";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -1243,6 +1245,21 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                   );
                 })()}
 
+                {/* Mermaid Visual Diagram Selection */}
+                {lessonContent.mermaidDiagram && (
+                  <section className="min-w-0 w-full group transition-all">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Sparkles className="h-5 w-5 text-indigo-500 shrink-0" />
+                      <h2 className="text-xl font-semibold flex-1">Visual Map</h2>
+                    </div>
+                    <Card className="overflow-hidden w-full bg-indigo-500/5 border-indigo-500/20">
+                      <CardContent className="p-4 sm:p-6 overflow-hidden">
+                        <MermaidDiagram chart={lessonContent.mermaidDiagram} />
+                      </CardContent>
+                    </Card>
+                  </section>
+                )}
+
                 {/* Analogy Section */}
                 {(() => {
                   const aIdx = sectionIndexMap["Analogy"] ?? -1;
@@ -1301,10 +1318,8 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                           {lessonContent.example.content}
                         </p>
                         {lessonContent.example.code && (
-                          <div className="overflow-x-auto max-w-full">
-                            <pre className="bg-muted p-3 sm:p-4 rounded-md text-xs sm:text-sm font-mono min-w-0">
-                              {lessonContent.example.code}
-                            </pre>
+                          <div className="mt-4 w-full min-w-0">
+                            <CodeSandbox code={lessonContent.example.code} />
                           </div>
                         )}
                       </CardContent>

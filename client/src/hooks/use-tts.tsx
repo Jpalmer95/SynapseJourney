@@ -920,10 +920,19 @@ function useTTSImpl(): UseTTSReturn {
         try {
           const sentences = splitIntoSentences(text);
           setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
+          
+          let nextBlobPromise: Promise<Blob> | null = null;
+          if (sentences.length > 0) {
+            nextBlobPromise = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+          }
+
           for (let si = 0; si < sentences.length; si++) {
             if (cancelledRef.current) break;
-            const blob = await kokoroSpeakWithTimeout(sentences[si], kokoroVoiceRef.current);
-            if (cancelledRef.current) break;
+            const blob = await nextBlobPromise;
+            if (si + 1 < sentences.length && !cancelledRef.current) {
+              nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
+            }
+            if (!blob || cancelledRef.current) break;
             await playBlobAudio(blob);
           }
           if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
@@ -1191,10 +1200,19 @@ function useTTSImpl(): UseTTSReturn {
           try {
             const sentences = splitIntoSentences(sectionText);
             setState(prev => ({ ...prev, usingServerTTS: false }));
-            for (const sentence of sentences) {
+
+            let nextBlobPromise: Promise<Blob> | null = null;
+            if (sentences.length > 0) {
+              nextBlobPromise = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+            }
+
+            for (let si = 0; si < sentences.length; si++) {
               if (cancelledRef.current) break;
-              const blob = await kokoroSpeakWithTimeout(sentence, kokoroVoiceRef.current);
-              if (cancelledRef.current) break;
+              const blob = await nextBlobPromise;
+              if (si + 1 < sentences.length && !cancelledRef.current) {
+                nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
+              }
+              if (!blob || cancelledRef.current) break;
               await playBlobAudio(blob);
             }
             kokoroDone = !cancelledRef.current;
