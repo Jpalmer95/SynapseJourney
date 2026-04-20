@@ -68,6 +68,7 @@ interface UseTTSReturn extends TTSState {
   kokoroDownloadPercent: number | null;
   kokoroDownloadPhase: "download" | "compile" | null;
   kokoroLoadError: string | null;
+  kokoroDeviceWarning: string | null; // Proactive warning for constrained devices
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
@@ -209,6 +210,27 @@ function useTTSImpl(): UseTTSReturn {
   const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
   // Surfaced to UI when the Kokoro model fails to load (e.g. timeout, OOM).
   const [kokoroLoadError, setKokoroLoadError] = useState<string | null>(null);
+  // Proactive device capability warning (checked at hook init)
+  const [kokoroDeviceWarning] = useState<string | null>(() => {
+    if (typeof navigator === "undefined") return null;
+    const ua = (navigator.userAgent || "").toLowerCase();
+    // Tesla browser
+    if (ua.includes("tesla") || ua.includes("qtcarbrowser")) {
+      return "Tesla browser: local TTS may not work. Use Browser TTS or Qwen Cloud.";
+    }
+    // Low memory devices
+    const mem = (navigator as any).deviceMemory;
+    if (typeof mem === "number" && mem < 2) {
+      return `Device has ~${mem}GB RAM. Local TTS may fail. Use Browser TTS or Qwen Cloud.`;
+    }
+    // No WebGPU + old iOS
+    if (typeof navigator.gpu === "undefined") {
+      if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
+        return "Older iOS detected — local TTS may not work. Use Browser TTS or Qwen Cloud.";
+      }
+    }
+    return null;
+  });
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
@@ -1490,6 +1512,7 @@ function useTTSImpl(): UseTTSReturn {
     kokoroDownloadPercent,
     kokoroDownloadPhase,
     kokoroLoadError,
+    kokoroDeviceWarning,
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,

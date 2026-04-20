@@ -98,11 +98,12 @@ export const learningRoadmaps = pgTable("learning_roadmaps", {
 export const lessonUnits = pgTable("lesson_units", {
   id: serial("id").primaryKey(),
   topicId: integer("topic_id").references(() => topics.id).notNull(),
-  difficulty: text("difficulty").notNull(), // beginner, intermediate, advanced
+  difficulty: text("difficulty").notNull(), // beginner, intermediate, advanced, nextgen
+  contentType: text("content_type").default("balanced"), // code_heavy, formula_heavy, visual_heavy, theory_heavy, balanced
   unitIndex: integer("unit_index").notNull(),
   title: text("title").notNull(),
   outline: text("outline"), // Brief description of unit
-  contentJson: jsonb("content_json"), // Full lesson content: { concept, analogy, example, quiz, crossLinks }
+  contentJson: jsonb("content_json"), // Full lesson content: { concept, analogy, example, quiz, crossLinks, crossDomainInsights, etc }
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 

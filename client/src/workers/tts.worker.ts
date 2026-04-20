@@ -147,11 +147,88 @@ const LOAD_TIMEOUT_MS = 90_000; // 90 seconds
 // bounded wait semantics (not just the first initiating call).
 let loadingWithTimeout: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
 
+/**
+ * Check if WebGPU is actually usable on this device.
+ * Returns false if:
+ * - WebGPU API not present
+ * - requestAdapter() returns null (device GPU unavailable or under memory pressure)
+ * - We are on a known-constrained device (Tesla infotainment, older mobile)
+ */
+async function detectWebGPU(): Promise<boolean> {
+  if (typeof navigator === "undefined" || !("gpu" in navigator)) {
+    console.log("[TTS Worker] WebGPU API not present in this browser");
+    return false;
+  }
+
+  // Check for known-constrained environments where WebGPU is likely broken
+  const ua = (navigator.userAgent || "").toLowerCase();
+  // Tesla browser identifies as a specific Chromium build
+  if (ua.includes("tesla") || ua.includes("qtcarbrowser")) {
+    console.log("[TTS Worker] Tesla browser detected — skipping WebGPU");
+    return false;
+  }
+
+  try {
+    const adapter = await navigator.gpu.requestAdapter();
+    if (!adapter) {
+      console.log("[TTS Worker] WebGPU requestAdapter() returned null — GPU unavailable");
+      return false;
+    }
+    // Check available VRAM hint if exposed (not all browsers expose this)
+    const limits = adapter.limits;
+    if (limits && limits.maxBufferSize < 128 * 1024 * 1024) {
+      console.log(`[TTS Worker] WebGPU maxBufferSize=${limits.maxBufferSize} too small for fp32 model — falling back`);
+      return false;
+    }
+    console.log("[TTS Worker] WebGPU adapter available");
+    return true;
+  } catch (e) {
+    console.log("[TTS Worker] WebGPU requestAdapter() threw:", e instanceof Error ? e.message : e);
+    return false;
+  }
+}
+
+/**
+ * Check if device memory is likely sufficient for the 82MB model.
+ * Uses navigator.deviceMemory if available (Chrome/Edge), else heuristic by UA.
+ */
+function hasSufficientMemory(): boolean {
+  // navigator.deviceMemory returns approximate RAM in GB (Chrome only)
+  const mem = (navigator as any).deviceMemory;
+  if (typeof mem === "number") {
+    if (mem < 2) {
+      console.log(`[TTS Worker] Device reports ${mem}GB RAM — insufficient for Kokoro model`);
+      return false;
+    }
+    console.log(`[TTS Worker] Device reports ${mem}GB RAM — sufficient`);
+    return true;
+  }
+  // Fallback: check UA for known low-memory devices
+  const ua = (navigator.userAgent || "").toLowerCase();
+  // Very old iPhones (SE 1st gen, 6/7) have 1-2GB
+  if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
+    console.log("[TTS Worker] Old iOS detected — assuming low memory");
+    return false;
+  }
+  // Assume sufficient if we can't detect
+  return true;
+}
+
 async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> {
   if (isReady) return { engine: engineId, loadMs, fromCache };
   // Return the timeout-raced shared promise so ALL concurrent callers get the same
   // bounded 90 s deadline (not just the first one that started the load).
   if (loadingWithTimeout) return loadingWithTimeout;
+
+  // Pre-check device capabilities before attempting load
+  const webgpuAvailable = await detectWebGPU();
+  const memoryAvailable = hasSufficientMemory();
+
+  if (!webgpuAvailable && !memoryAvailable) {
+    const err = new Error("This device lacks WebGPU and has insufficient memory for local TTS. Please use Browser TTS or Qwen Cloud instead.");
+    console.error("[TTS Worker]", err.message);
+    throw err;
+  }
 
   loadingPromise = (async () => {
     const cachedBefore = await checkFromCache();
@@ -162,17 +239,28 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     // ── WebGPU fp32 primary, WASM q8 fallback ────────────────────────────────
     // fp32 on WebGPU produces the best audio quality. WASM q8 catches devices
     // without WebGPU support or where GPU load fails.
-    try {
-      console.log("[TTS Worker] Loading WebGPU fp32…");
-      kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
-        dtype: "fp32",
-        device: "webgpu",
-        progress_callback: makeProgressCallback(),
-      });
-      engineId = "webgpu-fp32";
-      console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
-    } catch {
-      console.log("[TTS Worker] WebGPU unavailable — falling back to WASM q8…");
+    if (webgpuAvailable) {
+      try {
+        console.log("[TTS Worker] Loading WebGPU fp32…");
+        kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
+          dtype: "fp32",
+          device: "webgpu",
+          progress_callback: makeProgressCallback(),
+        });
+        engineId = "webgpu-fp32";
+        console.log("[TTS Worker] ✓ WebGPU fp32 loaded");
+      } catch (e) {
+        console.log("[TTS Worker] WebGPU load failed — falling back to WASM q8:", e instanceof Error ? e.message : e);
+        // Fall through to WASM
+      }
+    }
+
+    // WASM fallback (also the primary path when WebGPU was unavailable)
+    if (!kokoroTTS) {
+      if (!memoryAvailable) {
+        throw new Error("Insufficient memory for WASM TTS. Please use Browser TTS or Qwen Cloud instead.");
+      }
+      console.log("[TTS Worker] Loading WASM q8…");
       kokoroTTS = await KokoroTTS.from_pretrained("onnx-community/Kokoro-82M-v1.0-ONNX", {
         dtype: "q8",
         device: "wasm",

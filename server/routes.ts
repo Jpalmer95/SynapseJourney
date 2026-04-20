@@ -3727,52 +3727,157 @@ async function batchPregenerateUnits(
     }
 
     console.log(`[BatchPregen] Completed: ${savedCount}/${unitsToGenerate.length} units saved for "${topic.title}"`);
+
+    // ── TTS Pre-generation: pre-cache audio for all server voice presets ─────
+    // This ensures constrained devices (Tesla, old iPhone) that can't run Kokoro
+    // have cached server audio available immediately when they select Browser TTS or Qwen.
+    // Run in background — don't block the response.
+    const serverVoicePresets = ["qwen"]; // OpenAI-mapped presets available server-side
+    const { preGenerateTTSForUnit } = await import("./tts-service");
+    for (const [unitId, content] of contentMap.entries()) {
+      for (const voicePreset of serverVoicePresets) {
+        preGenerateTTSForUnit(unitId, content, false, voicePreset)
+          .catch(err => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err?.message || err));
+      }
+    }
+    console.log(`[BatchPregen] TTS pre-generation started for ${contentMap.size} units × ${serverVoicePresets.length} voices`);
   } catch (err) {
     console.warn(`[BatchPregen] Error during batch pre-generation for "${topic.title}":`, err instanceof Error ? err.message : String(err));
   }
 }
 
 // Generate lesson outline using AI
+/**
+ * Classify a topic into a depth profile to determine optimal lesson distribution.
+ * Deep science topics get more units per tier; narrow tool topics get fewer.
+ */
+interface TopicDepthProfile {
+  category: "narrow_tool" | "focused" | "standard" | "broad" | "deep_science";
+  unitsPerTier: { beginner: number; intermediate: number; advanced: number; nextgen: number };
+  contentType: "code_heavy" | "formula_heavy" | "visual_heavy" | "theory_heavy" | "balanced";
+}
+
+function classifyTopicByKeywords(title: string, description: string): TopicDepthProfile {
+  const text = `${title} ${description}`.toLowerCase();
+
+  // Deep science / broad interdisciplinary — 5-6 per tier
+  const deepScienceTerms = [
+    "quantum", "relativity", "thermodynamics", "electrodynamics", "field theory",
+    "particle physics", "astrophysic", "cosmolog", "general relativity", "string theory",
+    "machine learning", "deep learning", "neural network", "fluid dynamics", "turbulence",
+    "biochemistry", "molecular biology", "organic chemistry", "inorganic chemistry",
+    "number theory", "topology", "abstract algebra", "differential geometry",
+    "compiler", "operating system", "distributed system", "cryptography",
+  ];
+
+  // Broad topics — 4-5 per tier
+  const broadTerms = [
+    "physics", "mathematics", "computer science", "engineering", "chemistry",
+    "biology", "calculus", "linear algebra", "algorithms", "data structures",
+    "electromagnetism", "optics", "waves", "classical mechanics", "music theory",
+    "genetics", "ecology", "economics", "psychology", "philosophy",
+  ];
+
+  // Narrow tool-focused — 2 per tier
+  const narrowTerms = [
+    "how to use", "introduction to", "getting started with", "tutorial",
+    "guide to", "using ", "installing", "setting up",
+  ];
+
+  // Code-heavy indicators
+  const codeTerms = ["python", "javascript", "typescript", "react", "node", "api", "programming", "coding", "software", "algorithm", "data structure", "gradio", "hugging face", "git"];
+  // Formula-heavy indicators
+  const formulaTerms = ["calculus", "algebra", "equation", "derivative", "integral", "theorem", "proof", "quantum", "thermodynamics", "electrodynamics", "mechanics", "wave function"];
+
+  const isDeep = deepScienceTerms.some(t => text.includes(t));
+  const isBroad = broadTerms.some(t => text.includes(t));
+  const isNarrow = narrowTerms.some(t => text.includes(t));
+
+  const isCodeHeavy = codeTerms.some(t => text.includes(t));
+  const isFormulaHeavy = formulaTerms.some(t => text.includes(t));
+
+  let contentType: TopicDepthProfile["contentType"] = "balanced";
+  if (isCodeHeavy && !isFormulaHeavy) contentType = "code_heavy";
+  else if (isFormulaHeavy && !isCodeHeavy) contentType = "formula_heavy";
+  else if (isCodeHeavy && isFormulaHeavy) contentType = "formula_heavy"; // math+code = prioritize formulas
+
+  if (isDeep) {
+    return {
+      category: "deep_science",
+      unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 },
+      contentType,
+    };
+  } else if (isBroad) {
+    return {
+      category: "broad",
+      unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 },
+      contentType,
+    };
+  } else if (isNarrow) {
+    return {
+      category: "narrow_tool",
+      unitsPerTier: { beginner: 2, intermediate: 2, advanced: 2, nextgen: 2 },
+      contentType,
+    };
+  } else {
+    return {
+      category: "standard",
+      unitsPerTier: { beginner: 3, intermediate: 3, advanced: 3, nextgen: 3 },
+      contentType,
+    };
+  }
+}
+
 export async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
+  const profile = classifyTopicByKeywords(topicTitle, topicDescription);
+  const tierInfo = profile.unitsPerTier;
+
+  const contentTypeGuidance = profile.contentType === "code_heavy"
+    ? `This is a CODE-HEAVY topic. Include runnable code examples in most units. Beginner units should show simple one-liners; intermediate should show functions/classes; advanced should show architecture patterns.`
+    : profile.contentType === "formula_heavy"
+    ? `This is a FORMULA-HEAVY topic. Include mathematical notation and derivations. Beginner units should use intuition-first explanations; intermediate should introduce equations with plain-English glosses; advanced should use formal mathematical arguments.`
+    : `This is a CONCEPT-HEAVY topic. Focus on clear explanations, analogies, and thought experiments. Code and formulas are optional — use them only when they genuinely clarify the concept.`;
+
   const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
 
 Topic Description: ${topicDescription}
 
-Create a course outline with units across FOUR difficulty levels. Choose the number of units per tier based on topic breadth and depth:
-- Narrow or tool-focused topics (e.g. "How to use git stash", "Introduction to printf"): 2 units per tier
-- Average topics (most subjects): 3 units per tier
-- Broad science, engineering, or rich interdisciplinary topics (e.g. "Quantum Field Theory", "Machine Learning"): 4–6 units per tier
+Topic Classification: ${profile.category} (${profile.contentType})
+${contentTypeGuidance}
 
-Each tier MUST have between 2 and 6 units. Every unit must have a UNIQUE title covering DISTINCT material — no two units in the same tier may overlap in content.
+Create a course outline with units across FOUR difficulty levels. The target unit counts for THIS specific topic are:
+- Beginner: ${tierInfo.beginner} units
+- Intermediate: ${tierInfo.intermediate} units
+- Advanced: ${tierInfo.advanced} units
+- Next Gen: ${tierInfo.nextgen} units
 
-Respond with a JSON object in this exact format (showing a Physics example with variable unit counts — replace with real content for "${topicTitle}"):
+Every unit must have a UNIQUE title covering DISTINCT material — no two units in the same tier may overlap in content.
+
+Respond with a JSON object in this exact format (replace with real content for "${topicTitle}"):
 {
   "units": [
-    {"difficulty": "beginner", "unitIndex": 0, "title": "What Is Energy?", "outline": "Introduce energy as the capacity to do work, using everyday examples like food, batteries, and sunlight."},
-    {"difficulty": "beginner", "unitIndex": 1, "title": "Forces and Motion", "outline": "Explore how pushes and pulls change the speed and direction of objects, from bicycles to planets."},
-    {"difficulty": "beginner", "unitIndex": 2, "title": "Waves and Light", "outline": "Discover how energy travels through waves, why the sky is blue, and how rainbows form."},
-    {"difficulty": "intermediate", "unitIndex": 0, "title": "Newton's Laws in Depth", "outline": "Derive and apply all three of Newton's laws using free-body diagrams and real engineering scenarios."},
-    {"difficulty": "intermediate", "unitIndex": 1, "title": "Thermodynamics Fundamentals", "outline": "Understand heat engines, entropy, and the laws of thermodynamics through worked examples."},
-    {"difficulty": "intermediate", "unitIndex": 2, "title": "Electromagnetism Mechanics", "outline": "Explore Coulomb's law, electric fields, and how Maxwell unified electricity and magnetism."},
-    {"difficulty": "advanced", "unitIndex": 0, "title": "Quantum Mechanics Foundations", "outline": "Examine wave-particle duality, the Schrödinger equation, and the measurement problem."},
-    {"difficulty": "advanced", "unitIndex": 1, "title": "General Relativity", "outline": "Understand spacetime curvature, gravitational waves, and black hole physics from first principles."},
-    {"difficulty": "advanced", "unitIndex": 2, "title": "Standard Model and Particle Physics", "outline": "Survey quarks, leptons, gauge bosons, and the Higgs mechanism in modern particle physics."},
-    {"difficulty": "nextgen", "unitIndex": 0, "title": "Open Problems in Quantum Gravity", "outline": "Explore why reconciling quantum mechanics with gravity remains unsolved and what approaches are being tried."},
-    {"difficulty": "nextgen", "unitIndex": 1, "title": "Dark Matter and Dark Energy Frontiers", "outline": "Investigate what 95% of the universe is made of, what experiments are hunting for it, and competing theories."},
-    {"difficulty": "nextgen", "unitIndex": 2, "title": "Future of Energy Technology", "outline": "Examine fusion energy, room-temperature superconductivity, and the path from lab to global power grid."}
+    {"difficulty": "beginner", "unitIndex": 0, "title": "...", "outline": "..."},
+    {"difficulty": "beginner", "unitIndex": 1, "title": "...", "outline": "..."},
+    ...
+    {"difficulty": "intermediate", "unitIndex": 0, "title": "...", "outline": "..."},
+    ...
+    {"difficulty": "advanced", "unitIndex": 0, "title": "...", "outline": "..."},
+    ...
+    {"difficulty": "nextgen", "unitIndex": 0, "title": "...", "outline": "..."},
+    ...
   ]
 }
 
 CRITICAL RULES:
+- Produce EXACTLY ${tierInfo.beginner} beginner, ${tierInfo.intermediate} intermediate, ${tierInfo.advanced} advanced, and ${tierInfo.nextgen} nextgen units (${tierInfo.beginner + tierInfo.intermediate + tierInfo.advanced + tierInfo.nextgen} total).
 - Every unit title must be UNIQUE and cover a DIFFERENT aspect of "${topicTitle}" — no overlapping content within a tier.
-- Each tier must contain between 2 and 6 units. Choose the count that best fits the topic's breadth for that level.
-- unitIndex MUST be sequential starting from 0 within each difficulty (0, 1, 2, ... up to however many units you create for that tier).
+- unitIndex MUST be sequential starting from 0 within each difficulty (0, 1, 2, ...).
 - Titles must be specific to "${topicTitle}", not generic placeholders.
 - Outlines must describe exactly what that specific unit covers (1-2 sentences).
-- Beginner: everyday language, no jargon, spark curiosity.
-- Intermediate: mechanisms, frameworks, how things work.
-- Advanced: current research, edge cases, expert-level nuances.
-- Next Gen: unsolved problems, active research questions, frontier exploration.`;
+- Beginner: everyday language, no jargon, spark curiosity. Focus on "what is it?" and "why does this matter?"
+- Intermediate: mechanisms, frameworks, how things work under the hood.
+- Advanced: current research, edge cases, expert-level nuances, competing paradigms.
+- Next Gen: unsolved problems, active research questions, frontier exploration, cross-domain connections.`;
 
   try {
     const content = await generateCourseContent(
@@ -3786,31 +3891,32 @@ CRITICAL RULES:
       throw new Error("Invalid AI response format");
     }
 
-    // Normalize unitIndex values and enforce per-tier counts of 2–6.
-    // If a tier is out of range, default to exactly 3 units (spec requirement).
+    // Normalize unitIndex values and enforce per-tier counts matching the topic profile.
     const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"];
-    // Generic 3-unit fallback per difficulty when the AI returns too few or too many
+    const tierTargets: Record<string, number> = {
+      beginner: tierInfo.beginner,
+      intermediate: tierInfo.intermediate,
+      advanced: tierInfo.advanced,
+      nextgen: tierInfo.nextgen,
+    };
+    // Generic fallback per difficulty when the AI returns wrong count
     const tierDefaults: Record<string, any[]> = {
-      beginner: [
-        { difficulty: "beginner", title: "Introduction & Basics", outline: `Get started with the fundamentals of ${topicTitle}` },
-        { difficulty: "beginner", title: "Core Concepts", outline: "Learn the essential terms and ideas" },
-        { difficulty: "beginner", title: "Simple Examples", outline: "See the concepts in action with easy examples" },
-      ],
-      intermediate: [
-        { difficulty: "intermediate", title: "Deeper Mechanisms", outline: "Understand how things work under the hood" },
-        { difficulty: "intermediate", title: "Practical Applications", outline: "Apply your knowledge to real scenarios" },
-        { difficulty: "intermediate", title: "Common Patterns", outline: "Recognize recurring themes and approaches" },
-      ],
-      advanced: [
-        { difficulty: "advanced", title: "Edge Cases", outline: "Explore unusual situations and exceptions" },
-        { difficulty: "advanced", title: "Current Research", outline: "Discover what experts are working on today" },
-        { difficulty: "advanced", title: "Expert Applications", outline: "See how professionals use these concepts" },
-      ],
-      nextgen: [
-        { difficulty: "nextgen", title: "Open Research Questions", outline: "Explore unsolved problems and cutting-edge questions in the field" },
-        { difficulty: "nextgen", title: "Industry Frontiers", outline: "Discover active challenges and emerging opportunities" },
-        { difficulty: "nextgen", title: "Creative Synthesis", outline: "Combine ideas from different domains for breakthrough insights" },
-      ],
+      beginner: Array.from({ length: tierInfo.beginner }, (_, i) => ({
+        difficulty: "beginner", title: i === 0 ? "Introduction & Basics" : i === 1 ? "Core Concepts" : `Foundations Part ${i}`,
+        outline: i === 0 ? `Get started with the fundamentals of ${topicTitle}` : "Learn the essential terms and ideas",
+      })),
+      intermediate: Array.from({ length: tierInfo.intermediate }, (_, i) => ({
+        difficulty: "intermediate", title: i === 0 ? "Deeper Mechanisms" : i === 1 ? "Practical Applications" : `Advanced Patterns Part ${i}`,
+        outline: i === 0 ? "Understand how things work under the hood" : "Apply your knowledge to real scenarios",
+      })),
+      advanced: Array.from({ length: tierInfo.advanced }, (_, i) => ({
+        difficulty: "advanced", title: i === 0 ? "Edge Cases" : i === 1 ? "Current Research" : `Expert Topics Part ${i}`,
+        outline: i === 0 ? "Explore unusual situations and exceptions" : "Discover what experts are working on today",
+      })),
+      nextgen: Array.from({ length: tierInfo.nextgen }, (_, i) => ({
+        difficulty: "nextgen", title: i === 0 ? "Open Research Questions" : i === 1 ? "Industry Frontiers" : `Frontier Exploration Part ${i}`,
+        outline: i === 0 ? "Explore unsolved problems and cutting-edge questions" : "Discover active challenges and emerging opportunities",
+      })),
     };
 
     const unitsByDiff: Record<string, any[]> = {};
@@ -3821,19 +3927,20 @@ CRITICAL RULES:
     const normalizedUnits: any[] = [];
     for (const diff of DIFFICULTIES) {
       let diffUnits = unitsByDiff[diff] || [];
-      if (diffUnits.length < 2 || diffUnits.length > 6) {
+      const target = tierTargets[diff];
+      if (diffUnits.length !== target) {
         const originalCount = diffUnits.length;
-        // Both out-of-range cases use the same 3-unit default template for consistency
         diffUnits = tierDefaults[diff] || tierDefaults["beginner"];
-        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected 2–6); defaulted to ${diffUnits.length} generic units`);
+        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected ${target}); defaulted to ${diffUnits.length} units`);
       }
       // Re-assign sequential unitIndex regardless of what the AI returned
       diffUnits.forEach((u, i) => {
         normalizedUnits.push({ ...u, difficulty: diff, unitIndex: i });
       });
     }
-    console.log(`[Outline] Normalized ${normalizedUnits.length} units: ` +
-      DIFFICULTIES.map(d => `${d}=${normalizedUnits.filter(u => u.difficulty === d).length}`).join(", "));
+    console.log(`[Outline] Topic "${topicTitle}" (${profile.category}/${profile.contentType}): ` +
+      DIFFICULTIES.map(d => `${d}=${normalizedUnits.filter(u => u.difficulty === d).length}`).join(", ") +
+      ` (${normalizedUnits.length} total)`);
 
     // Save units to database
     const { storage } = await import("./storage");
@@ -3841,6 +3948,7 @@ CRITICAL RULES:
       normalizedUnits.map((u: any) => storage.createLessonUnit({
         topicId,
         difficulty: u.difficulty,
+        contentType: profile.contentType,
         unitIndex: u.unitIndex,
         title: u.title,
         outline: u.outline,
@@ -3898,14 +4006,43 @@ async function generateBatchLessonContent(
     return `${i + 1}. [${u.difficulty.toUpperCase()} Unit ${pos}/${total}] "${u.title}" - ${u.outline || "No description"}${siblingNote}`;
   }).join("\n");
 
+  const precisionRules = `
+PRECISION AND ANTI-FILLER RULES (apply to ALL tiers):
+- Every sentence must convey new information. No filler phrases like "It is important to note that...", "In today's rapidly evolving landscape...", "As we all know...", "Needless to say...", or "It goes without saying..."
+- concept section: 2-3 tight paragraphs maximum. Each paragraph must end with a fact, implication, or question — never a summary restating what was just said.
+- If you cannot add new information, stop writing.
+- Write like a brilliant friend explaining something at a coffee shop — clear, direct, enthusiastic but not rambling.
+- Use active voice. Prefer short sentences for key points. Longer sentences only when the idea demands it.`;
+
+  const contentTypeRules = profile.contentType === "code_heavy"
+    ? `\nCONTENT TYPE: CODE-HEAVY
+- Include runnable code examples in most units. Beginner: simple one-liners with comments. Intermediate: functions/classes with test cases. Advanced: architecture patterns with trade-off analysis.
+- Code must have inline comments explaining non-obvious lines.
+- Include at least one "try modifying this" challenge in each example section.
+- externalResources should prioritize interactive coding platforms and runnable notebooks.`
+    : profile.contentType === "formula_heavy"
+    ? `\nCONTENT TYPE: FORMULA-HEAVY
+- Include actual equations rendered in LaTeX: $$E = mc^2$$
+- Each equation must be accompanied by "what each variable means in plain English" immediately after.
+- Include at least one worked numerical example per intermediate+ unit.
+- externalResources should prioritize MIT OCW problem sets and textbook chapters with exercises.`
+    : `\nCONTENT TYPE: CONCEPT-HEAVY
+- Focus on clear explanations, analogies, and thought experiments.
+- Code and formulas are optional — use them only when they genuinely clarify the concept.
+- Include visual descriptions of what a diagram would show (for future rendering).
+- externalResources should prioritize video explanations and interactive visualizations.`;
+
   const prompt = `You are an expert curriculum designer creating a deep, engaging learning journey for "${topic.title}".
 
 Topic Description: ${topic.description}
+
+Topic Classification: ${profile.category} (${profile.contentType})${contentTypeRules}
 
 ${crossTopicContext}
 
 Create content for these ${unitsList.length} units. Each unit MUST cover DIFFERENT material — do not duplicate concepts across units in the same tier. The unit position (e.g., "Unit 2/3") and the list of sibling unit titles tell you what the other lessons cover so you can write DISTINCT content for each:
 ${unitsDescription}
+${precisionRules}
 
 Respond with a JSON object where each key is the unit index (0, 1, 2...) and each value is the lesson content.
 
@@ -3973,7 +4110,16 @@ ADVANCED units MUST:
 - externalResources: 3-5 research-grade resources (specific arXiv papers with links, journal articles, conference proceedings like NeurIPS/CVPR/Nature/Science, expert lecture series, professional community resources)
 - Quiz questions are analytical and require synthesis of multiple concepts
 
-Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanced should feel like a genuine progression in depth. The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
+Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanced should feel like a genuine progression in depth.
+
+QUIZ QUALITY RULES (apply to ALL tiers):
+- Every wrong answer (distractor) must be PLAUSIBLE — each must represent a common misconception or a reasonable-but-incorrect interpretation, not just a random or obviously wrong option.
+- Include at least one question testing "why does this matter?" or "what would happen if...?" — not just "what is this?"
+- For intermediate+: one question should require applying the concept to a NEW scenario not mentioned in the lesson.
+- For advanced: one question should require comparing two approaches and identifying tradeoffs.
+- Each quiz explanation must explain WHY the distractors are wrong (what misconception they represent), not just why the correct answer is right.
+
+The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
 
   try {
     console.log(`[BatchContent] Generating batch content for ${unitsList.length} units of topic "${topic.title}"`);
@@ -4091,6 +4237,26 @@ CRITICAL RESOURCE SPECIFICITY RULES:
         : "")
     : "";
 
+  const precisionRules = `\nPRECISION AND ANTI-FILLER RULES:
+- Every sentence must convey new information. No filler: "It is important to note that...", "In today's rapidly evolving landscape...", "As we all know...", "Needless to say..."
+- concept: 2-3 tight paragraphs maximum. Each paragraph ends with a fact, implication, or question — never a summary restating what was just said.
+- Write like a brilliant friend at a coffee shop — clear, direct, enthusiastic but not rambling.
+- Use active voice. Prefer short sentences for key points.
+- If you cannot add new information, stop writing.`;
+
+  const contentTypedHint = categoryName
+    ? (() => {
+        const catText = `${categoryName} ${unit.title} ${unit.outline || ""}`.toLowerCase();
+        const codeTerms = ["python", "javascript", "typescript", "react", "programming", "code", "api", "algorithm", "gradio"];
+        const formulaTerms = ["calculus", "algebra", "equation", "derivative", "integral", "theorem", "quantum", "thermodynamics", "mechanics", "wave"];
+        const isCode = codeTerms.some(t => catText.includes(t));
+        const isFormula = formulaTerms.some(t => catText.includes(t));
+        if (isCode && !isFormula) return "\nHINT: This unit is code-heavy. Include runnable code examples with inline comments.\n";
+        if (isFormula) return "\nHINT: This unit is formula-heavy. Include equations with plain-English glosses and worked numerical examples.\n";
+        return "";
+      })()
+    : "";
+
   const prompt = `You are an expert curriculum designer creating a deep, engaging lesson for:
 
 ${topicContext}
@@ -4103,6 +4269,7 @@ ${crossTopicContext}
 ${difficultyGuidelines}
 
 ${resourceSpecificityInstruction}
+${precisionRules}${contentTypedHint}
 
 Create the lesson content in this JSON format:
 {
@@ -4141,6 +4308,7 @@ Create the lesson content in this JSON format:
 }
 
 Include exactly 3 quiz questions appropriate for the difficulty level.
+QUIZ RULES: Every wrong answer must be PLAUSIBLE — representing a common misconception, not obviously wrong. Include at least one "why does this matter?" or "what if?" question. Explanations must explain WHY each distractor is wrong (what misconception it represents).
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}
 The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, grokipedia.com, etc). Do not invent URLs.`;
 
@@ -4251,6 +4419,8 @@ ${crossTopicContext}
 
 This is a NEXT GEN unit — the final frontier of learning. The learner has already mastered beginner, intermediate, and advanced content. Now they step into the unknown alongside working researchers. Write as if briefing a smart, curious person at the start of a PhD program.
 
+PRECISION RULES: No filler phrases. Every sentence must name a specific researcher, paper, institution, approach, or result. Write with the excitement of someone at the frontier — concise, specific, intellectually thrilling.
+
 ${resourceSpecificity}
 
 Respond with JSON in this EXACT format:
@@ -4288,6 +4458,14 @@ Respond with JSON in this EXACT format:
     "relatedConcepts": ["Concept from this topic", "Unexpected domain or field that might connect"],
     "suggestedConnections": ["A specific cross-domain insight worth exploring", "An analogy from a completely different field that might yield new ideas"]
   },
+  "crossDomainInsights": [
+    {
+      "distantDomain": "A seemingly UNRELATED field (e.g., Biology, Music, Economics — NOT an adjacent field)",
+      "insight": "The specific shared principle, mathematical structure, or emergent behavior that connects this distant domain to the current topic. Show the concrete connection, not vague similarity.",
+      "abstraction": "The abstract principle that makes this connection true (e.g., 'distributed optimization without central control', 'wave interference patterns', 'topology of constrained spaces')",
+      "example": "A specific example from each domain that demonstrates the shared structure"
+    }
+  ],
   "communityForums": [
     {
       "name": "Community or forum name",
@@ -4309,6 +4487,7 @@ Requirements:
 - openRoadblocks: Include 2-3 REAL specific unsolved problems (not vague, e.g. "the alignment problem in large language models" not just "AI safety")
 - thoughtExercises: Include 2-3 open-ended challenges that genuinely have no known answers yet
 - emergingTrends: Include 2-3 specific trends from 2023-2025, named and concrete
+- crossDomainInsights: Include 1-2 connections to DISTANT domains (NOT adjacent fields). The best insights find the same mathematical structure or optimization principle in completely unrelated systems. Examples: fluid turbulence ↔ stock volatility (chaos theory), protein folding ↔ origami (topology optimization), neural networks ↔ ant colonies (distributed optimization). The connection must be CONCRETE — show the shared structure, not vague "both are complex."
 - communityForums: Include 2-3 REAL communities (e.g., arXiv cs.LG, LessWrong, r/MachineLearning, relevant Discord servers, academic mailing lists)
 - resources: Include 3-5 REAL resources with working URLs — arXiv preprints, Nature/Science papers, conference papers, expert YouTube lectures
 - This is about the thrill of the unknown — write with the excitement of someone at the frontier, not the detachment of a textbook
@@ -4364,6 +4543,7 @@ Requirements:
         relatedConcepts: [],
         suggestedConnections: []
       },
+      crossDomainInsights: [],
       resources: []
     };
   }

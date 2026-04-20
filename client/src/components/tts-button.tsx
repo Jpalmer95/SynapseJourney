@@ -64,6 +64,7 @@ export function TTSButton({
     kokoroDownloadPercent,
     kokoroDownloadPhase,
     kokoroLoadError,
+    kokoroDeviceWarning,
     kokoroReady,
     kokoroEngine,
     kokoroLoadMs,
@@ -370,6 +371,11 @@ export function TTSButton({
           {!kokoroLoading && serverVoicePreset === "kokoro" && kokoroLoadError && (
             <p className="text-[10px] text-red-500 dark:text-red-400 mt-1 flex items-start gap-1" data-testid="status-kokoro-error">
               <X className="h-2.5 w-2.5 shrink-0 mt-0.5" />{kokoroLoadError}
+            </p>
+          )}
+          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroLoadError && kokoroDeviceWarning && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-start gap-1" data-testid="status-kokoro-device-warning">
+              <X className="h-2.5 w-2.5 shrink-0 mt-0.5" />{kokoroDeviceWarning}
             </p>
           )}
           {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && !kokoroLoadError && (
