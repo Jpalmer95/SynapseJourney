@@ -1,3 +1,10 @@
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-synapse.167.99.125.127.sslip.io-purple?style=flat-square)](https://synapse.167.99.125.127.sslip.io)
+[![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite)](https://vitejs.dev)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
+[![Drizzle](https://img.shields.io/badge/Drizzle-ORM-C5F74F?style=flat-square)](https://orm.drizzle.team)
+[![PWA](https://img.shields.io/badge/PWA-Ready-5A0FC8?style=flat-square)](https://web.dev/progressive-web-apps/)
+
 # SynapseJourney 🧠 
 
 SynapseJourney is a production-ready, open-source educational platform designed to radically enhance human cross-topic learning, curiosity, and accessibility to high-quality information. 
