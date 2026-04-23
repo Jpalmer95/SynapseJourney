@@ -231,6 +231,21 @@ function useTTSImpl(): UseTTSReturn {
     }
     return null;
   });
+  // If true, Kokoro is known incompatible (proactive or reactive detection).
+  // The speak/speakSections paths will skip the local tier entirely.
+  const [kokoroIncompatible, setKokoroIncompatible] = useState<boolean>(() => {
+    if (typeof navigator === "undefined") return false;
+    const ua = (navigator.userAgent || "").toLowerCase();
+    if (ua.includes("tesla") || ua.includes("qtcarbrowser")) return true;
+    const mem = (navigator as any).deviceMemory;
+    if (typeof mem === "number" && mem < 2) return true;
+    if (typeof navigator.gpu === "undefined") {
+      if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
+        return true;
+      }
+    }
+    return false;
+  });
   const [hfWarming, setHfWarming] = useState(false);
   const hfToastShownRef = useRef(false);
 
@@ -251,6 +266,8 @@ function useTTSImpl(): UseTTSReturn {
   const kokoroVoiceRef = useRef<string>(kokoroVoice);
   const qwenVoiceRef = useRef<string>(qwenVoice);
   const qwenCustomDescriptionRef = useRef<string>(qwenCustomDescription);
+  const kokoroIncompatibleRef = useRef<boolean>(kokoroIncompatible);
+  const autoSwitchedToBrowserRef = useRef<boolean>(false);
   // serverVoicePreset ref: updated synchronously in setServerVoicePreset so speak/speakSections
   // always read the current engine even when called immediately after switching.
   const serverVoicePresetRef = useRef<string>("browser");
@@ -269,6 +286,20 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => { kokoroVoiceRef.current = kokoroVoice; }, [kokoroVoice]);
   useEffect(() => { qwenVoiceRef.current = qwenVoice; }, [qwenVoice]);
   useEffect(() => { qwenCustomDescriptionRef.current = qwenCustomDescription; }, [qwenCustomDescription]);
+  useEffect(() => { kokoroIncompatibleRef.current = kokoroIncompatible; }, [kokoroIncompatible]);
+
+  // Auto-switch to Browser TTS when Kokoro is detected incompatible and user still has it selected.
+  useEffect(() => {
+    if (kokoroIncompatible && serverVoicePreset === "kokoro" && !autoSwitchedToBrowserRef.current) {
+      autoSwitchedToBrowserRef.current = true;
+      setServerVoicePreset("browser").catch(() => {});
+      toast({
+        title: "Switched to Browser TTS",
+        description: "Your device doesn't support local AI voice synthesis. Using your device's built-in speech engine instead.",
+        duration: 6000,
+      });
+    }
+  }, [kokoroIncompatible, serverVoicePreset, setServerVoicePreset, toast]);
 
   const { data: ttsSettings } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
     queryKey: ["/api/tts/settings"],

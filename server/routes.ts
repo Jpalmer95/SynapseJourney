@@ -3760,6 +3760,36 @@ interface TopicDepthProfile {
 function classifyTopicByKeywords(title: string, description: string): TopicDepthProfile {
   const text = `${title} ${description}`.toLowerCase();
 
+  // ── Explicit overrides for known platform topics (guarantees consistency) ──
+  const normalizedTitle = title.toLowerCase().trim();
+  const explicitOverrides = new Map<string, TopicDepthProfile>([
+    ["machine learning", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["linear algebra", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 5, advanced: 5, nextgen: 4 }, contentType: "formula_heavy" }],
+    ["data structures", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "code_heavy" }],
+    ["quantum mechanics", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["calculus", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 5, advanced: 5, nextgen: 4 }, contentType: "formula_heavy" }],
+    ["graph theory", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "formula_heavy" }],
+    ["algorithms", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "code_heavy" }],
+    ["neural networks", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["hugging face", { category: "narrow_tool", unitsPerTier: { beginner: 2, intermediate: 2, advanced: 2, nextgen: 2 }, contentType: "code_heavy" }],
+    ["gradio", { category: "narrow_tool", unitsPerTier: { beginner: 2, intermediate: 2, advanced: 2, nextgen: 2 }, contentType: "code_heavy" }],
+    ["benefits of open source", { category: "focused", unitsPerTier: { beginner: 3, intermediate: 3, advanced: 3, nextgen: 3 }, contentType: "balanced" }],
+    ["classical mechanics", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 5, advanced: 5, nextgen: 4 }, contentType: "formula_heavy" }],
+    ["orbital mechanics", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 5, advanced: 5, nextgen: 4 }, contentType: "formula_heavy" }],
+    ["optics & light", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "theory_heavy" }],
+    ["fluid dynamics", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["electromagnetism", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["waves & frequencies", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "formula_heavy" }],
+    ["general chemistry", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "formula_heavy" }],
+    ["organic chemistry", { category: "deep_science", unitsPerTier: { beginner: 5, intermediate: 6, advanced: 6, nextgen: 5 }, contentType: "theory_heavy" }],
+    ["music theory", { category: "broad", unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 }, contentType: "balanced" }],
+  ]);
+  if (explicitOverrides.has(normalizedTitle)) {
+    return explicitOverrides.get(normalizedTitle)!;
+  }
+
+  // ── Heuristic classification for unknown / custom topics ──
+
   // Deep science / broad interdisciplinary — 5-6 per tier
   const deepScienceTerms = [
     "quantum", "relativity", "thermodynamics", "electrodynamics", "field theory",
@@ -3768,6 +3798,7 @@ function classifyTopicByKeywords(title: string, description: string): TopicDepth
     "biochemistry", "molecular biology", "organic chemistry", "inorganic chemistry",
     "number theory", "topology", "abstract algebra", "differential geometry",
     "compiler", "operating system", "distributed system", "cryptography",
+    "neuroscience", "materials science", "genomics", "proteomics",
   ];
 
   // Broad topics — 4-5 per tier
@@ -3776,30 +3807,44 @@ function classifyTopicByKeywords(title: string, description: string): TopicDepth
     "biology", "calculus", "linear algebra", "algorithms", "data structures",
     "electromagnetism", "optics", "waves", "classical mechanics", "music theory",
     "genetics", "ecology", "economics", "psychology", "philosophy",
+    "mechatronics", "embedded systems", "iot", "cyber-physical",
+  ];
+
+  // Focused topics — 3 per tier (domain-specific but not tool-narrow)
+  const focusedTerms = [
+    "open source", "contributing", "community", "ethics", "history of",
+    "philosophy of", "design pattern", "workflow", "methodology",
   ];
 
   // Narrow tool-focused — 2 per tier
   const narrowTerms = [
     "how to use", "introduction to", "getting started with", "tutorial",
-    "guide to", "using ", "installing", "setting up",
+    "guide to", "using ", "installing", "setting up", "demo", "app",
   ];
 
-  // Code-heavy indicators
-  const codeTerms = ["python", "javascript", "typescript", "react", "node", "api", "programming", "coding", "software", "algorithm", "data structure", "gradio", "hugging face", "git"];
-  // Formula-heavy indicators
-  const formulaTerms = ["calculus", "algebra", "equation", "derivative", "integral", "theorem", "proof", "quantum", "thermodynamics", "electrodynamics", "mechanics", "wave function"];
+  // Content-type indicators
+  const codeTerms = ["python", "javascript", "typescript", "react", "node", "api", "programming", "coding", "software", "algorithm", "data structure", "gradio", "hugging face", "git", "library", "framework"];
+  const formulaTerms = ["calculus", "algebra", "equation", "derivative", "integral", "theorem", "proof", "quantum", "thermodynamics", "electrodynamics", "mechanics", "wave function", "differential", "navier-stokes", "maxwell", "schrodinger", "eigenvalue", "tensor"];
+  const theoryTerms = ["fluid dynamic", "quantum", "relativity", "field theory", "thermodynamic", "electromagnetic", "optics", "wave-particle", "entropy", "hamiltonian", "lagrangian", "gauge theory", "renormalization"];
+  const visualTerms = ["geometry", "topology", "graph", "network", "visualization", "diagram", "cymatics", "standing wave", "interference pattern"];
 
   const isDeep = deepScienceTerms.some(t => text.includes(t));
   const isBroad = broadTerms.some(t => text.includes(t));
+  const isFocused = focusedTerms.some(t => text.includes(t));
   const isNarrow = narrowTerms.some(t => text.includes(t));
 
   const isCodeHeavy = codeTerms.some(t => text.includes(t));
   const isFormulaHeavy = formulaTerms.some(t => text.includes(t));
+  const isTheoryHeavy = theoryTerms.some(t => text.includes(t));
+  const isVisualHeavy = visualTerms.some(t => text.includes(t));
 
   let contentType: TopicDepthProfile["contentType"] = "balanced";
-  if (isCodeHeavy && !isFormulaHeavy) contentType = "code_heavy";
+  if (isTheoryHeavy && isFormulaHeavy) contentType = "theory_heavy";
+  else if (isTheoryHeavy) contentType = "theory_heavy";
   else if (isFormulaHeavy && !isCodeHeavy) contentType = "formula_heavy";
+  else if (isCodeHeavy && !isFormulaHeavy) contentType = "code_heavy";
   else if (isCodeHeavy && isFormulaHeavy) contentType = "formula_heavy"; // math+code = prioritize formulas
+  else if (isVisualHeavy) contentType = "visual_heavy";
 
   if (isDeep) {
     return {
@@ -3811,6 +3856,12 @@ function classifyTopicByKeywords(title: string, description: string): TopicDepth
     return {
       category: "broad",
       unitsPerTier: { beginner: 4, intermediate: 4, advanced: 4, nextgen: 3 },
+      contentType,
+    };
+  } else if (isFocused) {
+    return {
+      category: "focused",
+      unitsPerTier: { beginner: 3, intermediate: 3, advanced: 3, nextgen: 3 },
       contentType,
     };
   } else if (isNarrow) {
@@ -3835,7 +3886,11 @@ export async function generateLessonOutline(topicId: number, topicTitle: string,
   const contentTypeGuidance = profile.contentType === "code_heavy"
     ? `This is a CODE-HEAVY topic. Include runnable code examples in most units. Beginner units should show simple one-liners; intermediate should show functions/classes; advanced should show architecture patterns.`
     : profile.contentType === "formula_heavy"
-    ? `This is a FORMULA-HEAVY topic. Include mathematical notation and derivations. Beginner units should use intuition-first explanations; intermediate should introduce equations with plain-English glosses; advanced should use formal mathematical arguments.`
+    ? `This is a FORMULA-HEAVY topic. Include mathematical notation and derivations. Beginner units should use intuition-first explanations; intermediate should introduce equations with plain-English glosses and worked numerical examples; advanced should use formal mathematical arguments.`
+    : profile.contentType === "theory_heavy"
+    ? `This is a THEORY-HEAVY topic. Every unit must define technical terms precisely on first use, include key equations with LaTeX and plain-English variable explanations, provide intuitive derivations step-by-step, and connect abstract theory to observable phenomena. Beginner: analogy-first, then introduce the minimal equation; Intermediate: full derivations with physical interpretation at each step; Advanced: compare competing theoretical frameworks and discuss their regimes of validity.`
+    : profile.contentType === "visual_heavy"
+    ? `This is a VISUAL-HEAVY topic. Describe diagrams, graphs, and spatial relationships in detail. Include Mermaid.js diagrams where helpful. Beginner: concrete visual analogies; Intermediate: structured diagrams with labeled components; Advanced: complex visual proofs or multi-scale visualizations.`
     : `This is a CONCEPT-HEAVY topic. Focus on clear explanations, analogies, and thought experiments. Code and formulas are optional — use them only when they genuinely clarify the concept.`;
 
   const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
@@ -4025,7 +4080,22 @@ PRECISION AND ANTI-FILLER RULES (apply to ALL tiers):
 - Include actual equations rendered in LaTeX: $$E = mc^2$$
 - Each equation must be accompanied by "what each variable means in plain English" immediately after.
 - Include at least one worked numerical example per intermediate+ unit.
+- Derivation steps must be explained intuitively, not just algebraically.
 - externalResources should prioritize MIT OCW problem sets and textbook chapters with exercises.`
+    : profile.contentType === "theory_heavy"
+    ? `\nCONTENT TYPE: THEORY-HEAVY
+- Define every technical term precisely on first use; never assume prior jargon knowledge.
+- Include key equations in LaTeX with explicit plain-English variable explanations.
+- Provide intuitive derivations step-by-step, connecting each step to observable phenomena.
+- For intermediate+: include at least one worked numerical example and one conceptual "what if" scenario.
+- For advanced: compare competing theoretical frameworks, discuss regimes of validity, and cite landmark papers.
+- externalResources should prioritize lecture notes, foundational textbooks, and peer-reviewed survey papers.`
+    : profile.contentType === "visual_heavy"
+    ? `\nCONTENT TYPE: VISUAL-HEAVY
+- Describe diagrams, graphs, and spatial relationships in vivid detail so a learner could sketch them.
+- Include a Mermaid.js diagram string in most units (flowchart, graph, or sequence).
+- Beginner: concrete visual analogies; Intermediate: structured diagrams with labeled components; Advanced: complex visual proofs or multi-scale visualizations.
+- externalResources should prioritize interactive simulations, visual explainer videos, and diagram-rich references.`
     : `\nCONTENT TYPE: CONCEPT-HEAVY
 - Focus on clear explanations, analogies, and thought experiments.
 - Code and formulas are optional — use them only when they genuinely clarify the concept.
@@ -4466,6 +4536,20 @@ Respond with JSON in this EXACT format:
       "example": "A specific example from each domain that demonstrates the shared structure"
     }
   ],
+  "pitchFramework": {
+    "title": "A compelling one-sentence title for a hypothetical open-science pitch based on this unit",
+    "problemStatement": "1 paragraph: What is the specific gap or anomaly you are addressing? Cite a real paper or dataset that exposes this gap.",
+    "proposedApproach": "1 paragraph: What is your novel angle? It can be high-risk, but it must be testable. Reference a method from another field you are borrowing.",
+    "expectedImpact": "1 paragraph: If it works, what changes? Who benefits? Be concrete, not grandiose.",
+    "nextStep": "The smallest viable experiment or analysis that could falsify or support the idea within 2 weeks"
+  },
+  "experimentDesign": {
+    "title": "Title for a minimal viable experiment",
+    "hypothesis": "A falsifiable hypothesis in one sentence",
+    "method": "Step-by-step methodology using only freely available tools, datasets, or simulators",
+    "successCriteria": "What result would confirm the hypothesis? What result would falsify it?",
+    "tools": ["Specific open-source tool or dataset", "Another accessible resource"]
+  },
   "communityForums": [
     {
       "name": "Community or forum name",
@@ -4487,7 +4571,9 @@ Requirements:
 - openRoadblocks: Include 2-3 REAL specific unsolved problems (not vague, e.g. "the alignment problem in large language models" not just "AI safety")
 - thoughtExercises: Include 2-3 open-ended challenges that genuinely have no known answers yet
 - emergingTrends: Include 2-3 specific trends from 2023-2025, named and concrete
-- crossDomainInsights: Include 1-2 connections to DISTANT domains (NOT adjacent fields). The best insights find the same mathematical structure or optimization principle in completely unrelated systems. Examples: fluid turbulence ↔ stock volatility (chaos theory), protein folding ↔ origami (topology optimization), neural networks ↔ ant colonies (distributed optimization). The connection must be CONCRETE — show the shared structure, not vague "both are complex."
+- crossDomainInsights: Include 1-2 connections to DISTANT domains (NOT adjacent fields). The best insights find the same mathematical structure or optimization principle in completely unrelated systems.
+- pitchFramework: Write this as if the learner is preparing to post on OpenReview, LessWrong, or a relevant subreddit. Make it feel achievable, not intimidating.
+- experimentDesign: Keep it minimal — something a motivated learner could start tonight with free tools. Do not require expensive hardware or proprietary data.
 - communityForums: Include 2-3 REAL communities (e.g., arXiv cs.LG, LessWrong, r/MachineLearning, relevant Discord servers, academic mailing lists)
 - resources: Include 3-5 REAL resources with working URLs — arXiv preprints, Nature/Science papers, conference papers, expert YouTube lectures
 - This is about the thrill of the unknown — write with the excitement of someone at the frontier, not the detachment of a textbook
@@ -4544,6 +4630,21 @@ Requirements:
         suggestedConnections: []
       },
       crossDomainInsights: [],
+      pitchFramework: {
+        title: "Content Unavailable",
+        problemStatement: "Please refresh to generate Next Gen content.",
+        proposedApproach: "",
+        expectedImpact: "",
+        nextStep: ""
+      },
+      experimentDesign: {
+        title: "Content Unavailable",
+        hypothesis: "",
+        method: "",
+        successCriteria: "",
+        tools: []
+      },
+      communityForums: [],
       resources: []
     };
   }
