@@ -87,6 +87,7 @@ export interface IStorage {
   // Topic Connections
   getConnectionsFromTopic(topicId: number): Promise<TopicConnection[]>;
   getConnectionsToTopic(topicId: number): Promise<TopicConnection[]>;
+  getAllTopicConnections(): Promise<TopicConnection[]>;
   createConnection(connection: InsertTopicConnection): Promise<TopicConnection>;
 
   // User Progress
@@ -380,6 +381,10 @@ export class DatabaseStorage implements IStorage {
 
   async getConnectionsToTopic(topicId: number): Promise<TopicConnection[]> {
     return db.select().from(topicConnections).where(eq(topicConnections.toTopicId, topicId));
+  }
+
+  async getAllTopicConnections(): Promise<TopicConnection[]> {
+    return db.select().from(topicConnections);
   }
 
   async createConnection(connection: InsertTopicConnection): Promise<TopicConnection> {
@@ -1094,6 +1099,9 @@ export class DatabaseStorage implements IStorage {
     const streak = await this.getUserStreak(userId);
     const lessonsProgress = await db.select().from(lessonProgress)
       .where(and(eq(lessonProgress.userId, userId), eq(lessonProgress.status, "completed")));
+    const userProgressAll = await this.getUserProgress(userId);
+    const exploredTopics = userProgressAll.filter(p => p.status !== "discovered");
+    const allResearchIdeas = await this.getUserResearchIdeas(userId);
     
     const awarded: Achievement[] = [];
     
@@ -1108,6 +1116,9 @@ export class DatabaseStorage implements IStorage {
           earned = (userXpData?.totalXp || 0) >= req.value;
           break;
         case "topics":
+          earned = exploredTopics.length >= req.value;
+          break;
+        case "masteredTopics":
           earned = masteredTopics.length >= req.value;
           break;
         case "lessons":
@@ -1117,10 +1128,35 @@ export class DatabaseStorage implements IStorage {
           earned = (streak?.currentStreak || 0) >= req.value;
           break;
         case "research_ideas":
+        case "validatedIdeas":
           earned = researchIdeasList.length >= req.value;
+          break;
+        case "ideas":
+          earned = allResearchIdeas.length >= req.value;
           break;
         case "polymath":
           earned = masteredTopics.length >= 50 && researchIdeasList.length >= 5;
+          break;
+        case "nightOwl":
+          earned = lessonsProgress.some(lp => {
+            const hour = new Date(lp.completedAt || lp.lastAccessedAt || 0).getHours();
+            return hour >= 0 && hour < 5;
+          });
+          break;
+        case "earlyBird":
+          earned = lessonsProgress.some(lp => {
+            const hour = new Date(lp.completedAt || lp.lastAccessedAt || 0).getHours();
+            return hour >= 4 && hour < 6;
+          });
+          break;
+        case "speedster":
+          // Group lessons by day and check if any day has >= req.value
+          const byDay = new Map<string, number>();
+          for (const lp of lessonsProgress) {
+            const date = new Date(lp.completedAt || lp.lastAccessedAt || 0).toDateString();
+            byDay.set(date, (byDay.get(date) || 0) + 1);
+          }
+          earned = Array.from(byDay.values()).some(count => count >= req.value);
           break;
       }
       

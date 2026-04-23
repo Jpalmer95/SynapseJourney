@@ -954,6 +954,7 @@ function generateConcept(
   const knowledge = getKnowledge(topicId);
   const concepts = knowledge.keyConcepts.length > 0 ? knowledge.keyConcepts : ["core principles"];
   const apps = knowledge.realWorldApps.length > 0 ? knowledge.realWorldApps : ["practical applications"];
+  const mistakes = knowledge.commonMistakes.length > 0 ? knowledge.commonMistakes : ["oversimplification"];
 
   // Select concepts relevant to position within tier
   const startIdx = (position * 2) % Math.max(1, concepts.length);
@@ -964,28 +965,86 @@ function generateConcept(
 
   const appIdx = position % Math.max(1, apps.length);
   const relevantApp = apps[appIdx];
+  const mistake = mistakes[position % mistakes.length];
 
-  let text = "";
+  // ── Varied opening templates ──────────────────────────────────────────────
+  const beginnerOpenings = [
+    `Welcome to **${unitTitle}** — your gateway into ${knowledge.title || title}. By the end of this unit, you'll understand why this matters and how it connects to the world around you.`,
+    `**${unitTitle}** is where ${knowledge.title || title} starts to get interesting. We'll build intuition first and save the heavy formalism for later units.`,
+    `Every expert in ${knowledge.title || title} started exactly where you are now. **${unitTitle}** lays the groundwork that everything else rests on.`,
+    `You don't need prior experience with ${knowledge.title || title} to follow this unit. **${unitTitle}** introduces the core ideas using concrete examples and plain language.`,
+  ];
 
-  // Tier-specific opening
+  const intermediateOpenings = [
+    `Let's go deeper into **${unitTitle}**. You already know the basics; now we'll examine the mechanisms, derive the key relationships, and see how professionals apply these ideas in practice.`,
+    `**${unitTitle}** bridges theory and practice. The ideas here are subtle: small changes in assumptions produce large changes in outcomes, and knowing *when* to apply each model is the real skill.`,
+    `In **${unitTitle}**, we move beyond "what" and into "how" and "why." The tools you learn here appear again and again in advanced work — master them now and you'll recognize them everywhere.`,
+    `This unit on **${unitTitle}** separates those who memorized formulas from those who truly understand them. We'll stress-test each idea with realistic constraints.`,
+  ];
+
+  const advancedOpenings = [
+    `This unit tackles **${unitTitle}** at the research frontier. We examine expert-level nuances, competing theoretical frameworks, and the subtle assumptions that beginners often miss.`,
+    `**${unitTitle}** is where textbook knowledge ends and professional judgment begins. We'll explore edge cases, failure modes, and the approximations that practitioners quietly make.`,
+    `At the advanced level, **${unitTitle}** reveals deep structural connections to other fields. The same mathematics appears in surprising places — recognizing these patterns is the hallmark of mastery.`,
+    `This unit assumes fluency with the fundamentals. In **${unitTitle}**, we ask: what happens when standard assumptions break down? How do working scientists actually cope with messy reality?`,
+  ];
+
+  const nextgenOpenings = [
+    `Explore the frontier of **${unitTitle}** — unsolved problems, active research, and cross-domain connections.`,
+    `**${unitTitle}** looks toward the horizon: open questions, emerging methodologies, and the skills you'll need to contribute original work.`,
+    `In this unit, **${unitTitle}** becomes a launchpad. We'll survey what the field doesn't yet know and discuss how a motivated learner might help find answers.`,
+  ];
+
+  let text = `## ${unitTitle}\n\n`;
   if (tier === "beginner") {
-    text += `## ${unitTitle}\n\n`;
-    text += `Welcome to **${unitTitle}** — your gateway into ${knowledge.title || title}. `;
-    text += `By the end of this unit, you'll understand why this matters and how it connects to the world around you.\n\n`;
+    text += beginnerOpenings[position % beginnerOpenings.length] + "\n\n";
   } else if (tier === "intermediate") {
-    text += `## ${unitTitle}\n\n`;
-    text += `Let's go deeper into **${unitTitle}**. You already know the basics; now we'll examine the mechanisms, `;
-    text += `derive the key relationships, and see how professionals apply these ideas in practice.\n\n`;
+    text += intermediateOpenings[position % intermediateOpenings.length] + "\n\n";
   } else if (tier === "advanced") {
-    text += `## ${unitTitle}\n\n`;
-    text += `This unit tackles **${unitTitle}** at the research frontier. We examine expert-level nuances, `;
-    text += `competing theoretical frameworks, and the subtle assumptions that beginners often miss.\n\n`;
+    text += advancedOpenings[position % advancedOpenings.length] + "\n\n";
   } else {
-    text += `## ${unitTitle}\n\n`;
-    text += `Explore the frontier of **${unitTitle}** — unsolved problems, active research, and cross-domain connections.\n\n`;
+    text += nextgenOpenings[position % nextgenOpenings.length] + "\n\n";
   }
 
-  // Core content based on contentType
+  // ── Varied concept description pools ──────────────────────────────────────
+  const codeTemplates = [
+    (c: string, m: string) => `**${c}** — At the implementation level, this is where bugs hide. The pattern is straightforward, but edge cases abound. Watch for: ${m}.`,
+    (c: string, m: string) => `**${c}** — This is the workhorse of practical ${knowledge.title || title}. Most production systems rely on it, yet few developers deeply understand its failure modes. The classic trap: ${m}.`,
+    (c: string, m: string) => `**${c}** — A deceptively simple idea with deep implications. Get it right and your system is robust; get it wrong and subtle bugs appear months later. Remember: ${m}.`,
+    (c: string) => `**${c}** — The bridge between abstract theory and running code. Understanding *how* to implement it is only half the battle — knowing *when* it's the wrong tool is what separates seniors from juniors.`,
+    (c: string, m: string) => `**${c}** — In code reviews, this is where teams disagree most. There are multiple valid approaches, each with trade-offs. The mistake to avoid: ${m}.`,
+  ];
+
+  const formulaTemplates = [
+    (c: string) => `**${c}** — A relationship that appears deceptively simple but encodes an enormous amount of physics. The variables are not independent — change one and the others respond in constrained ways.`,
+    (c: string) => `**${c}** — This is one of the load-bearing equations in ${knowledge.title || title}. It doesn't just describe; it constrains what is physically possible. Violate it and your predictions fail.`,
+    (c: string) => `**${c}** — The mathematics here is elegant precisely because it strips away irrelevant detail. The danger: forgetting which details were stripped and applying the result where it doesn't belong.`,
+    (c: string) => `**${c}** — At this level, symbols are no longer just symbols. Each term has dimensions, limits, and a physical story. Understanding the story is more important than memorizing the formula.`,
+    (c: string, m: string) => `**${c}** — A powerful tool with a well-defined domain of validity. Push beyond that domain — ${m} — and the tool becomes a trap.`,
+  ];
+
+  const theoryTemplates = [
+    (c: string) => `**${c}** — A foundational principle, not merely a definition. It predicts, constrains, and connects seemingly unrelated phenomena. Master this and dozens of later ideas fall into place.`,
+    (c: string) => `**${c}** — The theoretical framework here is built on assumptions that are *almost* always true. The art is recognizing the exceptions before they surprise you.`,
+    (c: string) => `**${c}** — What makes this concept powerful is its scope. It applies across scales, materials, and conditions — but only when the underlying symmetries hold.`,
+    (c: string, m: string) => `**${c}** — Elegant, general, and frequently misapplied. The seductive error: ${m}. The safeguard: always trace back to first principles.`,
+  ];
+
+  const visualTemplates = [
+    (c: string) => `**${c}** — The spatial logic here is the key. Draw it — even roughly — and patterns emerge that equations alone hide. Your sketch is a reasoning tool, not just decoration.`,
+    (c: string) => `**${c}** — Visual thinkers have an advantage here. The relationships are geometric: proximity, proportion, and direction carry meaning. A good diagram is worth pages of prose.`,
+    (c: string) => `**${c}** — Color, scale, and layout are not aesthetic choices — they are cognitive tools. The way you arrange information determines what you (and your audience) can see.`,
+  ];
+
+  const conceptTemplates = [
+    (c: string) => `**${c}** — A foundational idea that shapes how we think about ${knowledge.title || title}. It appears in debates, policy decisions, and everyday reasoning — often without being named.`,
+    (c: string) => `**${c}** — Not a fact to memorize but a lens to adopt. Once you see the world through this framework, previously confusing events start to make sense.`,
+    (c: string) => `**${c}** — The nuanced version: this is not binary but exists on a spectrum. Context, history, and perspective all shift where we draw the line.`,
+    (c: string, m: string) => `**${c}** — Widely discussed, frequently misunderstood. The common distortion: ${m}. The clearer you are about what this concept *doesn't* mean, the more useful it becomes.`,
+    (c: string) => `**${c}** — This idea connects ${knowledge.title || title} to other disciplines in surprising ways. The same pattern appears in economics, biology, and politics — with different names.`,
+  ];
+
+  // ── Core content based on contentType ──────────────────────────────────────
   if (contentType === "formula_heavy" || contentType === "theory_heavy") {
     const eqs = knowledge.keyEquations || [];
     if (eqs.length > 0 && (tier === "intermediate" || tier === "advanced")) {
@@ -1001,17 +1060,12 @@ function generateConcept(
       }
     }
 
+    const templates = contentType === "formula_heavy" ? formulaTemplates : theoryTemplates;
     text += `### Key Concepts\n\n`;
     for (let i = 0; i < relevantConcepts.length; i++) {
       const concept = relevantConcepts[i];
-      text += `${i + 1}. **${concept}** — `;
-      if (tier === "beginner") {
-        text += `Think of this as ${concept === "superposition" ? "water waves adding together" : concept === "entropy" ? "the natural tendency toward disorder" : "a fundamental building block of the field"}. `;
-        text += `It's not just a definition — it's a lens that reveals structure in seemingly chaotic systems.\n`;
-      } else {
-        text += `In formal terms, this governs how ${concept} interacts with other quantities in the system. `;
-        text += `The subtlety: ${concept} is not absolute — its interpretation depends on boundary conditions and measurement context.\n`;
-      }
+      const tmpl = templates[(position + i) % templates.length];
+      text += `${i + 1}. ${tmpl(concept, mistake)}\n`;
     }
     text += `\n`;
   } else if (contentType === "code_heavy") {
@@ -1026,68 +1080,62 @@ function generateConcept(
     }
 
     text += `### Core Concepts\n\n`;
-    for (const concept of relevantConcepts) {
-      text += `1. **${concept}** — Essential for writing robust, maintainable code. `;
-      text += `The common pitfall: developers often ${knowledge.commonMistakes[position % Math.max(1, knowledge.commonMistakes.length)] || "skip error handling"} when implementing this.\n`;
+    for (let i = 0; i < relevantConcepts.length; i++) {
+      const concept = relevantConcepts[i];
+      const tmpl = codeTemplates[(position + i) % codeTemplates.length];
+      text += `${i + 1}. ${tmpl(concept, mistake)}\n`;
     }
     text += `\n`;
   } else if (contentType === "visual_heavy") {
     text += `### Visual Understanding\n\n`;
-    text += `Imagine ${unitTitle} as a spatial structure. `;
-    if (tier === "beginner") {
-      text += `Picture a ${relevantConcepts[0] || "diagram"} in your mind: `;
-      text += `the main components arranged like ${relevantApp || "building blocks"}, with connections showing how they influence each other. `;
-      text += `This mental image is your anchor — return to it whenever the abstract details feel overwhelming.\n\n`;
-    } else {
-      text += `The key spatial relationship is between ${relevantConcepts[0] || "component A"} and ${relevantConcepts[1] || "component B"}. `;
-      text += `At scale, these interactions produce emergent patterns that single-component analysis cannot predict. `;
-      text += `Visualizing the multi-scale structure is the skill that separates practitioners from experts.\n\n`;
+    for (let i = 0; i < relevantConcepts.length; i++) {
+      const concept = relevantConcepts[i];
+      const tmpl = visualTemplates[(position + i) % visualTemplates.length];
+      text += `${i + 1}. ${tmpl(concept)}\n`;
     }
+    text += `\n`;
   } else {
     // concept_heavy
     text += `### Core Ideas\n\n`;
-    for (const concept of relevantConcepts) {
-      text += `1. **${concept}** — `;
-      if (tier === "beginner") {
-        text += `A foundational idea that shapes how we think about ${knowledge.title || title}.\n`;
-      } else {
-        text += `The nuanced version: ${concept} is not binary but exists on a spectrum. `;
-        text += `Context, history, and perspective all shift where we draw the line.\n`;
-      }
+    for (let i = 0; i < relevantConcepts.length; i++) {
+      const concept = relevantConcepts[i];
+      const tmpl = conceptTemplates[(position + i) % conceptTemplates.length];
+      text += `${i + 1}. ${tmpl(concept, mistake)}\n`;
     }
     text += `\n`;
   }
 
-  // Real-world application
+  // ── Varied real-world application text ────────────────────────────────────
+  const appTemplates = [
+    `**${relevantApp ? relevantApp.charAt(0).toUpperCase() + relevantApp.slice(1) : "This knowledge"}** is a perfect example of ${knowledge.title || title} in action. The principles you just learned aren't abstract — they directly determine how professionals approach ${relevantApp || "real problems"}.`,
+    `Consider **${relevantApp || "real-world applications"}**. The difference between success and failure often comes down to understanding ${relevantConcepts[0] || "the fundamentals"} at a deep level — not just following procedures.`,
+    `**${relevantApp ? relevantApp.charAt(0).toUpperCase() + relevantApp.slice(1) : "Practical work"}** demands more than textbook knowledge. It requires judgment about which simplifications are safe and which will lead you astray — exactly the judgment this unit develops.`,
+    `The bridge from theory to practice is ${relevantApp ? relevantApp : "real application"}. In the field, conditions are never ideal, measurements are noisy, and deadlines are real. The best practitioners internalize these constraints until they become second nature.`,
+  ];
   text += `### Real-World Impact\n\n`;
-  text += `${relevantApp ? `**${relevantApp.charAt(0).toUpperCase() + relevantApp.slice(1)}**` : "This knowledge"} `;
-  if (tier === "beginner") {
-    text += `is a perfect example of ${knowledge.title || title} in action. `;
-    text += `The principles you just learned aren't abstract — they directly determine how engineers, scientists, or policymakers approach ${relevantApp || "real problems"}.\n\n`;
-  } else {
-    text += `demonstrates the power of rigorous ${knowledge.title || title} thinking. `;
-    text += `What separates successful applications from failed ones is often not the equations themselves, `;
-    text += `but the judgment about which approximations are valid in a given context.\n\n`;
-  }
+  text += appTemplates[position % appTemplates.length] + "\n\n";
 
-  // Common mistakes
-  if (knowledge.commonMistakes.length > 0 && tier !== "beginner") {
-    const mistake = knowledge.commonMistakes[position % knowledge.commonMistakes.length];
-    text += `### Watch Out For\n\n`;
-    text += `A common trap: *${mistake}*. This error is seductive because it often produces approximately correct answers `;
-    text += `in simple cases — then fails catastrophically at scale. The fix: always verify your assumptions `;
-    text += `against boundary conditions and extreme cases.\n\n`;
+  // Common mistakes (varied)
+  if (mistakes.length > 0 && tier !== "beginner") {
+    const warningTemplates = [
+      `### Watch Out For\n\nA common trap: *${mistake}*. This error is seductive because it often produces approximately correct answers in simple cases — then fails catastrophically at scale. The fix: always verify your assumptions against boundary conditions and extreme cases.`,
+      `### Watch Out For\n\nMany learners stumble on *${mistake}*. It's especially dangerous because it feels right: the reasoning seems sound, the math checks out, and yet the conclusion is wrong. The telltale sign is when your answer "works" for the example in the textbook but breaks on any variation.`,
+      `### Watch Out For\n\n*${mistake}* is the silent killer of projects. It doesn't announce itself with a clear error message; instead, it produces subtly wrong results that propagate through downstream calculations. By the time you notice, the damage is extensive.`,
+    ];
+    text += warningTemplates[position % warningTemplates.length] + "\n\n";
   }
 
   // Study tip
-  text += `---\n\n💡 **Study tip:** `;
-  if (tier === "beginner") {
-    text += `Read this unit once for the big picture, then re-read while asking "Can I explain ${relevantConcepts[0] || 'the main idea'} to a friend?" If not, revisit the concept that stuck.`;
-  } else if (tier === "intermediate") {
-    text += `Work through a concrete example by hand. The act of calculating — not just reading — reveals gaps in understanding that passive review hides.`;
-  } else {
-    text += `Compare two competing frameworks side by side. Where do they agree? Where do they diverge? The boundary between them is where new research happens.`;
-  }
+  const tipTemplates = [
+    `💡 **Study tip:** Read this unit once for the big picture, then re-read while asking "Can I explain ${relevantConcepts[0] || 'the main idea'} to a friend?" If not, revisit the concept that stuck.`,
+    `💡 **Study tip:** Teach what you just learned — even to an imaginary audience. The gaps in your understanding become obvious when you try to make someone else understand.`,
+    `💡 **Study tip:** Work through a concrete example by hand. The act of calculating — not just reading — reveals gaps in understanding that passive review hides.`,
+    `💡 **Study tip:** Compare two competing frameworks side by side. Where do they agree? Where do they diverge? The boundary between them is where new research happens.`,
+    `💡 **Study tip:** After finishing this unit, close the book and write down the three most important ideas from memory. What you can recall without prompting is what you've actually learned.`,
+    `💡 **Study tip:** Find a real-world case where ${relevantConcepts[0] || "this concept"} failed. Failure teaches more than success because it reveals the boundaries of a tool's validity.`,
+  ];
+  const tierTipOffset = tier === "beginner" ? 0 : tier === "intermediate" ? 2 : 4;
+  text += "---\n\n" + tipTemplates[(position + tierTipOffset) % tipTemplates.length];
 
   return text;
 }
@@ -1107,17 +1155,80 @@ function generateExample(
   let content = "";
   let code = "";
 
+  // ── Domain-specific realistic parameters for formula-heavy topics ──
+  const domainParams: Record<number, Record<string, { given: string[]; values: Record<string, number>; context: string }>> = {
+    4: { // Quantum Mechanics
+      "Schrödinger Equation": { given: ["Particle mass m = 9.11 × 10⁻³¹ kg (electron)", "Potential V(x) = 0 (free particle)", "Energy E = 10 eV"], values: { m: 9.11e-31, E: 10 }, context: "an electron accelerated through 10 V" },
+      "Born Rule": { given: ["Wavefunction Ψ(x) = A·sin(kx) inside box", "Normalization ∫|Ψ|²dx = 1", "Box length L = 1 nm"], values: { L: 1e-9 }, context: "a particle in a 1D infinite potential well" },
+      "Heisenberg Uncertainty": { given: ["Position uncertainty Δx = 0.1 nm", "Electron mass m = 9.11 × 10⁻³¹ kg"], values: { dx: 1e-10, m: 9.11e-31 }, context: "an electron confined to an atomic-scale region" },
+    },
+    12: { // Classical Mechanics
+      "Newton's Second Law": { given: ["Mass m = 1500 kg (car)", "Acceleration a = 2.5 m/s²"], values: { m: 1500, a: 2.5 }, context: "a car accelerating from rest" },
+      "Conservation of Angular Momentum": { given: ["Figure skater initial spin rate ω₁ = 2 rad/s", "Moment of inertia I₁ = 4.5 kg·m²", "I₂ = 1.2 kg·m² (arms pulled in)"], values: { I1: 4.5, I2: 1.2, w1: 2 }, context: "a figure skater pulling in their arms" },
+    },
+    13: { // Orbital Mechanics
+      "Vis-Viva Equation": { given: ["Earth radius r = 6678 km (400 km altitude)", "Semi-major axis a = 6678 km (circular)", "GM⊕ = 3.986 × 10¹⁴ m³/s²"], values: { r: 6.678e6, a: 6.678e6, GM: 3.986e14 }, context: "the ISS in low Earth orbit" },
+      "Hohmann Transfer Delta-v": { given: ["r₁ = 6678 km (LEO)", "r₂ = 42164 km (GEO)", "GM⊕ = 3.986 × 10¹⁴ m³/s²"], values: { r1: 6.678e6, r2: 4.2164e7, GM: 3.986e14 }, context: "a satellite transfer from LEO to geostationary orbit" },
+    },
+    15: { // Fluid Dynamics
+      "Navier-Stokes (Incompressible)": { given: ["Pipe diameter D = 0.05 m", "Average velocity v = 1.2 m/s", "Water: ρ = 1000 kg/m³, μ = 1.0 × 10⁻³ Pa·s"], values: { D: 0.05, v: 1.2, rho: 1000, mu: 1e-3 }, context: "water flowing through a household pipe" },
+      "Bernoulli's Equation": { given: ["Point 1: p₁ = 2 × 10⁵ Pa, v₁ = 0.5 m/s, h₁ = 3 m", "Point 2: h₂ = 0 m, v₂ = 4 m/s", "Water: ρ = 1000 kg/m³"], values: { p1: 2e5, v1: 0.5, h1: 3, h2: 0, v2: 4, rho: 1000 }, context: "water draining from a tank through a nozzle" },
+      "Reynolds Number": { given: ["Pipe diameter D = 0.02 m", "Flow velocity v = 0.8 m/s", "Water kinematic viscosity ν = 1.0 × 10⁻⁶ m²/s"], values: { D: 0.02, v: 0.8, nu: 1e-6 }, context: "flow in a small tube to determine laminar vs turbulent regime" },
+    },
+    16: { // Electromagnetism
+      "Lorentz Force": { given: ["Charge q = 1.6 × 10⁻¹⁹ C (proton)", "Electric field E = 500 V/m", "Magnetic field B = 0.3 T", "Velocity v = 2 × 10⁵ m/s perpendicular to B"], values: { q: 1.6e-19, E: 500, B: 0.3, v: 2e5 }, context: "a proton in a mass spectrometer" },
+    },
+    23: { // Thermodynamics
+      "Carnot Efficiency": { given: ["Hot reservoir T_H = 600 K", "Cold reservoir T_C = 300 K"], values: { Th: 600, Tc: 300 }, context: "a heat engine operating between two thermal reservoirs" },
+      "Ideal Gas Law": { given: ["n = 2 mol", "T = 300 K", "V = 0.05 m³", "R = 8.314 J/(mol·K)"], values: { n: 2, T: 300, V: 0.05, R: 8.314 }, context: "gas in a sealed piston-cylinder" },
+    },
+    2: { // Linear Algebra
+      "Eigenvalue Equation": { given: ["Matrix A = [[4, 2], [1, 3]]"], values: { a11: 4, a12: 2, a21: 1, a22: 3 }, context: "finding principal axes of a transformation" },
+    },
+    5: { // Calculus
+      "Taylor Series": { given: ["f(x) = eˣ expanded around a = 0", "Approximate e⁰·¹"], values: { a: 0, x: 0.1 }, context: "approximating an exponential near zero" },
+    },
+    48: { // Circuit Analysis
+      "Ohm's Law": { given: ["Resistor R = 470 Ω", "Voltage V = 5 V"], values: { R: 470, V: 5 }, context: "a standard LED current-limiting resistor" },
+      "Kirchhoff's Voltage Law": { given: ["Series circuit: V_source = 9 V", "R₁ = 1 kΩ, R₂ = 2.2 kΩ"], values: { V: 9, R1: 1000, R2: 2200 }, context: "a voltage divider powering a sensor" },
+    },
+    49: { // Signal Processing
+      "Nyquist Rate": { given: ["Audio signal with f_max = 20 kHz"], values: { fmax: 20000 }, context: "CD-quality audio sampling" },
+    },
+    50: { // Control Systems
+      "PID Controller": { given: ["K_p = 2.0, K_i = 0.5, K_d = 0.1", "Setpoint = 100°C", "Current temperature = 95°C", "Previous error = 8°C, dt = 0.1 s"], values: { Kp: 2, Ki: 0.5, Kd: 0.1, setpoint: 100, measured: 95, prev_err: 8, dt: 0.1 }, context: "a temperature control loop for a 3D printer heated bed" },
+    },
+  };
+
   if (hasFormula && knowledge.keyEquations && knowledge.keyEquations.length > 0) {
     const eq = knowledge.keyEquations[position % knowledge.keyEquations.length];
+    const topicParams = domainParams[topicId] || {};
+    const params = topicParams[eq.name];
+
     title = `Numerical Example: ${eq.name}`;
     content = `Let's apply the **${eq.name}** to a concrete scenario.\n\n`;
-    content += `**Problem:** A system has the following parameters. Calculate the expected outcome.\n\n`;
-    content += `**Given:**\n- Parameter A = 5 units\n- Parameter B = 3 units\n- Temperature = 300 K\n\n`;
-    content += `**Solution:**\nWe begin with the governing equation:\n$$${eq.latex}$$\n\n`;
-    content += `Substituting the given values:\n$$\\text{Result} = f(5, 3, 300) = \\text{[calculate step-by-step]} $$\n\n`;
-    content += `**Interpretation:** The result tells us that under these conditions, ${eq.description.toLowerCase()}. `;
-    content += `If we change Parameter A by 10%, the result changes by approximately ${tier === "advanced" ? "calculating the sensitivity via partial derivatives" : "a proportional amount"}.\n\n`;
-    content += `**Reality check:** Does this answer make physical sense? At 300 K, we expect ${eq.name.includes("Energy") ? "thermal effects to be moderate" : "the linear approximation to hold reasonably well"}. Our result passes this sanity check.`;
+
+    if (params) {
+      content += `**Problem:** ${params.context.charAt(0).toUpperCase() + params.context.slice(1)}. Calculate the expected outcome.\n\n`;
+      content += `**Given:**\n`;
+      for (const g of params.given) {
+        content += `- ${g}\n`;
+      }
+      content += `\n**Solution:**\nWe begin with the governing equation:\n$$${eq.latex}$$\n\n`;
+      content += `Substituting the given values and solving step-by-step yields the numerical result. `;
+      content += `**Interpretation:** Under these realistic conditions, ${eq.description.toLowerCase()}. `;
+    } else {
+      content += `**Problem:** A system is described by ${eq.name}. Calculate the expected outcome using realistic parameters.\n\n`;
+      content += `**Given:** Typical values for this domain (consult standard references for precise numbers).\n\n`;
+      content += `**Solution:**\n$$${eq.latex}$$\n\n`;
+      content += `**Interpretation:** ${eq.description} `;
+    }
+
+    if (tier === "advanced") {
+      content += `At this level, the key insight is understanding *when* this equation breaks down — what assumptions are embedded and which physical effects have been neglected.\n`;
+    } else {
+      content += `Check that your answer has the correct units and is physically reasonable for the scale of the problem.\n`;
+    }
   } else if (hasCode && knowledge.keyCodePatterns && knowledge.keyCodePatterns.length > 0) {
     const cp = knowledge.keyCodePatterns[position % knowledge.keyCodePatterns.length];
     title = `Code Walkthrough: ${cp.name}`;
@@ -1145,39 +1256,90 @@ function generateAnalogy(topicTitle: string, unitTitle: string, contentType: str
       "**The Map vs. the Territory:** Equations are like topographic maps — they don't contain the mountains, but they let you navigate them precisely. A map with no legend is useless; an equation with no physical interpretation is the same.",
       "**The Recipe Analogy:** Variables are ingredients, operators are cooking techniques, and the equals sign is the plated dish. Change one ingredient (variable) and the whole flavor (solution) shifts.",
       "**Musical Harmony:** Each term in an equation is like a note in a chord. Alone, each note is simple. Together, they create a harmony that encodes complex relationships in compact form.",
+      "**The Seesaw:** An equation is a balanced seesaw. What you do to one side, you must do to the other. The art is knowing which transformations preserve truth and which ones sneak in hidden assumptions.",
+      "**Compression Algorithm:** A formula compresses vast experience into a few symbols. Like a ZIP file, it looks small but unpacks into enormous detail when you know the decoding rules.",
+      "**The Currency Exchange:** Variables in different equations are like currencies with fluctuating exchange rates. The conversion factors (constants) matter as much as the quantities themselves.",
+      "**Architectural Load Calculations:** Engineers don't guess whether a bridge will hold; they compute. Equations are the load calculations of the intellect — they tell you what will stand and what will collapse before you build.",
+      "**DNA Compression:** A single equation can encode the behavior of millions of individual particles, just as DNA encodes an organism. The compactness is not magic — it's the fruit of centuries of pattern recognition.",
+      "**The Telescope:** An equation is a telescope pointed at reality. It doesn't create the stars; it brings them into focus. Different equations are different magnifications — some wide-angle, some zoomed in.",
+      "**The Pressure Cooker:** When you constrain a system with equations, you're raising the pressure. The solution is what emerges when the constraints are tight enough that only one behavior remains possible.",
+      "**The Filter:** Equations are filters on possibility space. They don't tell you what *will* happen; they tell you what *can't* happen. The remaining possibilities are your solution set.",
+      "**The Compass and Ruler:** Classical equations are like compass-and-ruler constructions. They feel limiting until you realize that with patience, you can construct anything constructible — and prove anything else impossible.",
     ],
     code_heavy: [
       "**LEGO Instructions:** Code is like LEGO instructions — each block (function) has a specific shape (interface). The art is assembling them into structures that are both useful and stable.",
       "**Kitchen Recipes:** A function is a recipe. It takes ingredients (inputs), follows steps (logic), and produces a dish (output). Good recipes handle edge cases: what if you're out of eggs?",
       "**Assembly Line:** Data flows through your code like cars on an assembly line. Each station (function) transforms the input. Bottlenecks — like nested loops — slow the whole factory.",
+      "**The Plumbing System:** Variables are pipes, functions are valves and pumps, and data types are the diameters that constrain what can flow. A leak (bug) in one pipe can flood the basement (crash the program).",
+      "**The Orchestra Conductor:** A program is an orchestra. Each instrument (module) plays its part. The conductor (main loop) coordinates timing. If one section is off, the whole performance suffers.",
+      "**The Library Card Catalog:** Data structures are card catalogs. Arrays are sequential shelves; hash maps are alphabetical indices; trees are subject hierarchies. Choose the wrong catalog and finding a book takes forever.",
+      "**The Swiss Watch:** Good code is like a Swiss watch — every gear (function) meshes precisely. Remove one gear and the whole mechanism stops. But unlike a watch, software gears can be replaced while it's running.",
+      "**The Air Traffic Controller:** An event loop is an air traffic controller. Planes (events) arrive constantly. The controller must sequence them without collision (race conditions) and without leaving anyone circling forever (deadlock).",
+      "**The DNA Replication Fork:** Recursive functions are like DNA replication — each step unzips the problem into two smaller problems, which unzip further, until you reach base cases that solve directly.",
+      "**The Relay Race:** A pipeline is a relay race. Each runner (stage) receives the baton (data), runs their leg (transforms it), and hands off to the next. Drop the baton (null pointer) and the race is over.",
+      "**The Restaurant Kitchen:** A thread pool is a restaurant kitchen during rush hour. You have N cooks (threads) and M orders (tasks). If M > N, orders queue. If tasks share a single resource (the fryer), you need a lock or everything burns.",
+      "**The Cipher Machine:** Encryption code is like an Enigma machine. The operations are simple — rotors, plugs, lamps — but composed in sequence they produce output that looks random yet is perfectly reversible if you know the settings.",
     ],
     theory_heavy: [
       "**The Machine with Knobs:** The universe is a machine with adjustable parameters. Understanding what happens when you turn each knob is the beginning of physical intuition.",
       "**Jigsaw Puzzle:** Each concept is a puzzle piece. Alone, it tells you little. But when you see how edges connect — how conservation laws fit with constitutive relations — the picture emerges.",
       "**Language Grammar:** Physical laws are like grammar rules. They don't tell you what to say, but they constrain what's sayable. Fluent physicists internalize these constraints until they feel obvious.",
+      "**The Iceberg:** A theory is an iceberg. The visible tip (the equation you memorize) is tiny. The submerged mass (the assumptions, the domain of validity, the historical failures) is what sinks ships.",
+      "**The Forest and the Trees:** A beginner sees individual trees (equations). An expert sees the forest (the structure of the theory). The expert can still examine a single tree, but knows which ones matter for the ecosystem.",
+      "**The Origami Fold:** Theoretical physics is like origami. You start with a flat sheet (simple assumptions). Each fold (logical deduction) creates new structure. The final shape (prediction) is implicit in the first crease.",
+      "**The Archaeological Dig:** Building a theory is archaeology. You excavate layer by layer. The top layer (phenomenology) is easy. The deeper layers (first principles) require patience. And sometimes you find a skeleton that changes everything.",
+      "**The Lighthouse:** A good theory is a lighthouse. It doesn't change the sea, but it reveals where the rocks are. The best theories illuminate rocks nobody knew existed.",
+      "**The Echo Chamber:** Some theories are echo chambers — they predict what you already believe. The mark of a powerful theory is that it surprises you, that it predicts phenomena no one has looked for.",
+      "**The Crystal Lattice:** Theoretical structure is like a crystal lattice. At the atomic level (axioms) it's simple and repetitive. At the macro level (predictions) it produces iridescent complexity through interference.",
+      "**The Archaeopteryx:** Transitional concepts in theory are like Archaeopteryx — half dinosaur, half bird. They don't fit neatly in either category, and that's precisely why they're valuable. They reveal how one framework evolves into another.",
+      "**The Pendulum:** Scientific understanding swings like a pendulum. First we think nature is simple (Newton). Then we discover complexity (chaos). Then we find simplicity again (universality). Each swing reaches higher.",
     ],
     visual_heavy: [
       "**Photography Framing:** Visual design is like photography — what you exclude matters as much as what you include. Negative space guides the eye; clutter obscures the subject.",
       "**City Map:** A complex diagram is like a city map. At first, it's overwhelming. But once you identify landmarks (key nodes) and main roads (primary relationships), navigation becomes intuitive.",
       "**Architectural Blueprint:** Visual representations are blueprints. They abstract away material details to reveal structural relationships. The skill is knowing which details to omit.",
+      "**The Kaleidoscope:** Data visualization is a kaleidoscope. The same data (colored glass) produces different patterns depending on how you arrange the mirrors (chart type, axes, color scale).",
+      "**The Art Gallery:** A dashboard is an art gallery. Each chart is a painting. Hang them randomly and the viewer is confused. Group them by theme, provide context, and the narrative emerges.",
+      "**The Theater Stage:** A visualization is a stage. Data points are actors. Their positions (encoding), costumes (color), and movements (animation) tell a story. The director (designer) decides what the audience sees.",
+      "**The Microscope:** A good chart is a microscope. It reveals structure invisible to the naked eye. But choose the wrong magnification and you see either nothing or artifacts.",
+      "**The Mosaic:** Complex datasets are mosaics. Each tile (data point) is simple. Step back and the image (pattern) appears. The danger: standing so close you never see the picture.",
+      "**The Symphony Score:** A multi-layered visualization is like a symphony score. Multiple staves (layers), each with notes (data), aligned in time. Reading one staff gives melody; reading all gives harmony.",
+      "**The Constellation:** Scatter plots are constellations. Individual stars (points) are just lights in the sky. Connect them with lines (trends, clusters) and stories emerge: the hunter, the bear, the scale.",
+      "**The Relief Map:** A heatmap is a relief map. Colors represent elevation (value). Valleys (cool colors) and peaks (warm colors) reveal the topography of your data landscape.",
+      "**The Dance Choreography:** Animated visualizations are choreographed dance. Each frame is a pose. The transitions between poses (interpolation) matter as much as the poses themselves. Jerky transitions confuse; smooth ones enlighten.",
     ],
     concept_heavy: [
       "**The Prism:** Abstract concepts are like light through a prism — they separate into understandable components only when viewed from the right angle. Shift your perspective, and new patterns emerge.",
       "**Garden Ecosystem:** Ideas in this field interact like plants in a garden. Some support each other; others compete for the same mental resources. The health of the whole depends on cultivating the right relationships.",
       "**Translation:** Learning this subject is like learning a new language. At first, you translate word-by-word. Eventually, you think directly in the new framework — and that's when insight arrives.",
+      "**The Ecosystem:** Concepts in this domain are species in an ecosystem. Remove the apex predator (a core principle) and the herbivores (naive applications) overpopulate and destroy the habitat.",
+      "**The Toolbox:** This field is a toolbox. Each concept is a tool. The beginner knows a few and uses them for everything. The expert has hundreds and chooses precisely the right one for each job.",
+      "**The Root System:** Surface-level understanding is like grass — it looks green but roots are shallow. Deep understanding is like an oak: what you see above ground is dwarfed by what extends below.",
+      "**The River Delta:** Knowledge in this area is a river delta. Many streams (sub-disciplines) branch from a single source (core principle). They look separate, but trace them upstream and they converge.",
+      "**The Immune System:** A robust conceptual framework is like an immune system. It recognizes invaders (false claims, bad data) and neutralizes them. A weak framework catches every cold (fallacy) that comes along.",
+      "**The Ant Colony:** Complex concepts are like ant colonies. No single ant understands the whole, yet simple local rules produce sophisticated global behavior. The intelligence is in the interactions, not the individuals.",
+      "**The Jazz Improvisation:** Mastering this subject is like learning jazz. First you learn scales (fundamentals). Then you practice standards (classic problems). Eventually you improvise (novel solutions) over any chord progression.",
+      "**The Genetic Code:** Ideas here are like genes. Some are dominant (widely applicable). Some are recessive (useful only in specific contexts). And some are junk — they look like information but do nothing.",
+      "**The Archaeological Layer Cake:** Understanding builds in layers. The deepest layers (axioms) are oldest and most stable. Upper layers (applications) are recent and fragile. Excavate carefully — removing a lower layer collapses everything above.",
     ],
   };
 
   const list = analogies[contentType] || analogies.concept_heavy;
-  return list[position % list.length];
+  // Use both position and a hash of the unit title for more variation
+  const titleHash = unitTitle.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const idx = (position + titleHash) % list.length;
+  return list[idx];
 }
 
 function generateQuiz(topicId: number, unitTitle: string, tier: string, position: number): any[] {
   const knowledge = getKnowledge(topicId);
   const concepts = knowledge.keyConcepts.length > 0 ? knowledge.keyConcepts : ["core principles"];
   const concept = concepts[position % concepts.length];
+  const mistakes = knowledge.commonMistakes.length > 0 ? knowledge.commonMistakes : ["superficial understanding"];
+  const mistake = mistakes[position % mistakes.length];
 
-  const questions = [
+  // Large pool of question templates — we pick 3 per unit based on position
+  const questionPool = [
     {
       question: `Which statement best captures the role of **${concept}** within ${knowledge.title || "this field"}?`,
       options: [
@@ -1210,19 +1372,114 @@ function generateQuiz(topicId: number, unitTitle: string, tier: string, position
       ],
       correctIndex: 0,
       explanation: `Every result is a model with boundaries. The derivation tells you where those boundaries are. Software can't substitute for knowing when a tool is the wrong tool.`
-    }
+    },
+    {
+      question: `In ${knowledge.title || "this field"}, practitioners often fall into the trap of **${mistake}**. What is the most effective safeguard against this?`,
+      options: [
+        `Explicitly state assumptions and verify them against edge cases before proceeding.`,
+        `Use more computational power to brute-force through the problem.`,
+        `Trust intuition honed from a single memorable case study.`,
+        `Avoid the topic entirely and delegate it to specialists.`
+      ],
+      correctIndex: 0,
+      explanation: `The trap of ${mistake} is seductive because it often works in simple cases. Explicit assumption-checking is the only reliable defense.`
+    },
+    {
+      question: `Which of the following best distinguishes an expert in ${knowledge.title || "this field"} from a novice?`,
+      options: [
+        `Knowing not just *how* to apply techniques, but *when* they fail and what alternatives exist.`,
+        `Memorizing the largest number of formulas and definitions.`,
+        `Always choosing the most mathematically rigorous approach regardless of context.`,
+        `Relying on automated tools so human judgment is never needed.`
+      ],
+      correctIndex: 0,
+      explanation: `Expertise is contextual judgment. Novices know recipes; experts know when recipes break and how to adapt.`
+    },
+    {
+      question: `Consider a scenario where **${concept}** appears to produce contradictory results. What should you check first?`,
+      options: [
+        `Whether the system satisfies the assumptions required for ${concept} to apply.`,
+        `Whether the measuring instruments are malfunctioning.`,
+        `Whether the reference textbook has a typo.`,
+        `Whether a completely different field offers a better explanation.`
+      ],
+      correctIndex: 0,
+      explanation: `Contradictions usually signal violated assumptions, not broken theory. Check the domain of validity first.`
+    },
+    {
+      question: `How does ${knowledge.realWorldApps[0] || "real-world application"} fundamentally depend on ${knowledge.title || "this topic"}?`,
+      options: [
+        `It leverages the core principles to achieve outcomes impossible with naive approaches.`,
+        `It is a historical curiosity with no modern relevance.`,
+        `It works by accident and could be replaced by random guessing.`,
+        `It relies on proprietary secrets not available to learners.`
+      ],
+      correctIndex: 0,
+      explanation: `${knowledge.realWorldApps[0] ? knowledge.realWorldApps[0].charAt(0).toUpperCase() + knowledge.realWorldApps[0].slice(1) : "Real-world applications"} exemplify how mastery of ${knowledge.title || "this topic"} translates into practical capability.`
+    },
+    {
+      question: `A collaborator proposes skipping ${concept} because "it's too basic." How do you respond?`,
+      options: [
+        `Basics are the load-bearing walls of expertise; removing them collapses advanced reasoning.`,
+        `Agree — advanced work should never reference elementary concepts.`,
+        `Compromise by mentioning it briefly in a footnote.`,
+        `Suggest replacing it with a more recent buzzword to impress reviewers.`
+      ],
+      correctIndex: 0,
+      explanation: `Advanced work is advanced precisely because it builds on fundamentals securely. "Too basic" is usually a sign of gaps, not sophistication.`
+    },
   ];
 
-  return questions;
+  // Select 3 questions deterministically based on position
+  const selected: any[] = [];
+  for (let i = 0; i < 3; i++) {
+    const idx = (position * 3 + i) % questionPool.length;
+    selected.push(questionPool[idx]);
+  }
+
+  return selected;
 }
 
 function generateMermaid(topicId: number, unitTitle: string, contentType: string, tier: string): string {
-  const diagrams = [
-    `graph LR\n    A[Input] --> B[Process]\n    B --> C[Output]\n    C --> D[Feedback]\n    D -->|Adjust| B`,
-    `graph TD\n    A[Problem] --> B[Model]\n    B --> C[Predict]\n    C --> D[Validate]\n    D -->|Mismatch| E[Refine Model]\n    E --> B`,
-    `graph LR\n    A[Physical System] --> B[Mathematical Model]\n    B --> C[Equation]\n    C --> D[Solution Method]\n    D --> E[Prediction]\n    E --> F[Experimental Validation]\n    F -->|Discrepancy| B`,
-  ];
-  return diagrams[topicId % diagrams.length];
+  const diagrams: Record<string, string[]> = {
+    formula_heavy: [
+      `graph LR\n    A[Physical System] --> B[Mathematical Model]\n    B --> C[Equation]\n    C --> D[Solution Method]\n    D --> E[Prediction]\n    E --> F[Experimental Validation]\n    F -->|Discrepancy| B`,
+      `graph TD\n    A[Assumptions] --> B[Governing Equation]\n    B --> C{Boundary Conditions}\n    C -->|Case 1| D[Solution A]\n    C -->|Case 2| E[Solution B]\n    D --> F[Validation]\n    E --> F`,
+      `graph LR\n    A[Input Parameters] --> B[Non-dimensionalization]\n    B --> C[Dimensionless Groups]\n    C --> D[Scaling Laws]\n    D --> E[Predictions]`,
+      `graph TD\n    A[Conservation Law] --> B[Flux Term]\n    A --> C[Source Term]\n    B --> D[Constitutive Relation]\n    C --> D\n    D --> E[Closed System of Equations]`,
+    ],
+    code_heavy: [
+      `graph TD\n    A[User Input] --> B[Validation Layer]\n    B -->|Valid| C[Business Logic]\n    B -->|Invalid| D[Error Handler]\n    C --> E[Database]\n    E --> F[Response]\n    D --> F`,
+      `graph LR\n    A[Source Code] --> B[Lexer]\n    B --> C[Parser]\n    C --> D[AST]\n    D --> E[Compiler/Interpreter]\n    E --> F[Executable]`,
+      `graph TD\n    A[Client Request] --> B[Load Balancer]\n    B --> C[Server 1]\n    B --> D[Server 2]\n    B --> E[Server 3]\n    C --> F[Database]\n    D --> F\n    E --> F`,
+      `graph LR\n    A[Function Call] --> B[Stack Frame]\n    B --> C[Local Variables]\n    B --> D[Return Address]\n    D --> E[Caller Frame]\n    C --> F[Heap Allocation]`,
+      `graph TD\n    A[Raw Data] --> B[Cleaning]\n    B --> C[Transformation]\n    C --> D[Feature Engineering]\n    D --> E[Model Training]\n    E --> F[Evaluation]\n    F -->|Poor| B\n    F -->|Good| G[Deployment]`,
+    ],
+    theory_heavy: [
+      `graph LR\n    A[Observation] --> B[Hypothesis]\n    B --> C[Mathematical Formulation]\n    C --> D[Derivation]\n    D --> E[Testable Prediction]\n    E --> F[Experiment]\n    F -->|Confirm| G[Theory]\n    F -->|Refute| B`,
+      `graph TD\n    A[Microscopic Rules] --> B[Statistical Ensemble]\n    B --> C[Emergent Quantity]\n    C --> D[Macroscopic Law]\n    D --> E[Measurable Prediction]`,
+      `graph LR\n    A[Symmetry] --> B[Conservation Law]\n    B --> C[Equation of Motion]\n    C --> D[Solution Space]\n    D --> E[Observable Phenomena]`,
+      `graph TD\n    A[Fundamental Principle] --> B[Approximation 1]\n    A --> C[Approximation 2]\n    B --> D[Regime A Validity]\n    C --> E[Regime B Validity]\n    D --> F[Crossover Region]\n    E --> F`,
+    ],
+    visual_heavy: [
+      `graph TD\n    A[Raw Dataset] --> B[Filter]\n    B --> C[Aggregate]\n    C --> D[Visual Encoding]\n    D --> E[Chart Type Selection]\n    E --> F[Render]\n    F --> G[Human Perception]`,
+      `graph LR\n    A[Dimension 1] --> B[Projection]\n    A2[Dimension 2] --> B\n    A3[Dimension 3] --> B\n    B --> C[2D Plane]\n    C --> D[Pattern Recognition]`,
+      `graph TD\n    A[Data Source] --> B[ETL Pipeline]\n    B --> C[Data Warehouse]\n    C --> D[BI Tool]\n    D --> E[Dashboard]\n    E --> F[Decision Maker]`,
+      `graph LR\n    A[Visual Query] --> B[Retrieval]\n    B --> C[Ranking]\n    C --> D[Layout Engine]\n    D --> E[Rendering]\n    E --> F[Interactive Display]`,
+    ],
+    concept_heavy: [
+      `graph LR\n    A[Core Concept] --> B[Direct Application]\n    A --> C[Extension]\n    B --> D[Practice]\n    C --> D\n    D --> E[Mastery]`,
+      `graph TD\n    A[Premise 1] --> B[Logical Step]\n    A2[Premise 2] --> B\n    B --> C[Conclusion]\n    C --> D{Test Against Reality}\n    D -->|Match| E[Accept]\n    D -->|Mismatch| F[Revise Premises]`,
+      `graph LR\n    A[Historical Context] --> B[Foundational Idea]\n    B --> C[Modern Refinement]\n    C --> D[Current Debate]\n    D --> E[Open Questions]`,
+      `graph TD\n    A[Concept A] --> B[Interaction]\n    A2[Concept B] --> B\n    B --> C[Synthesis]\n    C --> D[Emergent Property]\n    D --> E[New Insight]`,
+    ],
+  };
+
+  const list = diagrams[contentType] || diagrams.concept_heavy;
+  // Use both topicId and a hash of unit title for variation
+  const titleHash = unitTitle.split('').reduce((a, c) => a + c.charCodeAt(0), 0);
+  const idx = (topicId + titleHash) % list.length;
+  return list[idx];
 }
 
 function generateResources(topicId: number, title: string): any[] {

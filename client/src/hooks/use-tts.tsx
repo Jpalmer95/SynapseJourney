@@ -1140,8 +1140,17 @@ function useTTSImpl(): UseTTSReturn {
         }
       }
 
-      if (!BROWSER_SPEECH_SUPPORTED) {
-        setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, error: "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.", isSupported: true }));
+      if (!BROWSER_SPEECH_SUPPORTED || noVoicesAvailable) {
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          isSpeaking: false,
+          isPaused: false,
+          error: noVoicesAvailable
+            ? "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio."
+            : "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.",
+          isSupported: true,
+        }));
         return;
       }
 
@@ -1353,7 +1362,7 @@ function useTTSImpl(): UseTTSReturn {
             } catch (audioErr: unknown) {
               if (audioErr instanceof Error && audioErr.message === "cancelled") return;
               // Server audio failed for this section — try browser TTS as fallback
-              if (BROWSER_SPEECH_SUPPORTED) {
+              if (BROWSER_SPEECH_SUPPORTED && !noVoicesAvailable) {
                 setState(prev => ({ ...prev, usingServerTTS: false }));
                 const chunks = splitIntoChunks(sectionText);
                 for (const chunk of chunks) {
@@ -1366,14 +1375,17 @@ function useTTSImpl(): UseTTSReturn {
                 // the user explicitly stops or retries.
                 setState(prev => ({
                   ...prev, isLoading: false, isSpeaking: false, isPaused: false,
-                  usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
+                  usingServerTTS: false,
+                  error: noVoicesAvailable
+                    ? "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio."
+                    : "Audio unavailable. Choose an AI voice preset in settings.",
                 }));
                 return;
               }
             }
           } else if (!cancelledRef.current) {
             // Server returned nothing — browser fallback
-            if (BROWSER_SPEECH_SUPPORTED) {
+            if (BROWSER_SPEECH_SUPPORTED && !noVoicesAvailable) {
               setState(prev => ({ ...prev, usingServerTTS: false }));
               const chunks = splitIntoChunks(sectionText);
               for (const chunk of chunks) {
@@ -1385,13 +1397,24 @@ function useTTSImpl(): UseTTSReturn {
               // so the section bar stays visible until user stops or retries.
               setState(prev => ({
                 ...prev, isLoading: false, isSpeaking: false, isPaused: false,
-                usingServerTTS: false, error: "Audio unavailable. Choose an AI voice preset in settings.",
+                usingServerTTS: false,
+                error: noVoicesAvailable
+                  ? "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio."
+                  : "Audio unavailable. Choose an AI voice preset in settings.",
               }));
               return;
             }
           }
         } else {
           // Browser TTS path
+          if (noVoicesAvailable) {
+            setState(prev => ({
+              ...prev, isLoading: false, isSpeaking: false, isPaused: false,
+              usingServerTTS: false,
+              error: "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio.",
+            }));
+            return;
+          }
           setState(prev => ({ ...prev, usingServerTTS: false }));
           if (i === start) {
             try { window.speechSynthesis.cancel(); } catch { /* ignore */ }

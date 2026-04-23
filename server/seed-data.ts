@@ -379,3 +379,96 @@ export const DEFAULT_KNOWLEDGE_CARDS = [
   { id: 100, topicId: 69, title: "The Prisoner's Dilemma", content: "Two suspects must choose to cooperate or betray. Individual rationality leads to mutual defection, even though mutual cooperation is better. A paradox of strategic interaction.", cardType: "text", tags: ["game-theory", "dilemma", "strategy"], order: 1 },
   { id: 101, topicId: 70, title: "Phase Diagrams", content: "Maps showing which phase (solid, liquid, gas) a material occupies at given temperatures and pressures. They guide alloy design and heat treatment.", cardType: "text", tags: ["phases", "materials", "diagrams"], order: 1 },
 ];
+
+// ── Achievements ────────────────────────────────────────────────────────────
+export const DEFAULT_ACHIEVEMENTS = [
+  { id: 1, name: "First Steps", description: "Complete your first lesson unit.", icon: "Footprints", category: "milestone", requirement: { type: "lessons", value: 1 }, xpReward: 50, isSecret: false, rarity: "common" },
+  { id: 2, name: "Getting Started", description: "Complete 5 lesson units across any topics.", icon: "Rocket", category: "milestone", requirement: { type: "lessons", value: 5 }, xpReward: 100, isSecret: false, rarity: "common" },
+  { id: 3, name: "Dedicated Learner", description: "Complete 25 lesson units.", icon: "BookOpen", category: "milestone", requirement: { type: "lessons", value: 25 }, xpReward: 250, isSecret: false, rarity: "uncommon" },
+  { id: 4, name: "Knowledge Seeker", description: "Complete 100 lesson units.", icon: "GraduationCap", category: "milestone", requirement: { type: "lessons", value: 100 }, xpReward: 500, isSecret: false, rarity: "rare" },
+  { id: 5, name: "Explorer", description: "Explore 5 different topics.", icon: "Compass", category: "milestone", requirement: { type: "topics", value: 5 }, xpReward: 100, isSecret: false, rarity: "common" },
+  { id: 6, name: "Scholar", description: "Explore 25 different topics.", icon: "Scroll", category: "milestone", requirement: { type: "topics", value: 25 }, xpReward: 300, isSecret: false, rarity: "uncommon" },
+  { id: 7, name: "Polymath", description: "Explore 50 different topics.", icon: "Globe", category: "milestone", requirement: { type: "topics", value: 50 }, xpReward: 750, isSecret: false, rarity: "epic" },
+  { id: 8, name: "Master", description: "Master a topic by completing all difficulty tiers.", icon: "Trophy", category: "mastery", requirement: { type: "masteredTopics", value: 1 }, xpReward: 200, isSecret: false, rarity: "uncommon" },
+  { id: 9, name: "Grandmaster", description: "Master 10 topics.", icon: "Crown", category: "mastery", requirement: { type: "masteredTopics", value: 10 }, xpReward: 1000, isSecret: false, rarity: "legendary" },
+  { id: 10, name: "Streak Starter", description: "Maintain a 3-day learning streak.", icon: "Flame", category: "streak", requirement: { type: "streak", value: 3 }, xpReward: 75, isSecret: false, rarity: "common" },
+  { id: 11, name: "On Fire", description: "Maintain a 7-day learning streak.", icon: "Flame", category: "streak", requirement: { type: "streak", value: 7 }, xpReward: 150, isSecret: false, rarity: "uncommon" },
+  { id: 12, name: "Unstoppable", description: "Maintain a 30-day learning streak.", icon: "Zap", category: "streak", requirement: { type: "streak", value: 30 }, xpReward: 500, isSecret: false, rarity: "epic" },
+  { id: 13, name: "Open Mind", description: "Submit your first open science idea.", icon: "Lightbulb", category: "research", requirement: { type: "ideas", value: 1 }, xpReward: 100, isSecret: false, rarity: "common" },
+  { id: 14, name: "Contributor", description: "Submit 5 open science ideas.", icon: "Microscope", category: "research", requirement: { type: "ideas", value: 5 }, xpReward: 300, isSecret: false, rarity: "uncommon" },
+  { id: 15, name: "Pioneer", description: "Have a research idea validated by the community.", icon: "Award", category: "research", requirement: { type: "validatedIdeas", value: 1 }, xpReward: 500, isSecret: false, rarity: "rare" },
+  { id: 16, name: "Night Owl", description: "Complete a lesson between midnight and 5 AM.", icon: "Moon", category: "rare", requirement: { type: "nightOwl", value: 1 }, xpReward: 50, isSecret: true, rarity: "uncommon" },
+  { id: 17, name: "Early Bird", description: "Complete a lesson before 6 AM.", icon: "Sun", category: "rare", requirement: { type: "earlyBird", value: 1 }, xpReward: 50, isSecret: true, rarity: "uncommon" },
+  { id: 18, name: "Speedster", description: "Complete 5 lessons in a single day.", icon: "Zap", category: "rare", requirement: { type: "speedster", value: 5 }, xpReward: 150, isSecret: false, rarity: "rare" },
+];
+
+// ── Topic Connections (Prerequisites) ───────────────────────────────────────
+export const DEFAULT_TOPIC_CONNECTIONS = [
+  // Math foundations
+  { fromTopicId: 2, toTopicId: 1, connectionType: "prerequisite", strength: 3 },   // Linear Algebra -> Machine Learning
+  { fromTopicId: 2, toTopicId: 8, connectionType: "prerequisite", strength: 3 },   // Linear Algebra -> Neural Networks
+  { fromTopicId: 5, toTopicId: 22, connectionType: "prerequisite", strength: 3 },  // Calculus -> Differential Equations
+  { fromTopicId: 21, toTopicId: 1, connectionType: "prerequisite", strength: 2 },  // Probability & Statistics -> Machine Learning
+  // Physics progression
+  { fromTopicId: 12, toTopicId: 13, connectionType: "prerequisite", strength: 3 }, // Classical Mechanics -> Orbital Mechanics
+  { fromTopicId: 12, toTopicId: 16, connectionType: "prerequisite", strength: 2 }, // Classical Mechanics -> Electromagnetism
+  { fromTopicId: 12, toTopicId: 15, connectionType: "prerequisite", strength: 2 }, // Classical Mechanics -> Fluid Dynamics
+  { fromTopicId: 17, toTopicId: 14, connectionType: "prerequisite", strength: 2 }, // Waves & Frequencies -> Optics & Light
+  { fromTopicId: 15, toTopicId: 23, connectionType: "prerequisite", strength: 2 }, // Fluid Dynamics -> Thermodynamics
+  { fromTopicId: 23, toTopicId: 24, connectionType: "prerequisite", strength: 3 }, // Thermodynamics -> Statistical Mechanics
+  { fromTopicId: 16, toTopicId: 48, connectionType: "prerequisite", strength: 2 }, // Electromagnetism -> Circuit Analysis
+  // Chemistry & Biology
+  { fromTopicId: 18, toTopicId: 19, connectionType: "prerequisite", strength: 3 }, // General Chemistry -> Organic Chemistry
+  { fromTopicId: 18, toTopicId: 25, connectionType: "prerequisite", strength: 2 }, // General Chemistry -> Cell Biology
+  { fromTopicId: 19, toTopicId: 26, connectionType: "prerequisite", strength: 2 }, // Organic Chemistry -> Genetics & Heredity
+  { fromTopicId: 25, toTopicId: 26, connectionType: "prerequisite", strength: 2 }, // Cell Biology -> Genetics & Heredity
+  { fromTopicId: 26, toTopicId: 28, connectionType: "prerequisite", strength: 2 }, // Genetics -> Evolutionary Biology
+  { fromTopicId: 26, toTopicId: 64, connectionType: "prerequisite", strength: 3 }, // Genetics -> CRISPR & Gene Editing
+  { fromTopicId: 26, toTopicId: 65, connectionType: "prerequisite", strength: 2 }, // Genetics -> Bioinformatics
+  // Computer Science
+  { fromTopicId: 3, toTopicId: 7, connectionType: "prerequisite", strength: 3 },   // Data Structures -> Algorithms
+  { fromTopicId: 7, toTopicId: 6, connectionType: "prerequisite", strength: 2 },   // Algorithms -> Graph Theory
+  { fromTopicId: 53, toTopicId: 52, connectionType: "prerequisite", strength: 2 }, // Databases -> Node.js & Backend APIs
+  // AI progression
+  { fromTopicId: 1, toTopicId: 56, connectionType: "prerequisite", strength: 3 },  // Machine Learning -> Deep Learning
+  { fromTopicId: 56, toTopicId: 58, connectionType: "prerequisite", strength: 2 }, // Deep Learning -> Computer Vision
+  { fromTopicId: 56, toTopicId: 59, connectionType: "prerequisite", strength: 2 }, // Deep Learning -> NLP
+  { fromTopicId: 56, toTopicId: 57, connectionType: "prerequisite", strength: 2 }, // Deep Learning -> Reinforcement Learning
+  // Economics
+  { fromTopicId: 34, toTopicId: 35, connectionType: "prerequisite", strength: 3 }, // Microeconomics -> Macroeconomics
+  { fromTopicId: 34, toTopicId: 69, connectionType: "prerequisite", strength: 2 }, // Microeconomics -> Game Theory
+  { fromTopicId: 35, toTopicId: 36, connectionType: "prerequisite", strength: 2 }, // Macroeconomics -> Behavioral Economics
+  // Philosophy
+  { fromTopicId: 32, toTopicId: 31, connectionType: "prerequisite", strength: 2 }, // Logic & Reasoning -> Ethics & Moral Philosophy
+  { fromTopicId: 31, toTopicId: 33, connectionType: "prerequisite", strength: 2 }, // Ethics -> Epistemology
+  // Linguistics
+  { fromTopicId: 37, toTopicId: 38, connectionType: "prerequisite", strength: 3 }, // Syntax & Grammar -> Semantics & Pragmatics
+  { fromTopicId: 38, toTopicId: 39, connectionType: "prerequisite", strength: 3 }, // Semantics -> Computational Linguistics
+  // History
+  { fromTopicId: 40, toTopicId: 41, connectionType: "prerequisite", strength: 2 }, // Ancient Civilizations -> Modern History
+  // Design
+  { fromTopicId: 42, toTopicId: 43, connectionType: "prerequisite", strength: 2 }, // Color Theory -> Typography & Layout
+  { fromTopicId: 43, toTopicId: 44, connectionType: "prerequisite", strength: 2 }, // Typography -> UI/UX Design Principles
+  // Engineering
+  { fromTopicId: 48, toTopicId: 49, connectionType: "prerequisite", strength: 2 }, // Circuit Analysis -> Signal Processing
+  { fromTopicId: 48, toTopicId: 50, connectionType: "prerequisite", strength: 2 }, // Circuit Analysis -> Control Systems
+  // Web Development
+  { fromTopicId: 51, toTopicId: 52, connectionType: "prerequisite", strength: 2 }, // React -> Node.js & Backend APIs
+  { fromTopicId: 52, toTopicId: 53, connectionType: "prerequisite", strength: 2 }, // Node.js -> Databases & SQL
+  // Security
+  { fromTopicId: 54, toTopicId: 55, connectionType: "prerequisite", strength: 3 }, // Cryptography -> Network Security
+  // Astronomy
+  { fromTopicId: 62, toTopicId: 61, connectionType: "prerequisite", strength: 2 }, // Stellar Evolution -> Astrobiology
+  { fromTopicId: 61, toTopicId: 63, connectionType: "prerequisite", strength: 2 }, // Astrobiology -> Cosmology
+  // Earth Science
+  { fromTopicId: 30, toTopicId: 29, connectionType: "prerequisite", strength: 2 }, // Geology & Plate Tectonics -> Climate Science
+  // Related (weaker connections)
+  { fromTopicId: 4, toTopicId: 24, connectionType: "related", strength: 1 },      // Quantum Mechanics -> Statistical Mechanics
+  { fromTopicId: 14, toTopicId: 62, connectionType: "related", strength: 1 },     // Optics & Light -> Stellar Evolution
+  { fromTopicId: 20, toTopicId: 17, connectionType: "related", strength: 1 },     // Music Theory -> Waves & Frequencies
+  { fromTopicId: 45, toTopicId: 46, connectionType: "related", strength: 1 },     // Human Physiology -> Immunology
+  { fromTopicId: 47, toTopicId: 45, connectionType: "related", strength: 1 },     // Nutrition & Metabolism -> Human Physiology
+  { fromTopicId: 66, toTopicId: 16, connectionType: "related", strength: 1 },     // Renewable Energy -> Electromagnetism
+  { fromTopicId: 9, toTopicId: 10, connectionType: "related", strength: 1 },      // Hugging Face -> Gradio
+  { fromTopicId: 11, toTopicId: 9, connectionType: "related", strength: 1 },      // Benefits of Open Source -> Hugging Face
+];

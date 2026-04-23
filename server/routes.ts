@@ -60,7 +60,7 @@ import {
   generateCourseContent,
   type ProviderConfig 
 } from "./ai-providers";
-import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS } from "./seed-data";
+import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS, DEFAULT_ACHIEVEMENTS, DEFAULT_TOPIC_CONNECTIONS } from "./seed-data";
 import { SYLLABI_MAP } from "./syllabi";
 import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 import { insertOpenScienceIdeaSchema, insertOpenScienceCommentSchema } from "@shared/schema";
@@ -2067,10 +2067,60 @@ Return a JSON object in this exact format:
           console.log(`[API SeedDefaults] Pathway topics already exist (${existingPathwayTopics.length} found for pathway ${firstPathway.id})`);
         }
       }
-      
-      const totalSeeded = categoriesSeeded + topicsSeeded + cardsSeeded + pathwaysSeeded + pathwayTopicsSeeded;
-      console.log(`[API SeedDefaults] Completed seeding: ${categoriesSeeded} categories, ${topicsSeeded} topics, ${cardsSeeded} cards, ${pathwaysSeeded} pathways`);
-      
+
+      // Seed achievements if empty
+      let achievementsSeeded = 0;
+      const existingAchievements = await storage.getAchievements();
+      if (existingAchievements.length === 0) {
+        console.log("[API SeedDefaults] No achievements found, seeding default achievements...");
+        for (const ach of DEFAULT_ACHIEVEMENTS) {
+          try {
+            await storage.createAchievement({
+              name: ach.name,
+              description: ach.description,
+              icon: ach.icon,
+              category: ach.category,
+              requirement: ach.requirement,
+              xpReward: ach.xpReward,
+              isSecret: ach.isSecret,
+              rarity: ach.rarity,
+            });
+            achievementsSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create achievement ${ach.name}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${achievementsSeeded} achievements`);
+      } else {
+        console.log(`[API SeedDefaults] Achievements already exist (${existingAchievements.length} found)`);
+      }
+
+      // Seed topic connections if empty
+      let connectionsSeeded = 0;
+      const existingConnections = await storage.getAllTopicConnections();
+      if (existingConnections.length === 0) {
+        console.log("[API SeedDefaults] No topic connections found, seeding default connections...");
+        for (const conn of DEFAULT_TOPIC_CONNECTIONS) {
+          try {
+            await storage.createConnection({
+              fromTopicId: conn.fromTopicId,
+              toTopicId: conn.toTopicId,
+              connectionType: conn.connectionType,
+              strength: conn.strength,
+            });
+            connectionsSeeded++;
+          } catch (e) {
+            console.error(`[API SeedDefaults] Failed to create connection ${conn.fromTopicId}->${conn.toTopicId}:`, e);
+          }
+        }
+        console.log(`[API SeedDefaults] Seeded ${connectionsSeeded} topic connections`);
+      } else {
+        console.log(`[API SeedDefaults] Topic connections already exist (${existingConnections.length} found)`);
+      }
+
+      const totalSeeded = categoriesSeeded + topicsSeeded + cardsSeeded + pathwaysSeeded + pathwayTopicsSeeded + achievementsSeeded + connectionsSeeded;
+      console.log(`[API SeedDefaults] Completed seeding: ${categoriesSeeded} categories, ${topicsSeeded} topics, ${cardsSeeded} cards, ${pathwaysSeeded} pathways, ${achievementsSeeded} achievements, ${connectionsSeeded} connections`);
+
       res.json({
         success: true,
         seeded: {
@@ -2078,6 +2128,8 @@ Return a JSON object in this exact format:
           topics: topicsSeeded,
           knowledgeCards: cardsSeeded,
           pathways: pathwaysSeeded,
+          achievements: achievementsSeeded,
+          topicConnections: connectionsSeeded,
         },
         message: totalSeeded > 0 ? "Default content seeded successfully" : "Database already has content, no seeding needed"
       });
