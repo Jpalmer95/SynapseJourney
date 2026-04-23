@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from "react";
-import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink, X } from "lucide-react";
+import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, ExternalLink, X, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -69,6 +69,7 @@ export function TTSButton({
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,
+    kokoroIncompatible,
     kokoroVoice,
     setKokoroVoice,
     qwenVoice,
@@ -262,6 +263,7 @@ export function TTSButton({
     }
     if (isLoading) return "Generating audio…";
     if (isSpeaking) return isPaused ? "Resume" : "Pause";
+    if (kokoroIncompatible) return "Kokoro unavailable on this device · using Browser TTS";
     if (serverVoicePreset === "kokoro") {
       if (kokoroLoading) {
         return isKokoroDownloading
@@ -378,7 +380,12 @@ export function TTSButton({
               <X className="h-2.5 w-2.5 shrink-0 mt-0.5" />{kokoroDeviceWarning}
             </p>
           )}
-          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && !kokoroLoadError && (
+          {kokoroIncompatible && (
+            <p className="text-[10px] text-amber-600 dark:text-amber-400 mt-1 flex items-start gap-1" data-testid="status-kokoro-incompatible">
+              <AlertTriangle className="h-2.5 w-2.5 shrink-0 mt-0.5" />Kokoro is not supported on this device. Using Browser TTS instead.
+            </p>
+          )}
+          {!kokoroLoading && serverVoicePreset === "kokoro" && !kokoroReady && !kokoroLoadError && !kokoroIncompatible && (
             <p className="text-[10px] text-muted-foreground mt-1 flex items-center gap-1">
               <Zap className="h-2.5 w-2.5 text-emerald-500" />Model loads on first Listen
             </p>
@@ -397,10 +404,11 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel={kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local · offline, no token needed"}
+              sublabel={kokoroIncompatible ? "Not supported on this device" : (kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local · offline, no token needed")}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
+              disabled={kokoroIncompatible}
             />
 
             {/* Kokoro voice sub-grid */}

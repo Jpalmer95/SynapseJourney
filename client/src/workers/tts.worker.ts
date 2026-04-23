@@ -169,7 +169,7 @@ async function detectWebGPU(): Promise<boolean> {
   }
 
   try {
-    const adapter = await navigator.gpu.requestAdapter();
+    const adapter = await (navigator as any).gpu.requestAdapter();
     if (!adapter) {
       console.log("[TTS Worker] WebGPU requestAdapter() returned null — GPU unavailable");
       return false;

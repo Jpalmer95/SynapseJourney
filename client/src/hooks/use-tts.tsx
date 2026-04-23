@@ -72,6 +72,7 @@ interface UseTTSReturn extends TTSState {
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
+  kokoroIncompatible: boolean;
   hfWarming: boolean;
   kokoroVoice: string;
   setKokoroVoice: (voiceId: string) => void;
@@ -224,7 +225,7 @@ function useTTSImpl(): UseTTSReturn {
       return `Device has ~${mem}GB RAM. Local TTS may fail. Use Browser TTS or Qwen Cloud.`;
     }
     // No WebGPU + old iOS
-    if (typeof navigator.gpu === "undefined") {
+    if (typeof (navigator as any).gpu === "undefined") {
       if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
         return "Older iOS detected — local TTS may not work. Use Browser TTS or Qwen Cloud.";
       }
@@ -239,7 +240,7 @@ function useTTSImpl(): UseTTSReturn {
     if (ua.includes("tesla") || ua.includes("qtcarbrowser")) return true;
     const mem = (navigator as any).deviceMemory;
     if (typeof mem === "number" && mem < 2) return true;
-    if (typeof navigator.gpu === "undefined") {
+    if (typeof (navigator as any).gpu === "undefined") {
       if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
         return true;
       }
@@ -292,14 +293,15 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => {
     if (kokoroIncompatible && serverVoicePreset === "kokoro" && !autoSwitchedToBrowserRef.current) {
       autoSwitchedToBrowserRef.current = true;
-      setServerVoicePreset("browser").catch(() => {});
+      serverVoicePresetRef.current = "browser";
+      setServerVoicePresetState("browser");
       toast({
         title: "Switched to Browser TTS",
         description: "Your device doesn't support local AI voice synthesis. Using your device's built-in speech engine instead.",
         duration: 6000,
       });
     }
-  }, [kokoroIncompatible, serverVoicePreset, setServerVoicePreset, toast]);
+  }, [kokoroIncompatible, serverVoicePreset, toast]);
 
   const { data: ttsSettings } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
     queryKey: ["/api/tts/settings"],
@@ -685,8 +687,13 @@ function useTTSImpl(): UseTTSReturn {
           setKokoroLoading(false);
           setKokoroDownloadPercent(null);
           setKokoroDownloadPhase(null);
+          const msg = err instanceof Error ? err.message : "Kokoro failed to load";
+          // Mark incompatible for known capability errors so we skip Kokoro on future attempts
+          if (msg.includes("lacks WebGPU") || msg.includes("insufficient memory")) {
+            setKokoroIncompatible(true);
+          }
           // Surface the error so the TTS button can display it.
-          setKokoroLoadError(err instanceof Error ? err.message : "Kokoro failed to load");
+          setKokoroLoadError(msg);
           reject(err);
         },
       });
@@ -965,7 +972,7 @@ function useTTSImpl(): UseTTSReturn {
 
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      if (voiceTier === "local") {
+      if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
         // Split text into sentences and synthesise + play each one individually.
         // This lets the user hear audio within seconds on mobile rather than
         // waiting for the WASM runtime to process the entire text block at once.
@@ -1245,7 +1252,7 @@ function useTTSImpl(): UseTTSReturn {
         const sectionText = sections[i].text;
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        if (voiceTier === "local") {
+        if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
           // Split each section into sentences and synthesise + play one at a time.
           // The first sentence plays within seconds; subsequent sentences are
           // synthesised during the playback of the previous one (serial pipeline).
@@ -1547,6 +1554,7 @@ function useTTSImpl(): UseTTSReturn {
     kokoroEngine,
     kokoroLoadMs,
     kokoroFromCache,
+    kokoroIncompatible,
     hfWarming,
     kokoroVoice,
     setKokoroVoice,

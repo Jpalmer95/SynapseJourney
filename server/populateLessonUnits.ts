@@ -1,5 +1,7 @@
 import { storage } from "./storage";
 import { generateLessonOutline } from "./routes";
+import { SYLLABI } from "./syllabi";
+import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 
 export async function populateMissingLessonUnits(): Promise<void> {
   console.log("Checking for topics missing lesson units...");
@@ -12,9 +14,31 @@ export async function populateMissingLessonUnits(): Promise<void> {
       const existingUnits = await storage.getLessonUnits(topic.id);
       
       if (existingUnits.length === 0) {
-        console.log(`Creating lesson units for topic: ${topic.title} (ID: ${topic.id}) using AI syllabus generation...`);
+        console.log(`Creating lesson units for topic: ${topic.title} (ID: ${topic.id})...`);
         
-        await generateLessonOutline(topic.id, topic.title, topic.description);
+        const plannedSyllabus = SYLLABI.find(s => s.topicId === topic.id);
+        if (plannedSyllabus) {
+          // Use pre-planned syllabus + seed content
+          const seedUnits = SEED_LESSON_CONTENT[topic.id] || [];
+          for (const u of plannedSyllabus.units) {
+            const seed = seedUnits.find(
+              s => s.unitIndex === u.position - 1 && s.difficulty === u.tier
+            );
+            await storage.createLessonUnit({
+              topicId: topic.id,
+              difficulty: u.tier,
+              contentType: plannedSyllabus.contentType,
+              unitIndex: u.position - 1,
+              title: u.title,
+              outline: `${u.objective} Key concepts: ${u.keyConcepts.join(", ")}`,
+              contentJson: seed ? seed.contentJson : null,
+            });
+          }
+          console.log(`  -> Created ${plannedSyllabus.units.length} units from syllabus + seed content.`);
+        } else {
+          // Fallback to AI generation
+          await generateLessonOutline(topic.id, topic.title, topic.description);
+        }
         
         populatedCount++;
       }

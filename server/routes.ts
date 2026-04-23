@@ -61,6 +61,9 @@ import {
   type ProviderConfig 
 } from "./ai-providers";
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS } from "./seed-data";
+import { SYLLABI_MAP } from "./syllabi";
+import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
+import { insertOpenScienceIdeaSchema, insertOpenScienceCommentSchema } from "@shared/schema";
 
 // Validation schemas
 const saveCardSchema = z.object({
@@ -2238,6 +2241,20 @@ Return a JSON object in this exact format:
         }
         
         try {
+          // ── Try seed content first (fast, deterministic) ─────────────────────
+          const seedTopic = SEED_LESSON_CONTENT[unit.topicId];
+          const seedUnit = seedTopic?.find(
+            s => s.unitIndex === (unit as any).unitIndex && s.difficulty === unit.difficulty
+          );
+          
+          if (seedUnit?.contentJson) {
+            console.log(`[Admin] Seed content hit for: ${topic.title} - ${unit.title} (${unit.difficulty})`);
+            await storage.updateLessonContent(unit.id, seedUnit.contentJson);
+            regenerated++;
+            continue;
+          }
+          
+          // ── Fall back to AI generation ──────────────────────────────────────
           console.log(`[Admin] Generating content for: ${topic.title} - ${unit.title} (${unit.difficulty})`);
           
           const content = await generateLessonContent(
@@ -3693,7 +3710,7 @@ function isUnitUnlocked(
 // Background batch pre-generation helper — called fire-and-forget after outline creation.
 // Generates lesson content for all non-nextgen units that don't yet have content.
 async function batchPregenerateUnits(
-  units: { id: number; title: string; difficulty: string; outline?: string | null; contentJson?: unknown }[],
+  units: { id: number; topicId?: number; title: string; difficulty: string; outline?: string | null; contentJson?: unknown }[],
   topic: { title: string; description: string },
   userId: string
 ): Promise<void> {
@@ -3706,11 +3723,35 @@ async function batchPregenerateUnits(
 
     console.log(`[BatchPregen] Starting pre-generation for ${unitsToGenerate.length} non-nextgen units of "${topic.title}"`);
 
-    const masteredTopics = await storage.getUserMasteredTopics(userId);
-    const contentMap = await generateBatchLessonContent(topic, unitsToGenerate, masteredTopics);
+    const contentMap = new Map<number, any>();
+
+    // ── Try seed content first (fast, offline, deterministic) ───────────────
+    for (const unit of unitsToGenerate) {
+      const topicId = unit.topicId;
+      if (topicId && SEED_LESSON_CONTENT[topicId]) {
+        const seed = SEED_LESSON_CONTENT[topicId].find(
+          s => s.unitIndex === (unit as any).unitIndex && s.difficulty === unit.difficulty
+        );
+        if (seed?.contentJson) {
+          contentMap.set(unit.id, seed.contentJson);
+          console.log(`[BatchPregen] unit_id=${unit.id} — seed content hit`);
+        }
+      }
+    }
+
+    // ── Fall back to AI for any units without seed content ──────────────────
+    const aiUnits = unitsToGenerate.filter(u => !contentMap.has(u.id));
+    if (aiUnits.length > 0) {
+      console.log(`[BatchPregen] ${aiUnits.length} units need AI generation for "${topic.title}"`);
+      const masteredTopics = await storage.getUserMasteredTopics(userId);
+      const aiContentMap = await generateBatchLessonContent(topic, aiUnits, masteredTopics);
+      for (const [unitId, content] of Array.from(aiContentMap.entries())) {
+        contentMap.set(unitId, content);
+      }
+    }
 
     let savedCount = 0;
-    for (const [unitId, content] of contentMap.entries()) {
+    for (const [unitId, content] of Array.from(contentMap.entries())) {
       try {
         // Re-fetch to avoid overwriting content saved by a concurrent on-demand request
         const latestUnit = await storage.getLessonUnit(unitId);
@@ -3734,7 +3775,7 @@ async function batchPregenerateUnits(
     // Run in background — don't block the response.
     const serverVoicePresets = ["qwen"]; // OpenAI-mapped presets available server-side
     const { preGenerateTTSForUnit } = await import("./tts-service");
-    for (const [unitId, content] of contentMap.entries()) {
+    for (const [unitId, content] of Array.from(contentMap.entries())) {
       for (const voicePreset of serverVoicePresets) {
         preGenerateTTSForUnit(unitId, content, false, voicePreset)
           .catch(err => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err?.message || err));
@@ -3880,6 +3921,25 @@ function classifyTopicByKeywords(title: string, description: string): TopicDepth
 }
 
 export async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
+  // ── Use pre-planned syllabus if available ───────────────────────────────────
+  const plannedSyllabus = SYLLABI_MAP.get(topicId);
+  if (plannedSyllabus) {
+    console.log(`[Outline] Using pre-planned syllabus for "${topicTitle}" (${plannedSyllabus.units.length} units, ${plannedSyllabus.contentType})`);
+    const { storage } = await import("./storage");
+    const createdUnits = await Promise.all(
+      plannedSyllabus.units.map((u, idx) => storage.createLessonUnit({
+        topicId,
+        difficulty: u.tier,
+        contentType: plannedSyllabus.contentType,
+        unitIndex: u.position - 1,
+        title: u.title,
+        outline: `${u.objective} Key concepts: ${u.keyConcepts.join(", ")}`,
+      }))
+    );
+    console.log(`[Outline] Created ${createdUnits.length} units from pre-planned syllabus for "${topicTitle}"`);
+    return createdUnits;
+  }
+
   const profile = classifyTopicByKeywords(topicTitle, topicDescription);
   const tierInfo = profile.unitsPerTier;
 
@@ -4026,6 +4086,7 @@ async function generateBatchLessonContent(
   units: { id: number; title: string; difficulty: string; outline?: string | null }[],
   masteredTopics: { topicId: number; topicTitle: string }[]
 ): Promise<Map<number, any>> {
+  const profile = classifyTopicByKeywords(topic.title, topic.description);
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
     : "";

@@ -6,6 +6,15 @@ export const DEFAULT_CATEGORIES = [
   { id: 5, name: "Physics", color: "yellow", icon: "Atom" },
   { id: 6, name: "Chemistry", color: "teal", icon: "FlaskConical" },
   { id: 7, name: "Music", color: "pink", icon: "Music" },
+  { id: 8, name: "Biology", color: "lime", icon: "Leaf" },
+  { id: 9, name: "Earth Science", color: "sky", icon: "Globe" },
+  { id: 10, name: "Philosophy", color: "slate", icon: "BookOpen" },
+  { id: 11, name: "Economics", color: "amber", icon: "TrendingUp" },
+  { id: 12, name: "Linguistics", color: "violet", icon: "Languages" },
+  { id: 13, name: "History", color: "stone", icon: "Landmark" },
+  { id: 14, name: "Art & Design", color: "rose", icon: "Palette" },
+  { id: 15, name: "Health & Medicine", color: "red", icon: "Heart" },
+  { id: 16, name: "Engineering", color: "indigo", icon: "Cog" },
 ];
 
 export const DEFAULT_PATHWAYS = [
@@ -19,6 +28,22 @@ export const DEFAULT_PATHWAYS = [
   { id: 8, name: "Biology", description: "From cells to ecosystems, discover the science of living organisms.", icon: "Leaf", color: "lime", difficulty: "mixed", estimatedHours: 45, isActive: true },
   { id: 9, name: "Music Theory", description: "Learn the language of music: scales, chords, harmony, and composition.", icon: "Music", color: "rose", difficulty: "beginner", estimatedHours: 30, isActive: true },
   { id: 10, name: "Open Source Contributing", description: "Learn to contribute to open source projects and collaborate with developers worldwide.", icon: "GitBranch", color: "gray", difficulty: "intermediate", estimatedHours: 25, isActive: true },
+  // ── 15 additional pathways ────────────────────────────────────────────────
+  { id: 11, name: "Data Science & Analytics", description: "Transform raw data into actionable insights using statistics, visualization, and predictive modeling.", icon: "BarChart3", color: "cyan", difficulty: "mixed", estimatedHours: 50, isActive: true },
+  { id: 12, name: "Full-Stack Web Development", description: "Build modern web applications from front-end interfaces to back-end APIs and databases.", icon: "Globe", color: "emerald", difficulty: "mixed", estimatedHours: 60, isActive: true },
+  { id: 13, name: "Cybersecurity", description: "Learn to protect systems, networks, and data from digital attacks and unauthorized access.", icon: "Shield", color: "red", difficulty: "advanced", estimatedHours: 55, isActive: true },
+  { id: 14, name: "Robotics & Automation", description: "Design intelligent machines that sense, plan, and act in the physical world.", icon: "Bot", color: "indigo", difficulty: "advanced", estimatedHours: 50, isActive: true },
+  { id: 15, name: "Molecular Biology & Genetics", description: "Explore DNA, gene expression, CRISPR, and the molecular machinery of life.", icon: "Dna", color: "green", difficulty: "advanced", estimatedHours: 45, isActive: true },
+  { id: 16, name: "Environmental Science", description: "Study Earth's systems, climate change, sustainability, and humanity's impact on the planet.", icon: "TreePine", color: "teal", difficulty: "mixed", estimatedHours: 40, isActive: true },
+  { id: 17, name: "Astronomy & Cosmology", description: "Observe celestial objects, understand cosmic evolution, and ponder the ultimate fate of the universe.", icon: "Telescope", color: "violet", difficulty: "mixed", estimatedHours: 45, isActive: true },
+  { id: 18, name: "Philosophy & Critical Thinking", description: "Sharpen your reasoning, examine existence and ethics, and learn to dismantle flawed arguments.", icon: "BookOpen", color: "slate", difficulty: "mixed", estimatedHours: 35, isActive: true },
+  { id: 19, name: "Economics & Finance", description: "Understand markets, monetary policy, investing, and the forces that shape global wealth.", icon: "DollarSign", color: "amber", difficulty: "mixed", estimatedHours: 45, isActive: true },
+  { id: 20, name: "Linguistics & Natural Language", description: "Investigate the structure, meaning, and evolution of human language — and how machines process it.", icon: "Languages", color: "fuchsia", difficulty: "mixed", estimatedHours: 40, isActive: true },
+  { id: 21, name: "World History", description: "Trace the arc of human civilization from ancient empires to the information age.", icon: "Landmark", color: "stone", difficulty: "beginner", estimatedHours: 50, isActive: true },
+  { id: 22, name: "Digital Art & Design", description: "Master color theory, composition, typography, and digital tools for visual storytelling.", icon: "Palette", color: "rose", difficulty: "beginner", estimatedHours: 35, isActive: true },
+  { id: 23, name: "Human Anatomy & Physiology", description: "Learn how the human body is organized and how its systems work together to sustain life.", icon: "Heart", color: "red", difficulty: "intermediate", estimatedHours: 50, isActive: true },
+  { id: 24, name: "Electrical Engineering", description: "Design circuits, understand signal processing, and harness electromagnetism for practical systems.", icon: "Zap", color: "yellow", difficulty: "advanced", estimatedHours: 55, isActive: true },
+  { id: 25, name: "Material Science", description: "Discover how atomic structure determines the properties of metals, polymers, ceramics, and composites.", icon: "Gem", color: "sky", difficulty: "advanced", estimatedHours: 45, isActive: true },
 ];
 
 export const DEFAULT_TOPICS = [
@@ -42,6 +67,57 @@ export const DEFAULT_TOPICS = [
   { id: 18, title: "General Chemistry", description: "The central science that connects physics to biology. Explore atoms, molecules, reactions, and the building blocks of matter.", categoryId: 6, difficulty: "beginner" },
   { id: 19, title: "Organic Chemistry", description: "The chemistry of carbon compounds - the basis of all life. From plastics to pharmaceuticals, organic molecules are everywhere.", categoryId: 6, difficulty: "intermediate" },
   { id: 20, title: "Music Theory", description: "The language of music - scales, chords, rhythm, and harmony. Understand why some combinations sound beautiful and others don't.", categoryId: 7, difficulty: "beginner" },
+  // ── New topics for expanded pathways ───────────────────────────────────────
+  { id: 21, title: "Probability & Statistics", description: "Quantify uncertainty, model randomness, and extract reliable conclusions from noisy data.", categoryId: 2, difficulty: "intermediate" },
+  { id: 22, title: "Differential Equations", description: "Equations that describe how quantities change over time and space — the language of physics and engineering.", categoryId: 2, difficulty: "advanced" },
+  { id: 23, title: "Thermodynamics", description: "The study of heat, energy, and entropy — governing everything from engines to the arrow of time.", categoryId: 5, difficulty: "advanced" },
+  { id: 24, title: "Statistical Mechanics", description: "Bridge the microscopic world of atoms and the macroscopic properties of matter through probability.", categoryId: 5, difficulty: "advanced" },
+  { id: 25, title: "Cell Biology", description: "Explore the structure and function of cells — the fundamental units of all living organisms.", categoryId: 8, difficulty: "beginner" },
+  { id: 26, title: "Genetics & Heredity", description: "Understand how traits are passed down, how DNA encodes life, and the mechanisms of evolution.", categoryId: 8, difficulty: "intermediate" },
+  { id: 27, title: "Ecology & Ecosystems", description: "Study the interactions between organisms and their environments, from microbial communities to global biomes.", categoryId: 8, difficulty: "intermediate" },
+  { id: 28, title: "Evolutionary Biology", description: "The unifying theory of life: how species change, diversify, and adapt through natural selection.", categoryId: 8, difficulty: "intermediate" },
+  { id: 29, title: "Climate Science", description: "Examine Earth's climate system, greenhouse gases, paleoclimate records, and future projections.", categoryId: 9, difficulty: "intermediate" },
+  { id: 30, title: "Geology & Plate Tectonics", description: "Discover how Earth's crust moves, mountains form, and the dynamic forces sculpting our planet.", categoryId: 9, difficulty: "beginner" },
+  { id: 31, title: "Ethics & Moral Philosophy", description: "Investigate what makes actions right or wrong, and how we ought to live in a complex world.", categoryId: 10, difficulty: "intermediate" },
+  { id: 32, title: "Logic & Reasoning", description: "Master formal and informal logic: arguments, fallacies, proofs, and the foundations of rational thought.", categoryId: 10, difficulty: "beginner" },
+  { id: 33, title: "Epistemology", description: "The theory of knowledge: what can we know, how do we know it, and what counts as evidence?", categoryId: 10, difficulty: "advanced" },
+  { id: 34, title: "Microeconomics", description: "Study individual and firm behavior, supply and demand, and the pricing of goods and services.", categoryId: 11, difficulty: "beginner" },
+  { id: 35, title: "Macroeconomics", description: "Analyze national economies, inflation, unemployment, fiscal policy, and global trade.", categoryId: 11, difficulty: "intermediate" },
+  { id: 36, title: "Behavioral Economics", description: "Explore how psychology influences economic decisions and why humans are not always rational actors.", categoryId: 11, difficulty: "intermediate" },
+  { id: 37, title: "Syntax & Grammar", description: "The structural rules that govern sentence formation in human languages.", categoryId: 12, difficulty: "beginner" },
+  { id: 38, title: "Semantics & Pragmatics", description: "How meaning is constructed in language — from literal definitions to implied context.", categoryId: 12, difficulty: "intermediate" },
+  { id: 39, title: "Computational Linguistics", description: "Apply algorithms and statistical models to understand, generate, and translate human language.", categoryId: 12, difficulty: "advanced" },
+  { id: 40, title: "Ancient Civilizations", description: "From Mesopotamia to Rome — the foundations of law, writing, and urban life.", categoryId: 13, difficulty: "beginner" },
+  { id: 41, title: "Modern History", description: "Revolutions, world wars, decolonization, and the making of the contemporary global order.", categoryId: 13, difficulty: "intermediate" },
+  { id: 42, title: "Color Theory & Composition", description: "Learn how colors interact, create mood, and guide the viewer's eye in visual design.", categoryId: 14, difficulty: "beginner" },
+  { id: 43, title: "Typography & Layout", description: "Master the art of arranging type and space for readability, hierarchy, and aesthetic impact.", categoryId: 14, difficulty: "beginner" },
+  { id: 44, title: "UI/UX Design Principles", description: "Create user-centered digital experiences through research, prototyping, and iterative testing.", categoryId: 14, difficulty: "intermediate" },
+  { id: 45, title: "Human Physiology", description: "How organs and systems — cardiovascular, nervous, respiratory — maintain life and respond to change.", categoryId: 15, difficulty: "intermediate" },
+  { id: 46, title: "Immunology", description: "The body's defense system: how it recognizes threats, mounts attacks, and remembers invaders.", categoryId: 15, difficulty: "advanced" },
+  { id: 47, title: "Nutrition & Metabolism", description: "How food fuels the body, the biochemistry of digestion, and the science of dietary health.", categoryId: 15, difficulty: "beginner" },
+  { id: 48, title: "Circuit Analysis", description: "Apply Ohm's and Kirchhoff's laws to design and analyze electrical circuits and systems.", categoryId: 16, difficulty: "intermediate" },
+  { id: 49, title: "Signal Processing", description: "Capture, transform, and interpret signals — the math behind audio, images, and communication.", categoryId: 16, difficulty: "advanced" },
+  { id: 50, title: "Control Systems", description: "Engineer feedback loops that keep machines stable, precise, and autonomous.", categoryId: 16, difficulty: "advanced" },
+  { id: 51, title: "React & Modern Frontend", description: "Build reactive user interfaces with components, hooks, and the modern JavaScript ecosystem.", categoryId: 3, difficulty: "intermediate" },
+  { id: 52, title: "Node.js & Backend APIs", description: "Create scalable server-side applications, RESTful APIs, and real-time services.", categoryId: 3, difficulty: "intermediate" },
+  { id: 53, title: "Databases & SQL", description: "Model, query, and optimize relational and NoSQL databases for robust data storage.", categoryId: 3, difficulty: "beginner" },
+  { id: 54, title: "Cryptography", description: "The mathematical science of securing information: encryption, hashing, and digital signatures.", categoryId: 3, difficulty: "advanced" },
+  { id: 55, title: "Network Security", description: "Protect data in transit, detect intrusions, and harden infrastructure against cyber threats.", categoryId: 3, difficulty: "advanced" },
+  { id: 56, title: "Deep Learning", description: "Multi-layer neural networks, backpropagation, and the architectures behind modern AI breakthroughs.", categoryId: 1, difficulty: "advanced" },
+  { id: 57, title: "Reinforcement Learning", description: "Teach agents to make optimal decisions through trial, error, and reward signals.", categoryId: 1, difficulty: "advanced" },
+  { id: 58, title: "Computer Vision", description: "Enable machines to interpret images and video: detection, segmentation, and scene understanding.", categoryId: 1, difficulty: "advanced" },
+  { id: 59, title: "Natural Language Processing", description: "Bridge human language and computation: parsing, sentiment, translation, and generation.", categoryId: 1, difficulty: "intermediate" },
+  { id: 60, title: "Data Visualization", description: "Transform complex datasets into intuitive charts, dashboards, and interactive stories.", categoryId: 1, difficulty: "beginner" },
+  { id: 61, title: "Astrobiology", description: "The search for life beyond Earth and the conditions that make planets habitable.", categoryId: 4, difficulty: "intermediate" },
+  { id: 62, title: "Stellar Evolution", description: "How stars are born, live, die, and seed the universe with heavy elements.", categoryId: 4, difficulty: "intermediate" },
+  { id: 63, title: "Cosmology", description: "The origin, evolution, and ultimate fate of the entire universe.", categoryId: 4, difficulty: "advanced" },
+  { id: 64, title: "CRISPR & Gene Editing", description: "Precision tools for rewriting DNA and their revolutionary implications for medicine and ethics.", categoryId: 8, difficulty: "advanced" },
+  { id: 65, title: "Bioinformatics", description: "Apply computational methods to decode biological data: genomes, proteins, and evolutionary trees.", categoryId: 8, difficulty: "advanced" },
+  { id: 66, title: "Renewable Energy Systems", description: "Solar, wind, battery storage, and the engineering of a sustainable power grid.", categoryId: 9, difficulty: "intermediate" },
+  { id: 67, title: "Oceanography", description: "Explore Earth's oceans: currents, marine ecosystems, and the deep-sea frontier.", categoryId: 9, difficulty: "beginner" },
+  { id: 68, title: "Meteorology", description: "Predict the weather by understanding atmospheric dynamics, pressure systems, and climate patterns.", categoryId: 9, difficulty: "beginner" },
+  { id: 69, title: "Game Theory", description: "Model strategic interactions where the outcome for each player depends on the choices of all.", categoryId: 11, difficulty: "intermediate" },
+  { id: 70, title: "Metallurgy", description: "The science of metals: extraction, alloying, heat treatment, and mechanical properties.", categoryId: 16, difficulty: "advanced" },
 ];
 
 // Pathway-Topic mappings (linking topics to pathways they belong to)
@@ -53,14 +129,18 @@ export const DEFAULT_PATHWAY_TOPICS = [
   { pathwayId: 1, topicId: 14, order: 3, isRequired: true }, // Optics & Light
   { pathwayId: 1, topicId: 16, order: 4, isRequired: true }, // Electromagnetism
   { pathwayId: 1, topicId: 15, order: 5, isRequired: true }, // Fluid Dynamics
-  { pathwayId: 1, topicId: 4, order: 6, isRequired: false }, // Quantum Mechanics (advanced)
+  { pathwayId: 1, topicId: 23, order: 6, isRequired: true }, // Thermodynamics
+  { pathwayId: 1, topicId: 4, order: 7, isRequired: false }, // Quantum Mechanics (advanced)
+  { pathwayId: 1, topicId: 24, order: 8, isRequired: false }, // Statistical Mechanics (advanced)
   
   // Engineering Pathway (id: 2) - applied physics + CS
   { pathwayId: 2, topicId: 12, order: 1, isRequired: true }, // Classical Mechanics
   { pathwayId: 2, topicId: 15, order: 2, isRequired: true }, // Fluid Dynamics
   { pathwayId: 2, topicId: 16, order: 3, isRequired: true }, // Electromagnetism
-  { pathwayId: 2, topicId: 3, order: 4, isRequired: true }, // Data Structures
-  { pathwayId: 2, topicId: 7, order: 5, isRequired: true }, // Algorithms
+  { pathwayId: 2, topicId: 48, order: 4, isRequired: true }, // Circuit Analysis
+  { pathwayId: 2, topicId: 50, order: 5, isRequired: false }, // Control Systems
+  { pathwayId: 2, topicId: 3, order: 6, isRequired: true }, // Data Structures
+  { pathwayId: 2, topicId: 7, order: 7, isRequired: true }, // Algorithms
   
   // Astrophysics Pathway (id: 3) - space-related physics
   { pathwayId: 3, topicId: 12, order: 1, isRequired: true }, // Classical Mechanics
@@ -72,27 +152,39 @@ export const DEFAULT_PATHWAY_TOPICS = [
   { pathwayId: 4, topicId: 3, order: 1, isRequired: true }, // Data Structures
   { pathwayId: 4, topicId: 7, order: 2, isRequired: true }, // Algorithms
   { pathwayId: 4, topicId: 6, order: 3, isRequired: true }, // Graph Theory
-  { pathwayId: 4, topicId: 11, order: 4, isRequired: false }, // Benefits of Open Source
+  { pathwayId: 4, topicId: 53, order: 4, isRequired: true }, // Databases & SQL
+  { pathwayId: 4, topicId: 52, order: 5, isRequired: false }, // Node.js & Backend APIs
+  { pathwayId: 4, topicId: 11, order: 6, isRequired: false }, // Benefits of Open Source
   
   // Artificial Intelligence Pathway (id: 5)
   { pathwayId: 5, topicId: 1, order: 1, isRequired: true }, // Machine Learning
   { pathwayId: 5, topicId: 8, order: 2, isRequired: true }, // Neural Networks
   { pathwayId: 5, topicId: 2, order: 3, isRequired: true }, // Linear Algebra
-  { pathwayId: 5, topicId: 9, order: 4, isRequired: true }, // Hugging Face
-  { pathwayId: 5, topicId: 10, order: 5, isRequired: false }, // Gradio
+  { pathwayId: 5, topicId: 56, order: 4, isRequired: true }, // Deep Learning
+  { pathwayId: 5, topicId: 59, order: 5, isRequired: true }, // Natural Language Processing
+  { pathwayId: 5, topicId: 58, order: 6, isRequired: false }, // Computer Vision
+  { pathwayId: 5, topicId: 57, order: 7, isRequired: false }, // Reinforcement Learning
+  { pathwayId: 5, topicId: 9, order: 8, isRequired: true }, // Hugging Face
+  { pathwayId: 5, topicId: 10, order: 9, isRequired: false }, // Gradio
   
   // Mathematics Pathway (id: 6)
   { pathwayId: 6, topicId: 2, order: 1, isRequired: true }, // Linear Algebra
   { pathwayId: 6, topicId: 5, order: 2, isRequired: true }, // Calculus
   { pathwayId: 6, topicId: 6, order: 3, isRequired: true }, // Graph Theory
+  { pathwayId: 6, topicId: 21, order: 4, isRequired: true }, // Probability & Statistics
+  { pathwayId: 6, topicId: 22, order: 5, isRequired: false }, // Differential Equations
   
   // Chemistry Pathway (id: 7)
   { pathwayId: 7, topicId: 18, order: 1, isRequired: true }, // General Chemistry
   { pathwayId: 7, topicId: 19, order: 2, isRequired: true }, // Organic Chemistry
   
-  // Biology Pathway (id: 8) - chemistry foundation
+  // Biology Pathway (id: 8) - chemistry foundation + biology topics
   { pathwayId: 8, topicId: 18, order: 1, isRequired: true }, // General Chemistry
   { pathwayId: 8, topicId: 19, order: 2, isRequired: true }, // Organic Chemistry
+  { pathwayId: 8, topicId: 25, order: 3, isRequired: true }, // Cell Biology
+  { pathwayId: 8, topicId: 26, order: 4, isRequired: true }, // Genetics & Heredity
+  { pathwayId: 8, topicId: 28, order: 5, isRequired: true }, // Evolutionary Biology
+  { pathwayId: 8, topicId: 27, order: 6, isRequired: false }, // Ecology & Ecosystems
   
   // Music Theory Pathway (id: 9)
   { pathwayId: 9, topicId: 20, order: 1, isRequired: true }, // Music Theory
@@ -103,6 +195,84 @@ export const DEFAULT_PATHWAY_TOPICS = [
   { pathwayId: 10, topicId: 9, order: 2, isRequired: true }, // Hugging Face
   { pathwayId: 10, topicId: 10, order: 3, isRequired: true }, // Gradio
   { pathwayId: 10, topicId: 3, order: 4, isRequired: false }, // Data Structures
+
+  // ── New pathway-topic mappings ────────────────────────────────────────────
+  // Data Science & Analytics (id: 11)
+  { pathwayId: 11, topicId: 21, order: 1, isRequired: true }, // Probability & Statistics
+  { pathwayId: 11, topicId: 2, order: 2, isRequired: true }, // Linear Algebra
+  { pathwayId: 11, topicId: 60, order: 3, isRequired: true }, // Data Visualization
+  { pathwayId: 11, topicId: 1, order: 4, isRequired: false }, // Machine Learning
+
+  // Full-Stack Web Development (id: 12)
+  { pathwayId: 12, topicId: 51, order: 1, isRequired: true }, // React & Modern Frontend
+  { pathwayId: 12, topicId: 52, order: 2, isRequired: true }, // Node.js & Backend APIs
+  { pathwayId: 12, topicId: 53, order: 3, isRequired: true }, // Databases & SQL
+  { pathwayId: 12, topicId: 7, order: 4, isRequired: false }, // Algorithms
+
+  // Cybersecurity (id: 13)
+  { pathwayId: 13, topicId: 54, order: 1, isRequired: true }, // Cryptography
+  { pathwayId: 13, topicId: 55, order: 2, isRequired: true }, // Network Security
+  { pathwayId: 13, topicId: 52, order: 3, isRequired: false }, // Node.js & Backend APIs
+
+  // Robotics & Automation (id: 14)
+  { pathwayId: 14, topicId: 50, order: 1, isRequired: true }, // Control Systems
+  { pathwayId: 14, topicId: 48, order: 2, isRequired: true }, // Circuit Analysis
+  { pathwayId: 14, topicId: 12, order: 3, isRequired: false }, // Classical Mechanics
+
+  // Molecular Biology & Genetics (id: 15)
+  { pathwayId: 15, topicId: 25, order: 1, isRequired: true }, // Cell Biology
+  { pathwayId: 15, topicId: 26, order: 2, isRequired: true }, // Genetics & Heredity
+  { pathwayId: 15, topicId: 64, order: 3, isRequired: true }, // CRISPR & Gene Editing
+
+  // Environmental Science (id: 16)
+  { pathwayId: 16, topicId: 29, order: 1, isRequired: true }, // Climate Science
+  { pathwayId: 16, topicId: 30, order: 2, isRequired: true }, // Geology & Plate Tectonics
+  { pathwayId: 16, topicId: 66, order: 3, isRequired: true }, // Renewable Energy Systems
+  { pathwayId: 16, topicId: 67, order: 4, isRequired: false }, // Oceanography
+
+  // Astronomy & Cosmology (id: 17)
+  { pathwayId: 17, topicId: 62, order: 1, isRequired: true }, // Stellar Evolution
+  { pathwayId: 17, topicId: 61, order: 2, isRequired: true }, // Astrobiology
+  { pathwayId: 17, topicId: 63, order: 3, isRequired: true }, // Cosmology
+
+  // Philosophy & Critical Thinking (id: 18)
+  { pathwayId: 18, topicId: 32, order: 1, isRequired: true }, // Logic & Reasoning
+  { pathwayId: 18, topicId: 31, order: 2, isRequired: true }, // Ethics & Moral Philosophy
+  { pathwayId: 18, topicId: 33, order: 3, isRequired: false }, // Epistemology
+
+  // Economics & Finance (id: 19)
+  { pathwayId: 19, topicId: 34, order: 1, isRequired: true }, // Microeconomics
+  { pathwayId: 19, topicId: 35, order: 2, isRequired: true }, // Macroeconomics
+  { pathwayId: 19, topicId: 36, order: 3, isRequired: true }, // Behavioral Economics
+  { pathwayId: 19, topicId: 69, order: 4, isRequired: false }, // Game Theory
+
+  // Linguistics & Natural Language (id: 20)
+  { pathwayId: 20, topicId: 37, order: 1, isRequired: true }, // Syntax & Grammar
+  { pathwayId: 20, topicId: 38, order: 2, isRequired: true }, // Semantics & Pragmatics
+  { pathwayId: 20, topicId: 39, order: 3, isRequired: true }, // Computational Linguistics
+
+  // World History (id: 21)
+  { pathwayId: 21, topicId: 40, order: 1, isRequired: true }, // Ancient Civilizations
+  { pathwayId: 21, topicId: 41, order: 2, isRequired: true }, // Modern History
+
+  // Digital Art & Design (id: 22)
+  { pathwayId: 22, topicId: 42, order: 1, isRequired: true }, // Color Theory & Composition
+  { pathwayId: 22, topicId: 43, order: 2, isRequired: true }, // Typography & Layout
+  { pathwayId: 22, topicId: 44, order: 3, isRequired: true }, // UI/UX Design Principles
+
+  // Human Anatomy & Physiology (id: 23)
+  { pathwayId: 23, topicId: 45, order: 1, isRequired: true }, // Human Physiology
+  { pathwayId: 23, topicId: 47, order: 2, isRequired: true }, // Nutrition & Metabolism
+  { pathwayId: 23, topicId: 46, order: 3, isRequired: false }, // Immunology
+
+  // Electrical Engineering (id: 24)
+  { pathwayId: 24, topicId: 48, order: 1, isRequired: true }, // Circuit Analysis
+  { pathwayId: 24, topicId: 49, order: 2, isRequired: true }, // Signal Processing
+  { pathwayId: 24, topicId: 16, order: 3, isRequired: false }, // Electromagnetism
+
+  // Material Science (id: 25)
+  { pathwayId: 25, topicId: 70, order: 1, isRequired: true }, // Metallurgy
+  { pathwayId: 25, topicId: 18, order: 2, isRequired: false }, // General Chemistry
 ];
 
 export const DEFAULT_KNOWLEDGE_CARDS = [
@@ -154,4 +324,58 @@ export const DEFAULT_KNOWLEDGE_CARDS = [
   { id: 46, topicId: 20, title: "Scales and Keys", content: 'Scales are collections of notes that sound good together. Keys establish the "home base" note. Major keys sound happy, minor keys sound sad.', cardType: "text", tags: ["scales", "keys"], order: 1 },
   { id: 47, topicId: 20, title: "Chords and Harmony", content: "Chords are multiple notes played together. Some combinations sound stable (consonant), others create tension (dissonant). Progressions create musical storytelling.", cardType: "text", tags: ["chords", "harmony"], order: 2 },
   { id: 48, topicId: 20, title: "Rhythm and Time", content: "Music happens in time. Beats, measures, tempo, and time signatures organize when notes happen. Rhythm gives music its pulse and groove.", cardType: "text", tags: ["rhythm", "tempo"], order: 3 },
+  // ── New knowledge cards for expanded topics ───────────────────────────────
+  { id: 49, topicId: 21, title: "The Law of Large Numbers", content: "As you repeat a random experiment many times, the average outcome converges to the expected value. This is why casinos always win in the long run.", cardType: "text", tags: ["probability", "statistics", "laws"], order: 1 },
+  { id: 50, topicId: 21, title: "Normal Distribution", content: "The bell curve appears everywhere in nature. Heights, test scores, measurement errors — many phenomena cluster around a mean with predictable spread.", cardType: "text", tags: ["distribution", "bell-curve"], order: 2 },
+  { id: 51, topicId: 22, title: "Ordinary Differential Equations", content: "ODEs involve derivatives with respect to a single variable. They describe populations, circuits, and pendulums. Solve them to predict future states.", cardType: "text", tags: ["ODE", "rates", "modeling"], order: 1 },
+  { id: 52, topicId: 23, title: "The Laws of Thermodynamics", content: "Four laws governing energy: conservation, entropy increase, absolute zero unattainability, and temperature equilibrium. They dictate what machines can and cannot do.", cardType: "text", tags: ["energy", "entropy", "laws"], order: 1 },
+  { id: 53, topicId: 24, title: "Entropy and Disorder", content: "Entropy measures the number of microscopic configurations corresponding to a macroscopic state. Higher entropy means more disorder — and the universe trends toward it.", cardType: "text", tags: ["entropy", "disorder", "arrow-of-time"], order: 1 },
+  { id: 54, topicId: 25, title: "The Cell Membrane", content: "A phospholipid bilayer that controls what enters and exits the cell. It's selectively permeable, maintaining homeostasis through channels and pumps.", cardType: "text", tags: ["membrane", "homeostasis"], order: 1 },
+  { id: 55, topicId: 25, title: "Organelles", content: "Specialized structures inside cells: mitochondria produce energy, ribosomes build proteins, and the nucleus stores DNA. Each has a crucial job.", cardType: "text", tags: ["organelles", "mitochondria"], order: 2 },
+  { id: 56, topicId: 26, title: "DNA Structure", content: "A double helix of nucleotides encoding genetic information. Base pairs (A-T, G-C) form the rungs of the ladder, and the sequence spells out genes.", cardType: "text", tags: ["DNA", "genes", "helix"], order: 1 },
+  { id: 57, topicId: 26, title: "Mendelian Inheritance", content: "Traits are passed via dominant and recessive alleles. Mendel's pea plant experiments revealed predictable ratios in offspring generations.", cardType: "text", tags: ["mendel", "inheritance"], order: 2 },
+  { id: 58, topicId: 27, title: "Food Webs", content: "Energy flows from producers (plants) to consumers (herbivores, carnivores) to decomposers. Disrupt one link and the whole web trembles.", cardType: "text", tags: ["ecology", "energy-flow"], order: 1 },
+  { id: 59, topicId: 28, title: "Natural Selection", content: "Organisms with advantageous traits survive and reproduce more. Over generations, populations adapt to their environments — evolution in action.", cardType: "text", tags: ["darwin", "adaptation"], order: 1 },
+  { id: 60, topicId: 29, title: "The Greenhouse Effect", content: "Certain gases trap infrared radiation, warming Earth's surface. Without it, Earth would be frozen. Too much, and we risk runaway warming.", cardType: "text", tags: ["greenhouse", "warming"], order: 1 },
+  { id: 61, topicId: 30, title: "Plate Boundaries", content: "Divergent plates spread, convergent plates collide, and transform plates slide past each other. These boundaries create earthquakes, volcanoes, and mountain ranges.", cardType: "text", tags: ["tectonics", "earthquakes"], order: 1 },
+  { id: 62, topicId: 31, title: "Utilitarianism", content: "The greatest good for the greatest number. Actions are judged by their consequences, and morality is about maximizing overall well-being.", cardType: "text", tags: ["ethics", "utilitarianism"], order: 1 },
+  { id: 63, topicId: 32, title: "Logical Fallacies", content: "Common errors in reasoning: ad hominem attacks, false dilemmas, straw man arguments. Spotting them makes you a stronger thinker and debater.", cardType: "text", tags: ["logic", "fallacies", "critical-thinking"], order: 1 },
+  { id: 64, topicId: 33, title: "The Gettier Problem", content: "Is justified true belief sufficient for knowledge? Gettier showed cases where someone has a true, justified belief that still seems accidental — challenging classical epistemology.", cardType: "text", tags: ["knowledge", "justification"], order: 1 },
+  { id: 65, topicId: 34, title: "Supply and Demand", content: "The price of a good settles where supply meets demand. Shifts in either curve change the equilibrium price and quantity traded.", cardType: "text", tags: ["markets", "equilibrium"], order: 1 },
+  { id: 66, topicId: 35, title: "GDP and Economic Growth", content: "Gross Domestic Product measures total economic output. Growth depends on labor, capital, technology, and institutions — the engines of prosperity.", cardType: "text", tags: ["GDP", "growth"], order: 1 },
+  { id: 67, topicId: 36, title: "Cognitive Biases", content: "Humans systematically deviate from rationality: confirmation bias, loss aversion, anchoring. Understanding them helps design better policies and choices.", cardType: "text", tags: ["bias", "psychology", "behavior"], order: 1 },
+  { id: 68, topicId: 37, title: "Parts of Speech", content: "Nouns, verbs, adjectives, adverbs, pronouns, prepositions, conjunctions, and interjections. These categories form the building blocks of grammar.", cardType: "text", tags: ["grammar", "basics"], order: 1 },
+  { id: 69, topicId: 38, title: "Implicature", content: "Speakers often mean more than they say. 'It's cold in here' can be a request to close the window. Pragmatics studies these implied meanings.", cardType: "text", tags: ["meaning", "context", "pragmatics"], order: 1 },
+  { id: 70, topicId: 39, title: "The Turing Test", content: "If a machine's responses are indistinguishable from a human's, does it understand language? The Turing Test remains a benchmark and a philosophical provocation.", cardType: "text", tags: ["NLP", "AI", "turing"], order: 1 },
+  { id: 71, topicId: 40, title: "The Agricultural Revolution", content: "Around 10,000 BCE, humans shifted from hunting and gathering to farming. This transformation led to cities, writing, and civilization itself.", cardType: "text", tags: ["agriculture", "civilization"], order: 1 },
+  { id: 72, topicId: 41, title: "The Industrial Revolution", content: "Steam power, factories, and mass production transformed societies in the 18th-19th centuries. It raised living standards but also created new inequalities.", cardType: "text", tags: ["industry", "modernity"], order: 1 },
+  { id: 73, topicId: 42, title: "The Color Wheel", content: "Primary, secondary, and tertiary colors arranged in a circle. Complementary colors sit opposite each other and create visual contrast when paired.", cardType: "text", tags: ["color", "design"], order: 1 },
+  { id: 74, topicId: 43, title: "Serif vs Sans-Serif", content: "Serif fonts have small strokes at letter ends, conveying tradition and readability in print. Sans-serif fonts are cleaner, better for screens.", cardType: "text", tags: ["typography", "fonts"], order: 1 },
+  { id: 75, topicId: 44, title: "User-Centered Design", content: "Start with user research, define problems from their perspective, prototype solutions, and test iteratively. Good design is invisible.", cardType: "text", tags: ["UX", "design-process"], order: 1 },
+  { id: 76, topicId: 45, title: "The Circulatory System", content: "The heart pumps blood through arteries, capillaries, and veins, delivering oxygen and nutrients while removing waste. A closed loop of life.", cardType: "text", tags: ["heart", "blood", "circulation"], order: 1 },
+  { id: 77, topicId: 46, title: "Adaptive Immunity", content: "B cells produce antibodies; T cells destroy infected cells. Together they form a memory bank that responds faster upon re-exposure to a pathogen.", cardType: "text", tags: ["immune", "antibodies"], order: 1 },
+  { id: 78, topicId: 47, title: "Macronutrients", content: "Carbohydrates provide quick energy, fats store long-term energy, and proteins build tissues. Balancing them is key to metabolic health.", cardType: "text", tags: ["nutrition", "metabolism"], order: 1 },
+  { id: 79, topicId: 48, title: "Ohm's Law", content: "V = I × R. Voltage equals current times resistance. This simple relationship is the foundation of all circuit analysis.", cardType: "text", tags: ["ohms-law", "circuits"], order: 1 },
+  { id: 80, topicId: 49, title: "Fourier Transform", content: "Any signal can be decomposed into sine waves of different frequencies. The Fourier Transform is the mathematical tool that reveals a signal's frequency spectrum.", cardType: "text", tags: ["fourier", "frequency", "signals"], order: 1 },
+  { id: 81, topicId: 50, title: "Feedback Loops", content: "Negative feedback stabilizes systems (like a thermostat). Positive feedback amplifies changes (like a microphone near a speaker). Control theory manages both.", cardType: "text", tags: ["feedback", "control"], order: 1 },
+  { id: 82, topicId: 51, title: "Virtual DOM", content: "React creates a lightweight copy of the real DOM in memory. When state changes, it efficiently calculates the minimal updates needed — making UIs fast.", cardType: "text", tags: ["react", "DOM", "performance"], order: 1 },
+  { id: 83, topicId: 52, title: "RESTful APIs", content: "Representational State Transfer: use HTTP methods (GET, POST, PUT, DELETE) on resource URLs. Stateless, cacheable, and the backbone of the modern web.", cardType: "text", tags: ["API", "REST", "HTTP"], order: 1 },
+  { id: 84, topicId: 53, title: "Relational vs NoSQL", content: "SQL databases enforce structure with tables and joins. NoSQL databases offer flexibility with documents, key-value pairs, or graphs. Choose based on data shape.", cardType: "text", tags: ["databases", "SQL", "NoSQL"], order: 1 },
+  { id: 85, topicId: 54, title: "Public-Key Cryptography", content: "Two keys: a public one for encryption and a private one for decryption. This enables secure communication without sharing secret keys in advance.", cardType: "text", tags: ["encryption", "security", "keys"], order: 1 },
+  { id: 86, topicId: 55, title: "The OSI Model", content: "Seven layers from physical wires to applications. Understanding this stack helps diagnose network issues and design secure architectures.", cardType: "text", tags: ["networking", "OSI", "layers"], order: 1 },
+  { id: 87, topicId: 56, title: "Backpropagation", content: "Neural networks learn by propagating error gradients backward through layers. This algorithm, combined with gradient descent, powers deep learning.", cardType: "text", tags: ["deep-learning", "gradients", "training"], order: 1 },
+  { id: 88, topicId: 57, title: "Q-Learning", content: "An agent learns action values (Q-values) by exploring an environment and receiving rewards. Over time, it converges on an optimal policy.", cardType: "text", tags: ["RL", "Q-learning", "agents"], order: 1 },
+  { id: 89, topicId: 58, title: "Convolutional Neural Networks", content: "CNNs use sliding filters to detect edges, textures, and shapes in images. They're the workhorse of modern computer vision.", cardType: "text", tags: ["CNN", "vision", "filters"], order: 1 },
+  { id: 90, topicId: 59, title: "Tokenization", content: "Breaking text into words, subwords, or characters. It's the first step in NLP pipelines and strongly influences model performance.", cardType: "text", tags: ["NLP", "tokens", "preprocessing"], order: 1 },
+  { id: 91, topicId: 60, title: "Data-Ink Ratio", content: "Every pixel of ink should convey data. Remove chart junk, maximize data-ink, and let the numbers tell their own story.", cardType: "text", tags: ["visualization", "design", "charts"], order: 1 },
+  { id: 92, topicId: 61, title: "The Habitable Zone", content: "The orbital range around a star where liquid water can exist on a planet's surface. Earth sits in our Sun's habitable zone — not too hot, not too cold.", cardType: "text", tags: ["exoplanets", "habitability"], order: 1 },
+  { id: 93, topicId: 62, title: "Nuclear Fusion in Stars", content: "Stars shine by fusing hydrogen into helium under extreme gravity. Heavier elements form in later stages, eventually seeding future generations of stars and planets.", cardType: "text", tags: ["fusion", "stars", "nucleosynthesis"], order: 1 },
+  { id: 94, topicId: 63, title: "The Big Bang", content: "The universe began as an extremely hot, dense point approximately 13.8 billion years ago. It has been expanding and cooling ever since.", cardType: "text", tags: ["cosmology", "origin", "expansion"], order: 1 },
+  { id: 95, topicId: 64, title: "CRISPR-Cas9", content: "A bacterial immune system repurposed as a genetic tool. It cuts DNA at precise locations, enabling gene editing with unprecedented accuracy and ease.", cardType: "text", tags: ["CRISPR", "gene-editing", "DNA"], order: 1 },
+  { id: 96, topicId: 65, title: "Sequence Alignment", content: "Comparing DNA, RNA, or protein sequences to find similarities. Alignment reveals evolutionary relationships and functional domains.", cardType: "text", tags: ["bioinformatics", "sequences", "alignment"], order: 1 },
+  { id: 97, topicId: 66, title: "Photovoltaic Effect", content: "Solar cells convert photons into electron-hole pairs, generating direct current. Semiconductors like silicon make this quantum process practical.", cardType: "text", tags: ["solar", "energy", "semiconductors"], order: 1 },
+  { id: 98, topicId: 67, title: "Thermohaline Circulation", content: "A global ocean conveyor driven by temperature and salinity differences. It regulates Earth's climate by redistributing heat across latitudes.", cardType: "text", tags: ["ocean", "circulation", "climate"], order: 1 },
+  { id: 99, topicId: 68, title: "High and Low Pressure Systems", content: "Air rises in low-pressure zones, creating clouds and precipitation. Air sinks in high-pressure zones, bringing clear skies. Their interaction drives weather.", cardType: "text", tags: ["weather", "pressure", "systems"], order: 1 },
+  { id: 100, topicId: 69, title: "The Prisoner's Dilemma", content: "Two suspects must choose to cooperate or betray. Individual rationality leads to mutual defection, even though mutual cooperation is better. A paradox of strategic interaction.", cardType: "text", tags: ["game-theory", "dilemma", "strategy"], order: 1 },
+  { id: 101, topicId: 70, title: "Phase Diagrams", content: "Maps showing which phase (solid, liquid, gas) a material occupies at given temperatures and pressures. They guide alloy design and heat treatment.", cardType: "text", tags: ["phases", "materials", "diagrams"], order: 1 },
 ];
