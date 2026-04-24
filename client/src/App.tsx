@@ -29,6 +29,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 
 function AppContent() {
+  const [location] = useLocation();
   const { user, isLoading, isAuthenticated } = useAuth();
 
   if (isLoading) {
@@ -45,8 +46,6 @@ function AppContent() {
   if (!isAuthenticated) {
     return <LandingPage />;
   }
-
-  const [location] = useLocation();
 
   return (
     <>
