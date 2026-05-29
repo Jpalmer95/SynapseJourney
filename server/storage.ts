@@ -10,7 +10,7 @@ import {
   ideaContributions, novaCoins,
   ttsAudioCache, flashcards, flashcardReviews,
   openScienceIdeas, openScienceComments,
-  contentVersions, contentReviews, userApiKeys,
+  contentVersions, contentReviews, userApiKeys, communityPoolUsage,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -335,6 +335,11 @@ export interface IStorage {
   getStaleUnits(daysThreshold?: number): Promise<(LessonUnit & { topicTitle: string })[]>;
   verifyUnitFreshness(unitId: number): Promise<LessonUnit>;
   getUnitFreshnessBadge(unitId: number): Promise<{ verified: boolean; lastVerifiedAt: Date | null; daysSinceVerified: number | null; status: "fresh" | "stale" | "unknown" }>;
+
+  // ── Phase 1: Community Pool ───────────────────────────────────────────────
+  getPoolUsageToday(): Promise<{ unitsGenerated: number; remainingBudgetCents: number }>;
+  isPoolAvailable(): Promise<boolean>;
+  incrementPoolUsage(costCents: number): Promise<{ unitsGenerated: number; costCents: number }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2321,6 +2326,36 @@ export class DatabaseStorage implements IStorage {
       daysSinceVerified: daysSince,
       status: daysSince > 180 ? "stale" : "fresh",
     };
+  }
+
+  // ── Phase 1: Community Pool ───────────────────────────────────────────────
+
+  async getPoolUsageToday(): Promise<{ unitsGenerated: number; remainingBudgetCents: number }> {
+    const today = new Date().toISOString().split('T')[0];
+    const dailyBudgetCents = parseInt(process.env.POOL_DAILY_BUDGET || '50', 10) * 100;
+    const [usage] = await db.select().from(communityPoolUsage).where(eq(communityPoolUsage.date, today));
+    const unitsGenerated = usage?.unitsGenerated ?? 0;
+    const costCents = usage?.costCents ?? 0;
+    return { unitsGenerated, remainingBudgetCents: Math.max(0, dailyBudgetCents - costCents) };
+  }
+
+  async isPoolAvailable(): Promise<boolean> {
+    const pool = await this.getPoolUsageToday();
+    const maxUnitsPerDay = parseInt(process.env.POOL_MAX_UNITS_PER_DAY || '10', 10);
+    return pool.unitsGenerated < maxUnitsPerDay && pool.remainingBudgetCents > 0;
+  }
+
+  async incrementPoolUsage(costCents: number): Promise<{ unitsGenerated: number; costCents: number }> {
+    const today = new Date().toISOString().split('T')[0];
+    const [existing] = await db.select().from(communityPoolUsage).where(eq(communityPoolUsage.date, today));
+    if (existing) {
+      const [updated] = await db.update(communityPoolUsage).set({
+        unitsGenerated: existing.unitsGenerated + 1, costCents: existing.costCents + costCents, updatedAt: new Date(),
+      }).where(eq(communityPoolUsage.id, existing.id)).returning();
+      return { unitsGenerated: updated.unitsGenerated, costCents: updated.costCents };
+    }
+    const [created] = await db.insert(communityPoolUsage).values({ date: today, unitsGenerated: 1, costCents }).returning();
+    return { unitsGenerated: created.unitsGenerated, costCents: created.costCents };
   }
 }
 
