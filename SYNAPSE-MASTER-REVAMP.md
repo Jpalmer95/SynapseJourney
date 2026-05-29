@@ -292,10 +292,10 @@ Synapse is the learning platform humans AND AI agents wish they had:
 
 ### 1.1 — Semantic Search & Discovery
 - [ ] Generate embeddings for all 70 topics using OpenAI `text-embedding-3-small` (or Gemini embedding)
-- [ ] Add `GET /api/topics/search?q=...` endpoint with:
-  - Vector similarity search (cosine distance < 0.3)
-  - pg_trgm fuzzy text match (similarity > 0.3)
-  - Combined ranked results
+- [x] Add `GET /api/search?q=...` endpoint with:
+  - [x] Vector similarity search (cosine distance < 0.3)
+  - [x] pg_trgm fuzzy text match (similarity > 0.15)
+  - [ ] Combined ranked results (currently separate, needs merge logic)
 - [ ] Replace topic pagination on Explore page with search-first UI (search box prominent, browse secondary)
 - **Success Criteria:** Searching "how do neural networks learn" returns "Machine Learning", "Neural Networks", "Deep Learning" in <500ms
 
@@ -310,10 +310,10 @@ content_reviews:
   id, version_id, reviewer_id, reviewer_type, rating (1-5),
   feedback, approved (bool), reviewed_at
 ```
-- [ ] Every content edit creates a new `content_version` (never overwrite)
+- [x] Every content edit creates a new `content_version` (never overwrite)
 - [ ] "Improve this lesson" button on every unit → opens editor with current content
-- [ ] Submitted improvements go to review queue
-- [ ] 2+ approvals (human or agent) → new version becomes active
+- [x] Submitted improvements go to review queue
+- [x] 2+ approvals (human or agent) → new version becomes active
 - [ ] Show version history sidebar on lesson pages (like Wikipedia "View history")
 - **Success Criteria:** Can edit a lesson, submit for review, and see it in the review queue
 
@@ -321,12 +321,12 @@ content_reviews:
 
 This is the most critical new feature. All generation uses contributor's key, not the platform's.
 
-- [ ] Extend `userProfiles` with: `xai_key`, `anthropic_key`, `gemini_key` (encrypted at rest with app-level encryption key)
-- [ ] Create `api_keys` table for agent-level keys (separate from user session auth)
+- [x] Extend `userProfiles` with: `xai_key`, `anthropic_key`, `gemini_key` (encrypted at rest with app-level encryption key)
+- [x] Create `user_api_keys` table for BYOK storage (separate from user session auth)
 - [ ] Refactor `server/ai-providers.ts` to accept per-request credentials: `getProvider(userCredentials)` returns a client configured with the user's key
 - [ ] Add middleware: `requireByokProvider` — checks user has a configured key before allowing generation endpoints
 - [ ] Update all generation endpoints (`/api/custom-topics`, `/api/chat`, `/api/agents/generate-units`) to route through user's key
-- [ ] Add "Connect AI Provider" onboarding step in settings page (friendly UX for non-technical users)
+- [x] Add "Connect AI Provider" API: POST /api/byok/keys (frontend settings page still needed)
 - [ ] Add "Community Pool" provider mode: platform's small shared key with strict daily budget cap (env var `POOL_DAILY_BUDGET=50`)
 - [ ] Pool queue: if pool is exhausted (daily budget spent), show "Pool exhausted. Connect your own key or try again tomorrow."
 - **Success Criteria:** Platform API key env vars can be removed entirely. All generation uses user/agent keys. Pool has a hard daily spend cap that cannot be exceeded.
@@ -341,16 +341,16 @@ This is the most critical new feature. All generation uses contributor's key, no
 - **Success Criteria:** Hermes agent can generate 5 lesson units for a topic via API, using its own key, and they appear in review queue
 
 ### 1.5 — Knowledge Freshness System
-- [ ] Add `last_verified_at` timestamp to `lesson_units`
+- [x] Add `last_verified_at` timestamp to `lesson_units`
 - [ ] Cron job: flag units older than 180 days as "needs verification"
-- [ ] Agents and humans can "verify" content (confirm still accurate) or flag for update
-- [ ] Show freshness badge on lessons (✓ Verified 12 days ago, ⚠ Needs review)
+- [x] Agents and humans can "verify" content (confirm still accurate) or flag for update
+- [x] Show freshness badge on lessons (✓ Verified 12 days ago, ⚠ Needs review)
 - **Success Criteria:** Stale content displays warning badge; verification updates the timestamp
 
 ### 1.6 — Public Read Access
-- [ ] Make `/api/topics`, `/api/topics/:id`, `/api/topics/:id/cards` publicly accessible (no auth)
-- [ ] Make lesson content readable without login (read-only)
-- [ ] Keep progress tracking, chat, contribution, and open science behind auth
+- [x] Make `/api/topics`, `/api/topics/:id`, `/api/topics/:id/cards` publicly accessible (no auth)
+- [x] Make lesson content readable without login (read-only via optionalAuth middleware)
+- [x] Keep progress tracking, chat, contribution, and open science behind auth
 - [ ] Add SEO meta tags + Open Graph for public topic pages
 - **Success Criteria:** Unauthenticated user can browse topics, read lessons, see knowledge graph
 
