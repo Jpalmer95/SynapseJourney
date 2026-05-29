@@ -18,8 +18,7 @@ export function contentHash(content: unknown): string {
   return createHash("sha256").update(JSON.stringify(content)).digest("hex").slice(0, 12);
 }
 
-// Admin emails - users who can regenerate lesson content
-const ADMIN_EMAILS = ["jpkorstad@gmail.com"];
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "jpkorstad@gmail.com").split(",").map(e => e.trim().toLowerCase());
 
 // Helper function to check if user is admin by their email
 export async function isAdminUser(userId: string): Promise<boolean> {
