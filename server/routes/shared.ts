@@ -114,6 +114,82 @@ export function getDefaultLevels(topicTitle: string) {
   ];
 }
 
+// ── BYOK Middleware ───────────────────────────────────────────
+
+import { validateByokCredentials, type ProviderConfig } from "../ai-providers";
+import { storage } from "../storage";
+import { createDecipheriv } from "crypto";
+
+const ENCRYPTION_KEY = process.env.API_KEY_ENCRYPTION_SECRET || "default-dev-key-change-in-production!32";
+
+function decryptApi(encryptedStr: string): string {
+  try {
+    const [ivHex, authTagHex, encrypted] = encryptedStr.split(":");
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+    const key = Buffer.from(ENCRYPTION_KEY.slice(0, 32).padEnd(32, "0"));
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(authTag);
+    let dec = decipher.update(encrypted, "hex", "utf8");
+    dec += decipher.final("utf8");
+    return dec;
+  } catch { return ""; }
+}
+
+/**
+ * Middleware: resolves user BYOK config from profile + api_keys table.
+ * Attaches req.byokConfig (ProviderConfig|null) and req.byokSource ("byok"|"pool"|"none").
+ */
+export async function resolveByokConfig(req: any, _res: any, next: any) {
+  const userId = req.user?.claims?.sub;
+  if (!userId) { req.byokConfig = null; req.byokSource = "none"; return next(); }
+
+  const profile = await storage.getUserProfile(userId);
+  const config: ProviderConfig = {
+    provider: (profile?.preferredAiProvider as ProviderConfig["provider"]) || "huggingface",
+    huggingFaceToken: profile?.huggingFaceToken || undefined,
+    ollamaUrl: profile?.ollamaUrl || undefined,
+    openRouterKey: profile?.openRouterKey || undefined,
+    xaiKey: profile?.xaiKey || undefined,
+    anthropicKey: profile?.anthropicKey || undefined,
+    geminiKey: profile?.geminiKey || undefined,
+    preferredModel: profile?.preferredModel || undefined,
+  };
+
+  // Merge keys from user_api_keys table (encrypted keys need decrypt)
+  const apiKeyRows = await storage.getUserApiKeys(userId);
+  for (const row of apiKeyRows) {
+    if (!row.isActive) continue;
+    const encRow = await storage.getUserApiKey(userId, row.provider);
+    if (!encRow) continue;
+    const dec = decryptApi(encRow.encryptedKey);
+    if (!dec) continue;
+    if (row.provider === "xai" && !config.xaiKey) config.xaiKey = dec;
+    else if (row.provider === "anthropic" && !config.anthropicKey) config.anthropicKey = dec;
+    else if (row.provider === "gemini" && !config.geminiKey) config.geminiKey = dec;
+    else if (row.provider === "openrouter" && !config.openRouterKey) config.openRouterKey = dec;
+    else if (row.provider === "huggingface" && !config.huggingFaceToken) config.huggingFaceToken = dec;
+  }
+
+  req.byokConfig = config;
+  req.byokSource = validateByokCredentials(config).valid ? "byok" : "none";
+  next();
+}
+
+/**
+ * Enforces BYOK OR community pool available. Use AFTER isAuthenticated + resolveByokConfig.
+ */
+export async function requireByokOrPool(req: any, res: any, next: any) {
+  if (req.byokSource === "byok") return next();
+  if (await storage.isPoolAvailable()) { req.byokSource = "pool"; return next(); }
+  const usage = await storage.getPoolUsageToday();
+  return res.status(402).json({
+    error: "BYOK_OR_POOL_REQUIRED",
+    message: "No API key configured and community pool is exhausted today. Connect your own AI provider in Settings.",
+    poolUsage: usage,
+  });
+}
+
 // ── Validation Schemas ───────────────────────────────────────
 
 export const saveCardSchema = z.object({

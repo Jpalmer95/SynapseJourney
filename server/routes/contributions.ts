@@ -201,6 +201,53 @@ export function registerContributionsRoutes(app: Express) {
     }
   });
 
+  // ── Pool Status & BYOK Status ───────────────────────────────────────────
+  // Get community pool status (public for transparency)
+  app.get("/api/pool/status", async (req: Request, res: Response) => {
+    try {
+      const usage = await storage.getPoolUsageToday();
+      const available = await storage.isPoolAvailable();
+      const maxUnitsPerDay = parseInt(process.env.POOL_MAX_UNITS_PER_DAY || '10', 10);
+      const dailyBudgetCents = parseInt(process.env.POOL_DAILY_BUDGET || '50', 10) * 100;
+      res.json({
+        available,
+        unitsGeneratedToday: usage.unitsGenerated,
+        maxUnitsPerDay,
+        budgetRemainingCents: usage.remainingBudgetCents,
+        dailyBudgetCents,
+        message: available ? "Community pool is available" : "Pool exhausted until tomorrow. Connect your own API key in Settings.",
+      });
+    } catch (error) {
+      console.error("Error fetching pool status:", error);
+      res.status(500).json({ error: "Failed to fetch pool status" });
+    }
+  });
+
+  // Get BYOK status for current user (auth required)
+  app.get("/api/byok/status", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const keys = await storage.getUserApiKeys(userId);
+      const profile = await storage.getUserProfile(userId);
+      const activeKeys = keys.filter(k => k.isActive).map(k => k.provider);
+      res.json({
+        hasByok: activeKeys.length > 0 || !!(profile?.xaiKey || profile?.anthropicKey || profile?.geminiKey || profile?.openRouterKey || profile?.huggingFaceToken || profile?.ollamaUrl),
+        activeProviders: activeKeys,
+        profileProviders: [
+          profile?.xaiKey && "xai",
+          profile?.anthropicKey && "anthropic",
+          profile?.geminiKey && "gemini",
+          profile?.openRouterKey && "openrouter",
+          profile?.huggingFaceToken && "huggingface",
+          profile?.ollamaUrl && "ollama",
+        ].filter(Boolean),
+      });
+    } catch (error) {
+      console.error("Error fetching BYOK status:", error);
+      res.status(500).json({ error: "Failed to fetch BYOK status" });
+    }
+  });
+
   // ── Content Reviews (auth required) ──────────────────────────────────────
   app.post("/api/contributions/review", isAuthenticated, async (req: any, res: Response) => {
     try {
