@@ -107,6 +107,7 @@ export const lessonUnits = pgTable("lesson_units", {
   outline: text("outline"), // Brief description of unit
   contentJson: jsonb("content_json"), // Full lesson content: { concept, analogy, example, quiz, crossLinks, crossDomainInsights, etc }
   embedding: vector("embedding", { dimensions: 1536 }),
+  lastVerifiedAt: timestamp("last_verified_at"), // freshness tracking
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
@@ -206,6 +207,9 @@ export const userProfiles = pgTable("user_profiles", {
   huggingFaceToken: text("hugging_face_token"), // Optional HF token for free models
   ollamaUrl: text("ollama_url"), // Optional local Ollama URL (e.g., http://localhost:11434)
   openRouterKey: text("open_router_key"), // Optional OpenRouter API key for paid models
+  xaiKey: text("xai_key"), // xAI / Grok API key
+  anthropicKey: text("anthropic_key"), // Anthropic / Claude API key
+  geminiKey: text("gemini_key"), // Google Gemini API key
   preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
   preferredModel: text("preferred_model"), // Specific model name for the provider
   ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS preset: "browser", or a Qwen3-TTS preset name
@@ -517,6 +521,80 @@ export const novaCoins = pgTable("nova_coins", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Community Pool Usage Tracking (for BYOK sustainability)
+export const communityPoolUsage = pgTable("community_pool_usage", {
+  id: serial("id").primaryKey(),
+  date: varchar("date").notNull(), // YYYY-MM-DD format
+  unitsGenerated: integer("units_generated").default(0).notNull(),
+  costCents: integer("cost_cents").default(0).notNull(), // cost in cents
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Community Pool Queue (queued requests when budget available)
+export const communityPoolQueue = pgTable("community_pool_queue", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  difficulty: text("difficulty").notNull(),
+  contentType: text("content_type").default("balanced"),
+  status: text("status").default("queued").notNull(), // queued, processing, completed, failed, expired
+  priority: integer("priority").default(0).notNull(), // higher = processed first
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  processedAt: timestamp("processed_at"),
+});
+
+// Content Versions (Wikipedia-style edit history for lesson units)
+export const contentVersions = pgTable("content_versions", {
+  id: serial("id").primaryKey(),
+  unitId: integer("unit_id").references(() => lessonUnits.id).notNull(),
+  versionNumber: integer("version_number").notNull(),
+  authorId: varchar("author_id").notNull(),
+  authorType: text("author_type").default("human").notNull(), // human, agent
+  contentJson: jsonb("content_json").notNull(),
+  changeSummary: text("change_summary"), // brief description of what changed
+  modelUsed: text("model_used"), // if AI-generated, which model
+  status: text("status").default("pending_review").notNull(), // pending_review, approved, rejected, active
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Content Reviews (approvals/rejections for submitted content versions)
+export const contentReviews = pgTable("content_reviews", {
+  id: serial("id").primaryKey(),
+  versionId: integer("version_id").references(() => contentVersions.id).notNull(),
+  reviewerId: varchar("reviewer_id").notNull(),
+  reviewerType: text("reviewer_type").default("human").notNull(), // human, agent
+  rating: integer("rating"), // 1-5
+  feedback: text("feedback"),
+  approved: boolean("approved").notNull(),
+  reviewedAt: timestamp("reviewed_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// User API Keys (BYOK — users bring their own keys for content generation)
+export const userApiKeys = pgTable("user_api_keys", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  provider: text("provider").notNull(), // openai, anthropic, gemini, xai, openrouter, huggingface
+  encryptedKey: text("encrypted_key").notNull(), // AES-256 encrypted at rest
+  keyLabel: text("key_label"), // user-friendly label like "My OpenAI Key"
+  isActive: boolean("is_active").default(true).notNull(),
+  lastUsedAt: timestamp("last_used_at"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Agent Profiles (registered AI agents with owner accountability)
+export const agentProfiles = pgTable("agent_profiles", {
+  id: serial("id").primaryKey(),
+  agentId: varchar("agent_id").notNull().unique(), // unique agent identifier
+  ownerId: varchar("owner_id").notNull(), // human user who vouches for this agent
+  name: text("name").notNull(),
+  description: text("description"),
+  apiKey: text("api_key").notNull(), // agent's auth key (hashed)
+  modelUsed: text("model_used"), // which LLM the agent uses
+  isVerified: boolean("is_verified").default(false).notNull(),
+  rateLimitPerHour: integer("rate_limit_per_hour").default(50).notNull(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -603,6 +681,12 @@ export const insertNovaCoinSchema = createInsertSchema(novaCoins).omit({ id: tru
 export const insertTtsAudioCacheSchema = createInsertSchema(ttsAudioCache).omit({ id: true, createdAt: true });
 export const insertFlashcardSchema = createInsertSchema(flashcards).omit({ id: true, createdAt: true });
 export const insertFlashcardReviewSchema = createInsertSchema(flashcardReviews).omit({ id: true, createdAt: true });
+export const insertContentVersionSchema = createInsertSchema(contentVersions).omit({ id: true, createdAt: true });
+export const insertContentReviewSchema = createInsertSchema(contentReviews).omit({ id: true, reviewedAt: true });
+export const insertUserApiKeySchema = createInsertSchema(userApiKeys).omit({ id: true, createdAt: true, lastUsedAt: true });
+export const insertAgentProfileSchema = createInsertSchema(agentProfiles).omit({ id: true, createdAt: true });
+export const insertCommunityPoolUsageSchema = createInsertSchema(communityPoolUsage).omit({ id: true, updatedAt: true });
+export const insertCommunityPoolQueueSchema = createInsertSchema(communityPoolQueue).omit({ id: true, createdAt: true, processedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -696,6 +780,20 @@ export type Flashcard = typeof flashcards.$inferSelect;
 export type InsertFlashcard = z.infer<typeof insertFlashcardSchema>;
 export type FlashcardReview = typeof flashcardReviews.$inferSelect;
 export type InsertFlashcardReview = z.infer<typeof insertFlashcardReviewSchema>;
+
+// Phase 1 new types
+export type ContentVersion = typeof contentVersions.$inferSelect;
+export type InsertContentVersion = z.infer<typeof insertContentVersionSchema>;
+export type ContentReview = typeof contentReviews.$inferSelect;
+export type InsertContentReview = z.infer<typeof insertContentReviewSchema>;
+export type UserApiKey = typeof userApiKeys.$inferSelect;
+export type InsertUserApiKey = z.infer<typeof insertUserApiKeySchema>;
+export type AgentProfile = typeof agentProfiles.$inferSelect;
+export type InsertAgentProfile = z.infer<typeof insertAgentProfileSchema>;
+export type CommunityPoolUsage = typeof communityPoolUsage.$inferSelect;
+export type InsertCommunityPoolUsage = z.infer<typeof insertCommunityPoolUsageSchema>;
+export type CommunityPoolQueue = typeof communityPoolQueue.$inferSelect;
+export type InsertCommunityPoolQueue = z.infer<typeof insertCommunityPoolQueueSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {
