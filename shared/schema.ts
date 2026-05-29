@@ -1,5 +1,6 @@
 import { sql, relations } from "drizzle-orm";
 import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -22,6 +23,7 @@ export const topics = pgTable("topics", {
   categoryId: integer("category_id").references(() => categories.id),
   difficulty: text("difficulty").notNull().default("beginner"),
   imageUrl: text("image_url"),
+  embedding: vector("embedding", { dimensions: 1536 }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
@@ -104,6 +106,7 @@ export const lessonUnits = pgTable("lesson_units", {
   title: text("title").notNull(),
   outline: text("outline"), // Brief description of unit
   contentJson: jsonb("content_json"), // Full lesson content: { concept, analogy, example, quiz, crossLinks, crossDomainInsights, etc }
+  embedding: vector("embedding", { dimensions: 1536 }),
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
