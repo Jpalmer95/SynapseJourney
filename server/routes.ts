@@ -2,7 +2,7 @@ import type { Express, Request, Response } from "express";
 import type { Server } from "http";
 import { z } from "zod";
 import { storage } from "./storage";
-import { setupAuth, registerAuthRoutes, isAuthenticated } from "./replit_integrations/auth";
+import { setupAuth, registerAuthRoutes, isAuthenticated, optionalAuth } from "./replit_integrations/auth";
 import { authStorage } from "./replit_integrations/auth/storage";
 import { registerChatRoutes } from "./replit_integrations/chat";
 import { generateCourseContent, type ProviderConfig } from "./ai-providers";
@@ -70,6 +70,9 @@ import { registerSocialRoutes } from "./routes/social";
 // Admin & content management routes
 import { registerAdminRoutes } from "./routes/admin";
 
+// Phase 1: Contributions, BYOK, freshness
+import { registerContributionsRoutes } from "./routes/contributions";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -83,6 +86,7 @@ export async function registerRoutes(
   registerTestsRoutes(app);
   registerSocialRoutes(app);
   registerAdminRoutes(app);
+  registerContributionsRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {
@@ -543,7 +547,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
   });
 
   // Get or generate lesson outline for a topic
-  app.get("/api/lessons/:topicId/outline", isAuthenticated, async (req: any, res: Response) => {
+  app.get("/api/lessons/:topicId/outline", optionalAuth, async (req: any, res: Response) => {
     try {
       const topicId = parseInt(req.params.topicId);
       if (isNaN(topicId) || topicId <= 0) {
@@ -558,22 +562,42 @@ Make the progression natural from fundamentals to advanced concepts.`,
       // Check if we already have generated units for this topic
       let units = await storage.getLessonUnits(topicId);
       
+      const userId = req.user?.claims?.sub;
+
       if (units.length === 0) {
         // Generate outline using AI
         units = await generateLessonOutline(topicId, topic.title, topic.description);
-        // Fire background batch pre-generation for all new non-nextgen units
-        batchPregenerateUnits(units, topic, req.user.claims.sub).catch(console.error);
+        // Fire background batch pre-generation for all new non-nextgen units (only if logged in)
+        if (userId) {
+          batchPregenerateUnits(units, topic, userId).catch(console.error);
+        }
       }
 
-      // Get user's mastery status
-      const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, topicId);
+      // Public visitors: return units without progress/mastery tracking
+      if (!userId) {
+        const unitsOpen = units.map(unit => ({
+          ...unit,
+          progress: null,
+          locked: false, // public visitors see everything unlocked for reading
+        }));
+        return res.json({
+          topic,
+          units: unitsOpen,
+          mastery: null,
+          isAdmin: false,
+          isPublic: true,
+        });
+      }
+
+      // Authenticated: full experience with mastery + progress
+      const mastery = await storage.getOrCreateTopicMastery(userId, topicId);
       
       // Check if user is admin (bypass all locks)
-      const isAdmin = await isAdminUser(req.user.claims.sub);
+      const isAdmin = await isAdminUser(userId);
       
       // Get user's progress for each unit
       const unitsWithProgress = await Promise.all(units.map(async (unit) => {
-        const progress = await storage.getLessonProgress(req.user.claims.sub, unit.id);
+        const progress = await storage.getLessonProgress(userId, unit.id);
         return {
           ...unit,
           progress: progress || null,
@@ -594,7 +618,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
   });
 
   // Get or generate lesson content for a specific unit
-  app.get("/api/lessons/unit/:unitId/content", isAuthenticated, async (req: any, res: Response) => {
+  app.get("/api/lessons/unit/:unitId/content", optionalAuth, async (req: any, res: Response) => {
     try {
       const unitId = parseInt(req.params.unitId);
       if (isNaN(unitId) || unitId <= 0) {
@@ -611,9 +635,30 @@ Make the progression natural from fundamentals to advanced concepts.`,
         return res.status(404).json({ error: "Topic not found" });
       }
 
+      const userId = req.user?.claims?.sub;
+      const isNextGen = unit.difficulty === "nextgen";
+
+      // Public / anonymous visitors: read-only content, no generation, no progress
+      if (!userId) {
+        let content = unit.contentJson;
+        if (!content) {
+          // Don't generate for unauthenticated — just return a placeholder
+          return res.json({
+            unit,
+            content: { concept: "Please sign in to generate and view this lesson content." },
+            isNextGen,
+            isPublic: true,
+            loginRequired: true,
+          });
+        }
+        const contentWithGrokipedia = injectGrokipediaResource(content, topic.title, isNextGen);
+        return res.json({ unit, content: contentWithGrokipedia, isNextGen, isPublic: true });
+      }
+
+      // Authenticated: full experience with mastery checks + generation
       // Check if user has unlocked this difficulty level (admin bypass all locks)
-      const mastery = await storage.getOrCreateTopicMastery(req.user.claims.sub, unit.topicId);
-      const isAdmin = await isAdminUser(req.user.claims.sub);
+      const mastery = await storage.getOrCreateTopicMastery(userId, unit.topicId);
+      const isAdmin = await isAdminUser(userId);
       if (!isUnitUnlocked(unit.difficulty, mastery, isAdmin)) {
         return res.status(403).json({ 
           error: "This lesson is locked",
@@ -621,9 +666,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
         });
       }
 
-      const userId = req.user.claims.sub;
       const masteredTopics = await storage.getUserMasteredTopics(userId);
-      const isNextGen = unit.difficulty === "nextgen";
 
       // Fetch category for hyper-specific resource links
       const category = topic.categoryId ? await storage.getCategoryById(topic.categoryId) : null;
