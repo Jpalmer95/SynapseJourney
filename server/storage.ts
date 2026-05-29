@@ -10,6 +10,7 @@ import {
   ideaContributions, novaCoins,
   ttsAudioCache, flashcards, flashcardReviews,
   openScienceIdeas, openScienceComments,
+  contentVersions, contentReviews, userApiKeys,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -61,6 +62,12 @@ import {
   type InsertOpenScienceIdea,
   type OpenScienceComment,
   type InsertOpenScienceComment,
+  type ContentVersion,
+  type InsertContentVersion,
+  type ContentReview,
+  type InsertContentReview,
+  type UserApiKey,
+  type InsertUserApiKey,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -298,6 +305,36 @@ export interface IStorage {
   createFlashcards(flashcards: InsertFlashcard[]): Promise<Flashcard[]>;
   getFlashcardsByUnit(unitId: number): Promise<Flashcard[]>;
   submitFlashcardReview(userId: string, flashcardId: number, quality: number): Promise<FlashcardReview>;
+
+  // ── Phase 1: Semantic Search ──────────────────────────────────────────────
+  searchTopicsVectors(queryEmbedding: number[], limit?: number, threshold?: number): Promise<(Topic & { category?: Category; distance: number })[]>;
+  searchTopicsTrgm(query: string, limit?: number): Promise<Topic[]>;
+  searchLessonsVectors(queryEmbedding: number[], limit?: number, threshold?: number): Promise<(LessonUnit & { topicTitle: string; distance: number })[]>;
+
+  // ── Phase 1: Content Versioning ───────────────────────────────────────────
+  createContentVersion(data: InsertContentVersion): Promise<ContentVersion>;
+  getContentVersionsForUnit(unitId: number): Promise<ContentVersion[]>;
+  getContentVersionById(id: number): Promise<ContentVersion | undefined>;
+  approveContentVersion(versionId: number): Promise<ContentVersion>;
+  getPendingContentVersions(): Promise<(ContentVersion & { topicTitle: string; unitTitle: string; authorEmail?: string | null })[]>;
+  getUserContentVersions(userId: string): Promise<(ContentVersion & { topicTitle: string; unitTitle: string })[]>;
+
+  // ── Phase 1: Content Reviews ──────────────────────────────────────────────
+  createContentReview(review: InsertContentReview): Promise<ContentReview>;
+  getReviewsForVersion(versionId: number): Promise<ContentReview[]>;
+  countApprovalsForVersion(versionId: number): Promise<number>;
+
+  // ── Phase 1: BYOK API Keys ────────────────────────────────────────────────
+  getUserApiKeys(userId: string): Promise<{ id: number; provider: string; keyLabel: string | null; isActive: boolean; createdAt: Date; lastUsedAt: Date | null }[]>;
+  getUserApiKey(userId: string, provider: string): Promise<UserApiKey | undefined>;
+  saveUserApiKey(userId: string, provider: string, encryptedKey: string, keyLabel?: string): Promise<UserApiKey>;
+  deactivateUserApiKey(id: number, userId: string): Promise<void>;
+  updateApiKeyLastUsed(id: number): Promise<void>;
+
+  // ── Phase 1: Knowledge Freshness ──────────────────────────────────────────
+  getStaleUnits(daysThreshold?: number): Promise<(LessonUnit & { topicTitle: string })[]>;
+  verifyUnitFreshness(unitId: number): Promise<LessonUnit>;
+  getUnitFreshnessBadge(unitId: number): Promise<{ verified: boolean; lastVerifiedAt: Date | null; daysSinceVerified: number | null; status: "fresh" | "stale" | "unknown" }>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2064,6 +2101,226 @@ export class DatabaseStorage implements IStorage {
       lastReviewedAt: new Date()
     }).returning();
     return created;
+  }
+
+  // ── Phase 1: Semantic Search ──────────────────────────────────────────────
+
+  async searchTopicsVectors(queryEmbedding: number[], limit = 10, threshold = 0.3): Promise<(Topic & { category?: Category; distance: number })[]> {
+    const embeddingStr = `[${queryEmbedding.join(",")}]`;
+    const results = await db.execute(sql`
+      SELECT t.*, c.id as "categoryId", c.name as "categoryName", c.color as "categoryColor", c.icon as "categoryIcon",
+             (t.embedding <=> ${embeddingStr}::vector) as distance
+      FROM topics t
+      LEFT JOIN categories c ON t.category_id = c.id
+      WHERE t.embedding IS NOT NULL
+        AND (t.embedding <=> ${embeddingStr}::vector) < ${threshold}
+      ORDER BY t.embedding <=> ${embeddingStr}::vector
+      LIMIT ${limit}
+    `) as any;
+    
+    return results.rows.map((row: any) => ({
+      ...row,
+      category: row.categoryId ? { id: row.categoryId, name: row.categoryName, color: row.categoryColor, icon: row.categoryIcon } : undefined,
+      categoryId: row.category_id,
+    }));
+  }
+
+  async searchTopicsTrgm(query: string, limit = 10): Promise<Topic[]> {
+    const results = await db.execute(sql`
+      SELECT t.*
+      FROM topics t
+      WHERE similarity(t.title, ${query}) > 0.15
+         OR t.title ILIKE ${'%' + query + '%'}
+         OR t.description ILIKE ${'%' + query + '%'}
+      ORDER BY GREATEST(similarity(t.title, ${query}), similarity(t.description, ${query})) DESC
+      LIMIT ${limit}
+    `) as any;
+    return results.rows;
+  }
+
+  async searchLessonsVectors(queryEmbedding: number[], limit = 10, threshold = 0.3): Promise<(LessonUnit & { topicTitle: string; distance: number })[]> {
+    const embeddingStr = `[${queryEmbedding.join(",")}]`;
+    const results = await db.execute(sql`
+      SELECT lu.*, t.title as "topicTitle",
+             (lu.embedding <=> ${embeddingStr}::vector) as distance
+      FROM lesson_units lu
+      JOIN topics t ON lu.topic_id = t.id
+      WHERE lu.embedding IS NOT NULL
+        AND (lu.embedding <=> ${embeddingStr}::vector) < ${threshold}
+        AND lu.content_json IS NOT NULL
+      ORDER BY lu.embedding <=> ${embeddingStr}::vector
+      LIMIT ${limit}
+    `) as any;
+    return results.rows;
+  }
+
+  // ── Phase 1: Content Versioning ───────────────────────────────────────────
+
+  async createContentVersion(data: InsertContentVersion): Promise<ContentVersion> {
+    const [created] = await db.insert(contentVersions).values(data).returning();
+    return created;
+  }
+
+  async getContentVersionsForUnit(unitId: number): Promise<ContentVersion[]> {
+    return db.select().from(contentVersions)
+      .where(eq(contentVersions.unitId, unitId))
+      .orderBy(desc(contentVersions.createdAt));
+  }
+
+  async getContentVersionById(id: number): Promise<ContentVersion | undefined> {
+    const [version] = await db.select().from(contentVersions).where(eq(contentVersions.id, id));
+    return version;
+  }
+
+  async approveContentVersion(versionId: number): Promise<ContentVersion> {
+    // Mark this version as active and update the lesson unit content
+    const version = await this.getContentVersionById(versionId);
+    if (!version) throw new Error("Version not found");
+
+    const [updated] = await db.update(contentVersions)
+      .set({ status: "active" })
+      .where(eq(contentVersions.id, versionId))
+      .returning();
+
+    // Apply the content to the actual lesson unit
+    await db.update(lessonUnits)
+      .set({ contentJson: version.contentJson as any })
+      .where(eq(lessonUnits.id, version.unitId));
+
+    return updated;
+  }
+
+  async getPendingContentVersions(): Promise<(ContentVersion & { topicTitle: string; unitTitle: string; authorEmail?: string | null })[]> {
+    const results = await db.execute(sql`
+      SELECT cv.*, t.title as "topicTitle", lu.title as "unitTitle"
+      FROM content_versions cv
+      JOIN lesson_units lu ON cv.unit_id = lu.id
+      JOIN topics t ON lu.topic_id = t.id
+      WHERE cv.status = 'pending_review'
+      ORDER BY cv.created_at DESC
+    `) as any;
+    return results.rows;
+  }
+
+  async getUserContentVersions(userId: string): Promise<(ContentVersion & { topicTitle: string; unitTitle: string })[]> {
+    const results = await db.execute(sql`
+      SELECT cv.*, t.title as "topicTitle", lu.title as "unitTitle"
+      FROM content_versions cv
+      JOIN lesson_units lu ON cv.unit_id = lu.id
+      JOIN topics t ON lu.topic_id = t.id
+      WHERE cv.author_id = ${userId}
+      ORDER BY cv.created_at DESC
+    `) as any;
+    return results.rows;
+  }
+
+  // ── Phase 1: Content Reviews ──────────────────────────────────────────────
+
+  async createContentReview(review: InsertContentReview): Promise<ContentReview> {
+    const [created] = await db.insert(contentReviews).values(review).returning();
+    return created;
+  }
+
+  async getReviewsForVersion(versionId: number): Promise<ContentReview[]> {
+    return db.select().from(contentReviews)
+      .where(eq(contentReviews.versionId, versionId))
+      .orderBy(desc(contentReviews.reviewedAt));
+  }
+
+  async countApprovalsForVersion(versionId: number): Promise<number> {
+    const result = await db.select({ count: sql<number>`count(*)` })
+      .from(contentReviews)
+      .where(and(eq(contentReviews.versionId, versionId), eq(contentReviews.approved, true)));
+    return Number(result[0]?.count || 0);
+  }
+
+  // ── Phase 1: BYOK API Keys ────────────────────────────────────────────────
+
+  async getUserApiKeys(userId: string): Promise<{ id: number; provider: string; keyLabel: string | null; isActive: boolean; createdAt: Date; lastUsedAt: Date | null }[]> {
+    // Return keys WITHOUT the encrypted_key field for security
+    return db.select({
+      id: userApiKeys.id,
+      provider: userApiKeys.provider,
+      keyLabel: userApiKeys.keyLabel,
+      isActive: userApiKeys.isActive,
+      createdAt: userApiKeys.createdAt,
+      lastUsedAt: userApiKeys.lastUsedAt,
+    }).from(userApiKeys)
+      .where(eq(userApiKeys.userId, userId))
+      .orderBy(desc(userApiKeys.createdAt));
+  }
+
+  async getUserApiKey(userId: string, provider: string): Promise<UserApiKey | undefined> {
+    const [key] = await db.select().from(userApiKeys)
+      .where(and(eq(userApiKeys.userId, userId), eq(userApiKeys.provider, provider), eq(userApiKeys.isActive, true)));
+    return key;
+  }
+
+  async saveUserApiKey(userId: string, provider: string, encryptedKey: string, keyLabel?: string): Promise<UserApiKey> {
+    // Upsert: deactivate old keys for same provider, then insert new one
+    await db.update(userApiKeys)
+      .set({ isActive: false })
+      .where(and(eq(userApiKeys.userId, userId), eq(userApiKeys.provider, provider)));
+
+    const [created] = await db.insert(userApiKeys).values({
+      userId,
+      provider,
+      encryptedKey,
+      keyLabel: keyLabel || `${provider} key`,
+    }).returning();
+    return created;
+  }
+
+  async deactivateUserApiKey(id: number, userId: string): Promise<void> {
+    await db.update(userApiKeys)
+      .set({ isActive: false })
+      .where(and(eq(userApiKeys.id, id), eq(userApiKeys.userId, userId)));
+  }
+
+  async updateApiKeyLastUsed(id: number): Promise<void> {
+    await db.update(userApiKeys)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(userApiKeys.id, id));
+  }
+
+  // ── Phase 1: Knowledge Freshness ──────────────────────────────────────────
+
+  async getStaleUnits(daysThreshold = 180): Promise<(LessonUnit & { topicTitle: string })[]> {
+    const results = await db.execute(sql`
+      SELECT lu.*, t.title as "topicTitle"
+      FROM lesson_units lu
+      JOIN topics t ON lu.topic_id = t.id
+      WHERE lu.last_verified_at IS NULL
+         OR lu.last_verified_at < NOW() - INTERVAL '${sql.raw(String(daysThreshold))} days'
+      ORDER BY lu.last_verified_at ASC NULLS FIRST
+    `) as any;
+    return results.rows;
+  }
+
+  async verifyUnitFreshness(unitId: number): Promise<LessonUnit> {
+    const [updated] = await db.update(lessonUnits)
+      .set({ lastVerifiedAt: new Date() })
+      .where(eq(lessonUnits.id, unitId))
+      .returning();
+    return updated;
+  }
+
+  async getUnitFreshnessBadge(unitId: number): Promise<{ verified: boolean; lastVerifiedAt: Date | null; daysSinceVerified: number | null; status: "fresh" | "stale" | "unknown" }> {
+    const [unit] = await db.select({ lastVerifiedAt: lessonUnits.lastVerifiedAt })
+      .from(lessonUnits)
+      .where(eq(lessonUnits.id, unitId));
+
+    if (!unit?.lastVerifiedAt) {
+      return { verified: false, lastVerifiedAt: null, daysSinceVerified: null, status: "unknown" };
+    }
+
+    const daysSince = Math.floor((Date.now() - unit.lastVerifiedAt.getTime()) / (1000 * 60 * 60 * 24));
+    return {
+      verified: true,
+      lastVerifiedAt: unit.lastVerifiedAt,
+      daysSinceVerified: daysSince,
+      status: daysSince > 180 ? "stale" : "fresh",
+    };
   }
 }
 
