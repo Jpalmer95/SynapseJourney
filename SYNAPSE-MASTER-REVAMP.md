@@ -10,6 +10,186 @@
 
 ---
 
+## The Sustainability Model: "Learn Free, Create With Your Own"
+
+### Core Principle
+**Synapse never pays for content generation. Period.**
+
+The platform's cost should be near-zero regardless of user count. Reading/studying existing content is free (just serving cached PostgreSQL rows). Generating new or improved content uses the CONTRIBUTOR'S compute, not the platform's.
+
+### The Five Cost Tiers
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SYNAPSE COST MODEL                        │
+├────────────────────────┬────────────────────────────────────┤
+│ READING cached content │ Platform pays: ~$0 (DB queries)    │
+│ BROWSING knowledge map │ Platform pays: ~$0 (static data)   │
+│ TTS (browser voices)   │ Platform pays: $0 (client-side)    │
+│ REVIEWING/improving    │ Creator pays: their own API key    │
+│ GENERATING new content │ Creator pays: their own API key    │
+├────────────────────────┴────────────────────────────────────┤
+│ Platform-only costs: hosting ($5-20/mo), DB ($0-5/mo)      │
+│ These are fixed regardless of user count.                    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### BYOK by Default (Bring Your Own Key)
+
+Already partially built! The `userProfiles` table stores:
+- `huggingFaceToken` — free tier (Meta Llama, Mistral, etc.)
+- `ollamaUrl` — self-hosted (zero marginal cost)
+- `openRouterKey` — pay-per-use with many models
+- NEW: `xAIKey`, `anthropicKey`, `geminiKey` — direct provider keys
+
+**The flow:**
+1. User signs up → gets access to ALL existing seeded content (70 topics, 604 units) for free
+2. User wants to generate a NEW custom topic → system asks for an API key or suggests local Ollama
+3. Agent wants to contribute content → agent provides its own API key in the agent profile
+4. Anyone wants to IMPROVE existing content → their key pays for the generation, content enters review
+
+**For users with no keys:**
+- All 604 pre-generated lessons remain free forever (cached, never regenerated on-demand)
+- Browser-native TTS (Web Speech API / Kokoro WebGPU) = zero cost
+- Community-generated content becomes available to everyone once reviewed and approved
+- A "Community Pool" (see below) funds generation for underserved topics
+
+### The Community Compute Pool
+
+For users who can't afford their own API keys but want to contribute:
+- **Seed fund:** Platform maintains a small shared API budget ($20-50/month)
+- **Sponsorships:** GitHub Sponsors / Open Collective to fund the pool
+- **Bounty model:** External sponsors post bounties ("Generate content about X, we pay $Y")
+- **Agent donations:** Agents with surplus compute (e.g., running on free-tier HuggingFace) contribute for free
+- **Strict caps:** Pool generates max 10 units/day, prioritized by community votes
+
+This means the platform can ALWAYS serve content even if the seed fund runs dry — the 604 existing units are permanent. The pool is purely for growth.
+
+### Content Review & Quality Gates
+
+Without quality control, open contribution = spam and misinformation. Multi-tier trust system:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    CONTRIBUTOR TRUST TIERS                    │
+├──────────┬───────────────────────────────────────────────────┤
+│ Level 0  │ New contributor (human or agent)                  │
+│ (New)    │ → 2 human approvals required                      │
+│          │ → Auto quality check (format, length, coherence)  │
+├──────────┼───────────────────────────────────────────────────┤
+│ Level 1  │ 5+ approved contributions                         │
+│ (Trusted)│ → 1 human approval OR 2 agent approvals          │
+│          │ → Content goes live faster                        │
+├──────────┼───────────────────────────────────────────────────┤
+│ Level 2  │ 20+ approved contributions, 0 flags               │
+│ (Expert) │ → Auto-approved if passes quality checks          │
+│          │ → Can review others' contributions                │
+├──────────┼───────────────────────────────────────────────────┤
+│ Agent    │ Registered agent with owner accountability        │
+│ Verified │ → Owner (human) vouches for agent behavior        │
+│          │ → Rate-limited (50 units/hour)                    │
+│          │ → All output logged with model name + version     │
+└──────────┴───────────────────────────────────────────────────┘
+```
+
+### Automated Quality Checks (run on every submission)
+
+1. **Format validation** — matches expected JSON schema (concept, analogy, quiz, etc.)
+2. **Coherence scoring** — lightweight model checks if content is self-consistent
+3. **Factual anchoring** — require at least 2 verifiable external sources per unit
+4. **Plagiarism check** — embedding similarity against existing content (< 80% overlap)
+5. **Safety filter** — block harmful content (violence, illegal, CSAM, spam patterns)
+
+### Contributor Policy (click-to-accept on first contribution)
+
+```
+SYNAPSE CONTRIBUTOR POLICY (v1.0)
+
+By contributing content to Synapse, you agree that:
+
+1. LICENSE: Your contribution is licensed under CC-BY-SA 4.0.
+   Anyone may use, share, and adapt it with attribution.
+
+2. RESPONSIBILITY: You are responsible for the accuracy and
+   legality of your contribution. The Synapse platform is a
+   hosting service and does not endorse any contributed content.
+
+3. AI-GENERATED: If your contribution was AI-generated, you
+   must disclose the model used and review the output for
+   accuracy before submitting.
+
+4. REVIEW: Your contribution will undergo quality review.
+   The platform reserves the right to remove content that
+   fails review, receives community flags, or violates policy.
+
+5. ATTRIBUTION: You will be credited as author. Agent-authored
+   content credits both the agent and its human owner.
+
+6. TAKEDOWN: The platform follows DMCA-compliant takedown
+   procedures for copyright claims.
+```
+
+### Cost Protection Architecture
+
+```
+                    ┌─────────────────────┐
+                    │   SYNAPSE SERVER    │
+                    │  (your $5/mo VPS)   │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              │                │                │
+     ┌────────▼───────┐ ┌─────▼──────┐ ┌───────▼───────┐
+     │ CACHED CONTENT │ │  BYOK API  │ │ COMMUNITY POOL│
+     │ (604+ units)   │ │  ROUTING   │ │ (capped budget│
+     │ Serves FREE    │ │ User's key │ │ $20-50/month) │
+     │ forever        │ │ pays       │ │ shared fund   │
+     └────────────────┘ └────────────┘ └───────────────┘
+          │                  │                │
+          │    All read the same content      │
+          │    regardless of how it was       │
+          └────── generated or funded ────────┘
+```
+
+**Key insight:** Your server cost is the DATABASE + WEB SERVER only.
+The $5-20/month Coolify droplet handles thousands of concurrent readers
+because serving JSON from PostgreSQL is trivially cheap. The expensive
+part (LLM API calls) is always paid by whoever triggers the generation.
+
+### Rate Limits & Abuse Prevention
+
+| Actor | Generating | Reading | Reviewing |
+|-------|-----------|---------|-----------|
+| Anonymous | 0 | Unlimited | 0 |
+| New user | 5/day (own key) | Unlimited | 10/day |
+| Trusted user | 50/day (own key) | Unlimited | Unlimited |
+| Agent | 50/hour (own key) | Unlimited | Unlimited |
+| Community pool | 10/day (shared) | — | — |
+
+### The Flywheel Without the Cost
+
+```
+Existing content (free) ──→ User learns ──→ User/agent wants
+                                    │         to contribute
+                                    │              │
+                                    ▼              ▼
+                            Knowledge grows   They bring their
+                            (more free        own API keys
+                             content)         (their cost)
+                                    │              │
+                                    └──────┬───────┘
+                                           ▼
+                                   Better platform
+                                   attracts more users
+                                   (readers = free)
+```
+
+**The point:** Every new reader costs you nothing. Every new contributor
+pays their own way. The platform's cost is approximately constant regardless
+of growth.
+
+---
+
 ## How to Use This Document
 
 1. Execute phases IN ORDER. Each phase has binary Success Criteria — do NOT mark [x] until ALL criteria pass.
@@ -137,22 +317,37 @@ content_reviews:
 - [ ] Show version history sidebar on lesson pages (like Wikipedia "View history")
 - **Success Criteria:** Can edit a lesson, submit for review, and see it in the review queue
 
-### 1.3 — Agent Content Generation Pipeline
-- [ ] Add `POST /api/agents/generate-units` endpoint (authenticated with API key)
+### 1.3 — BYOK Content Generation Pipeline (PLATFORM PAYS NOTHING)
+
+This is the most critical new feature. All generation uses contributor's key, not the platform's.
+
+- [ ] Extend `userProfiles` with: `xai_key`, `anthropic_key`, `gemini_key` (encrypted at rest with app-level encryption key)
+- [ ] Create `api_keys` table for agent-level keys (separate from user session auth)
+- [ ] Refactor `server/ai-providers.ts` to accept per-request credentials: `getProvider(userCredentials)` returns a client configured with the user's key
+- [ ] Add middleware: `requireByokProvider` — checks user has a configured key before allowing generation endpoints
+- [ ] Update all generation endpoints (`/api/custom-topics`, `/api/chat`, `/api/agents/generate-units`) to route through user's key
+- [ ] Add "Connect AI Provider" onboarding step in settings page (friendly UX for non-technical users)
+- [ ] Add "Community Pool" provider mode: platform's small shared key with strict daily budget cap (env var `POOL_DAILY_BUDGET=50`)
+- [ ] Pool queue: if pool is exhausted (daily budget spent), show "Pool exhausted. Connect your own key or try again tomorrow."
+- **Success Criteria:** Platform API key env vars can be removed entirely. All generation uses user/agent keys. Pool has a hard daily spend cap that cannot be exceeded.
+
+### 1.4 — Agent Content Generation Endpoint
+- [ ] Add `POST /api/agents/generate-units` endpoint (authenticated with agent API key)
 - [ ] Agent submits: `{ topic_id, difficulty, count, model_used, content_versions[] }`
+- [ ] Agent's API key pays for any server-side generation (BYOK or community pool)
 - [ ] Generated content enters review queue like human contributions
 - [ ] Rate limit: 50 units/hour per agent API key
 - [ ] Track which agent/model generated each version (audit trail)
-- **Success Criteria:** Hermes agent can generate 5 lesson units for a topic via API and they appear in review queue
+- **Success Criteria:** Hermes agent can generate 5 lesson units for a topic via API, using its own key, and they appear in review queue
 
-### 1.4 — Knowledge Freshness System
+### 1.5 — Knowledge Freshness System
 - [ ] Add `last_verified_at` timestamp to `lesson_units`
 - [ ] Cron job: flag units older than 180 days as "needs verification"
 - [ ] Agents and humans can "verify" content (confirm still accurate) or flag for update
 - [ ] Show freshness badge on lessons (✓ Verified 12 days ago, ⚠ Needs review)
 - **Success Criteria:** Stale content displays warning badge; verification updates the timestamp
 
-### 1.5 — Public Read Access
+### 1.6 — Public Read Access
 - [ ] Make `/api/topics`, `/api/topics/:id`, `/api/topics/:id/cards` publicly accessible (no auth)
 - [ ] Make lesson content readable without login (read-only)
 - [ ] Keep progress tracking, chat, contribution, and open science behind auth
@@ -393,7 +588,30 @@ version (for revisions)
 - **Created:** 2026-05-28
 - **Author:** Jonathan Korstad + Hermes Agent
 - **Status:** Phase 0 — Not Started
-- **Last Updated:** 2026-05-28
+- **Last Updated:** 2026-05-28 (Added Sustainability Model + BYOK architecture)
 - **License:** Apache-2.0
 
 This document is authoritative. Update it as phases complete.
+
+---
+
+## Key Decisions Log
+
+### 2026-05-28: Sustainability Model Decision
+**Problem:** Open-source learning platform could go viral and bankrupt the maintainer if generation costs aren't protected.
+
+**Solution:** "Learn Free, Create With Your Own" — reading cached content is free forever, but generating/improving content requires the contributor's own API key (BYOK). A small community pool ($20-50/month) funds growth for users without keys, with strict daily caps.
+
+**Why this works:**
+- Platform cost is fixed ($5-20/month hosting) regardless of user count
+- Every new reader costs $0 (they consume cached PostgreSQL data)
+- Every new contributor pays their own API costs
+- Existing 604 units are permanent — the platform works even if all API keys disappear
+- Agents are first-class contributors who bring their own compute
+
+**Risk mitigation:**
+- Multi-tier trust system prevents spam/misinformation
+- Automated quality checks on every submission
+- Contributor policy (CC-BY-SA 4.0) clarifies licensing and responsibility
+- Rate limits prevent abuse
+- Community flagging catches bad content that slips through automated checks
