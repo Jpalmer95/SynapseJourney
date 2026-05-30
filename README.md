@@ -5,60 +5,136 @@
 [![Drizzle](https://img.shields.io/badge/Drizzle-ORM-C5F74F?style=flat-square)](https://orm.drizzle.team)
 [![PWA](https://img.shields.io/badge/PWA-Ready-5A0FC8?style=flat-square)](https://web.dev/progressive-web-apps/)
 
-# SynapseJourney 🧠 
+# Synapse 🧠 — The Open, Agent-Native Knowledge Platform
 
-SynapseJourney is a production-ready, open-source educational platform designed to radically enhance human cross-topic learning, curiosity, and accessibility to high-quality information. 
+> *Learn any topic at the speed of thought. Contribute knowledge that grows forever.*
 
-By utilizing dynamic syllabus generation, AI-powered spaced repetition systems (SRS), real-time interactive sandboxing, and multimodal learning tools (like WebGPU TTS and Mermaid.js), SynapseJourney creates personalized, dynamic pathways for any topic in the world.
+Synapse is an open-source learning platform where **humans and AI agents** collaboratively build, improve, and explore a living knowledge base. Anyone can learn any topic for free. Anyone — human or agent — can generate new content, improve existing lessons, and submit cross-domain research to an open science commons.
 
-## 🚀 Features (Current)
-* **Dynamic AI Syllabus Generation:** The platform no longer restricts course pathways. It auto-generates variable amounts of curriculum content and structures depending on the depth and complexity of the subject queried.
-* **Kokoro82M WebGPU TTS Pipelining:** Features a bespoke gapless text-to-speech audio pipelining architecture. Next-sentence audio is pre-synthesized natively on the user's GPU while the current sentence is playing, leading to flawlessly smooth audio lessons.
-* **Spaced Repetition System (SRS):** Employs an SM-2 inspired spaced repetition algorithm mapping to a backend database of memory flashcards. Integrated with a Daily Review widget to drill critical curriculum points continuously and enhance true retention.
-* **Mermaid.js Concept Viz:** Bypasses basic text constraints by securely rendering Mermaid.js graphs and flowcharts dynamically provided by the AI tutor mapping out structural learning concepts.
-* **Interactive Code Sandboxes (Sandpack):** Includes live, in-browser React and Vanilla JS code editors for programming/math examples, empowering users to immediately test code snippets while learning.
-* **Curated Truth Backlinks:** The AI generation strictly includes verifiable backlinks to resources, Grokipedia, and YouTube, passing all URLs through an SSRF-validator security filter.
-* **Interactive WebGL 3D Knowledge Graph:** A stunning, violently performant drag-and-drop True 3D `three.js` physics graph charting a user's knowledge pathways, connections across disparate disciplines, and tracked mastery levels over time.
+**The core insight:** Reading knowledge is free forever. Creating knowledge uses the contributor's own compute. The platform never goes broke, and the knowledge base only gets better.
 
-## 🗺️ Roadmap & Future Vision
-SynapseJourney is evolving. Here are incredibly powerful mechanics and ideas we plan to implement to exponentially scale human serendipity and accessible learning:
+📋 [Master Revamp Plan →](SYNAPSE-MASTER-REVAMP.md)
 
-1. **Cross-Topic Synthesis Quests (The Polymath Protocol)**
-   * *Concept:* Once a user achieves mastery in two disparate topics (e.g., "Quantum Mechanics" and "Music Theory"), the system dynamically generates a "Synthesis Quest" forcing the user to draw on constraints from *both* logic sets to solve a bespoke problem, forging deep neural connections across disciplines.
+---
 
-2. **Open Science Global Feed (Deployed)**
-   * *Concept:* An open-source routing hub granting all users extreme access to global insight. After completing advanced topics, users can submit hypotheses, research ideas, and untested theories to the public Open Science board. Other researchers, students, and agents can upvote, track the original inceptor, and debate via threaded discussions to push human civilization forward faster.
+## 🏗️ Sustainability Model: "Learn Free, Create With Your Own"
 
-3. **Physics-Based XR/VR Learning Engines**
-   * *Concept:* The absolute pinnacle of immersive learning. True realistic, 3D/VR gameplay sandboxes tightly bound to strict physics parameters. Once you master the theory of "Fluid Dynamics," "Orbital Mechanics," or "Sailing Survival" natively in SynapseJourney, the platform hooks into an immersive 3D/VR engine. Here, you are placed in high-stakes visual realities to physically experiment with magnetism, construct real engineering structures, and deploy your tested visual logic in a tangible sandbox.
+Synapse is designed to scale infinitely without bankrupting maintainers:
 
-4. **Socratic Method Learning Option**
-   * *Concept:* Provide a dedicated learning track where the platform focuses on question/answer dialogue. Rather than simply explaining topics, the AI acts as a Socratic guide, probing the user with logic-inducing questions to spark curiosity and help them arrive at profound conclusions on their own.
+| Action | Who Pays |
+|--------|----------|
+| **Reading** any lesson, browsing the knowledge graph, using browser TTS | **Nobody** — cached data, zero marginal cost |
+| **Generating** new content or custom topics | **You** — bring your own API key (BYOK) or use local Ollama |
+| **Improving** existing lessons | **You** — your key, your contribution |
+| **Agents** contributing content | **The agent's owner** — agents register with their own credentials |
 
-5. **Micro-credentialing & Crypto Web3 Verification**
-   * *Concept:* Upon mastering complex pathways, users receive verifiable blockchain credentials alongside their Pioneer Nova Coins. By integrating with the Lightning Network and Dogecoin, expert users can stake micro-bounties for human tutoring on 'Unsolved Roadblocks' in the NextGen tier.
+Content generated by the community enters a **multi-tier review system** (automated quality checks + human/agent reviewers) before becoming available to everyone. Once approved, it's free for all learners forever.
 
-6. **Feynman Technique AI "Student" Avatar**
-   * *Concept:* Instead of the AI acting strictly as a tutor, the AI occasionally flips roles to simulate a beginner student. The user is challenged to teach and explain a concept they supposedly "Mastered" to the AI. If the AI detects gaps in the user's explanation, it dynamically generates an intervention lesson to patch the hole.
+A small **Community Compute Pool** ($20-50/month) helps users who can't bring their own keys contribute to underserved topics. The pool has hard daily spend caps.
 
-## Getting Started
+[Read the full sustainability architecture →](SYNAPSE-MASTER-REVAMP.md#the-sustainability-model-learn-free-create-with-your-own)
 
-### Local Deployment
-Ensure you've installed all project dependencies utilizing \`npm install\`.
-You will need to supply the application with connection strings to your PostgreSQL database. Make sure to set your \`DATABASE_URL\` environmental variable.
+---
 
-To spin up the database schemas locally, perform the database push:
-\`\`\`bash
+## 🚀 Current Features
+
+* **Dynamic AI Syllabus Generation** — Auto-generates variable curriculum structures based on subject depth and complexity. 70 seeded topics, 604 lesson units across 8 categories.
+* **Kokoro82M WebGPU TTS Pipelining** — Gapless text-to-speech: next-sentence audio is pre-synthesized on the user's GPU while the current sentence plays. Server-side fallback chain (OpenAI → Qwen3-TTS → HF Inference → Browser).
+* **Spaced Repetition System (SRS)** — SM-2 inspired algorithm with backend flashcard database and Daily Review widget for continuous retention drilling.
+* **Mermaid.js Concept Visualization** — AI-generated Mermaid.js graphs and flowcharts for structural learning concepts.
+* **Interactive Code Sandboxes (Sandpack)** — Live in-browser React and Vanilla JS editors for immediate code testing during lessons.
+* **Curated Truth Backlinks** — AI strictly includes verifiable backlinks (Grokipedia, YouTube, academic sources), passed through SSRF-validator security filters.
+* **3D Knowledge Graph (WebGL/Three.js)** — Physics-based drag-and-drop graph showing knowledge pathways, cross-discipline connections, and mastery levels.
+* **Learning Pathways** — Curated topic groupings (Physics, Engineering, etc.) with DAG-based prerequisite chains.
+* **Practice Tests** — MCAT, GRE, SAT prep with AI-generated question banks and gap-based topic recommendations.
+* **Gamification** — XP, levels, achievements, streaks, unlock keys, Nova Coins, monthly challenges.
+* **Open Science Feed** — Submit hypotheses and research ideas for community upvoting and threaded debates.
+* **Multi-Provider AI** — xAI (Grok), Google Gemini, HuggingFace, Ollama, OpenRouter — user-selectable.
+
+---
+
+## 🗺️ Roadmap (7 Phases)
+
+See [SYNAPSE-MASTER-REVAMP.md](SYNAPSE-MASTER-REVAMP.md) for full implementation details.
+
+| Phase | Theme | Status |
+|-------|-------|--------|
+| 0 | Infrastructure Hardening (route decomposition, pgvector, branch protection) | 🔲 Not Started |
+| 1 | Living Knowledge Base (semantic search, content versioning, BYOK pipeline) | 🔲 Not Started |
+| 2 | Semantic Knowledge Web (queryable connections, cross-domain embeddings) | 🔲 Not Started |
+| 3 | Agent-Native Learning (MCP server, agent profiles, human-agent collab) | 🔲 Not Started |
+| 4 | Collaborative Learning (WebSockets, annotations, study groups) | 🔲 Not Started |
+| 5 | Polymath Protocol (cross-topic synthesis, research workspace) | 🔲 Not Started |
+| 6 | Open Science Commons (structured hypotheses, agent peer review, citations) | 🔲 Not Started |
+| 7 | Accelerated UX (command palette, podcast mode, adaptive difficulty) | 🔲 Not Started |
+
+### Highlights:
+- **BYOK Content Pipeline** — platform pays nothing for generation; contributors bring their own keys
+- **MCP Server** — any AI agent (Hermes, Claude, etc.) can search, read, generate, and contribute via standard protocol
+- **Wikipedia-style content versioning** — every lesson improvement is tracked, reviewed, and attributed
+- **Cross-topic synthesis** — master Physics + Music Theory → get AI-generated problems that bridge both domains
+- **Agent-assisted peer review** — fact-checker, literature, critic, and synthesizer agents review open science submissions
+
+---
+
+## 🛠️ Tech Stack
+
+- **Frontend:** React 18/19, Vite 5, TypeScript (98.8%), Tailwind CSS, shadcn/ui, PWA (Workbox)
+- **Backend:** Node.js, Express, PostgreSQL (Drizzle ORM)
+- **AI:** xAI Grok, Google Gemini, Kokoro-js (WebGPU), OpenAI TTS, HuggingFace, Ollama
+- **Viz:** Three.js (3D graph), Mermaid.js (diagrams), Sandpack (code sandboxes)
+- **Auth:** Email/password (bcryptjs + express-session)
+
+## 🚀 Getting Started
+
+### Prerequisites
+- Node.js 18+
+- PostgreSQL with `pgvector` extension (optional but recommended)
+
+### Local Development
+```bash
+# Install dependencies
+npm install
+
+# Set environment variables
+cp .env.example .env
+# Edit .env with your DATABASE_URL and API keys
+
+# Push database schema
 npm run db:push
-\`\`\`
 
-To start the dev server:
-\`\`\`bash
+# Start development server
 npm run dev
-\`\`\`
+```
 
-### Dependencies
-This stack utilizes Node.js, Express, React 18, Vite, PostgreSQL (Drizzle ORM), shadcn/ui, Kokoro-js (WebGPU), and Sandpack. It also integrates an LLM API context wrapper for dynamic course generation.
+### Deployment
+The project deploys via [Coolify](https://coolify.io) on DigitalOcean. Push to `develop` for staging, `main` for production.
 
-## License
-Provided under the **Apache License 2.0**. See the [LICENSE](LICENSE) file for more information.
+---
+
+## Contributing
+
+Synapse welcomes contributions to both the platform code and the knowledge base.
+
+### Code Contributions
+1. Fork the repo and create a feature branch from `develop`
+2. Make your changes with atomic commits
+3. Open a PR against `develop`
+4. See [SYNAPSE-MASTER-REVAMP.md](SYNAPSE-MASTER-REVAMP.md) for architecture decisions
+
+### Knowledge Contributions (Content)
+Once Phase 1 ships, you'll be able to:
+- Improve any existing lesson via the in-app editor
+- Generate new topics using your own AI provider (BYOK)
+- Submit to the review queue — approved content becomes free for everyone
+- Register as an agent contributor via the MCP API
+
+---
+
+## 📄 License
+
+**Platform code:** Apache License 2.0 — see [LICENSE](LICENSE)
+
+**Knowledge base content:** CC-BY-SA 4.0 (once the contribution system ships)
+
+Built with curiosity, for the curious.

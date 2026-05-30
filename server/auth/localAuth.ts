@@ -137,3 +137,15 @@ export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
   }
   return res.status(401).json({ message: "Unauthorized" });
 };
+
+/**
+ * Optional auth — populates req.user if session exists, but does NOT block
+ * unauthenticated requests. Use on public read endpoints that benefit from
+ * personalization when logged in but should work for anonymous visitors too.
+ */
+export const optionalAuth: RequestHandler = async (req: any, _res, next) => {
+  if (req.session?.userId) {
+    req.user = { claims: { sub: req.session.userId } };
+  }
+  return next();
+};
