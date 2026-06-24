@@ -595,6 +595,24 @@ export const agentProfiles = pgTable("agent_profiles", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Course Completion Posters — generated when a learner completes all units in a course
+// Contains a condensed, visually-friendly summary of the entire course
+export const coursePosters = pgTable("course_posters", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  posterData: jsonb("poster_data").notNull(), // { title, summary, keyTakeaways, visualStyle, colorScheme, stats }
+  // posterData structure:
+  //   title: string — course title
+  //   summary: string — 2-3 sentence course summary
+  //   keyTakeaways: string[] — 5-10 most important concepts from the entire course
+  //   stats: { unitsCompleted, quizAvgScore, timeSpent, xpEarned }
+  //   visualStyle: string — e.g. "minimal", "infographic", "mind-map"
+  //   colorScheme: string — e.g. "charcoal-rust", "ocean", "forest"
+  //   sections: { title, content }[] — condensed sections per tier
+  generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -687,6 +705,7 @@ export const insertUserApiKeySchema = createInsertSchema(userApiKeys).omit({ id:
 export const insertAgentProfileSchema = createInsertSchema(agentProfiles).omit({ id: true, createdAt: true });
 export const insertCommunityPoolUsageSchema = createInsertSchema(communityPoolUsage).omit({ id: true, updatedAt: true });
 export const insertCommunityPoolQueueSchema = createInsertSchema(communityPoolQueue).omit({ id: true, createdAt: true, processedAt: true });
+export const insertCoursePosterSchema = createInsertSchema(coursePosters).omit({ id: true, generatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -794,6 +813,8 @@ export type CommunityPoolUsage = typeof communityPoolUsage.$inferSelect;
 export type InsertCommunityPoolUsage = z.infer<typeof insertCommunityPoolUsageSchema>;
 export type CommunityPoolQueue = typeof communityPoolQueue.$inferSelect;
 export type InsertCommunityPoolQueue = z.infer<typeof insertCommunityPoolQueueSchema>;
+export type CoursePoster = typeof coursePosters.$inferSelect;
+export type InsertCoursePoster = z.infer<typeof insertCoursePosterSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

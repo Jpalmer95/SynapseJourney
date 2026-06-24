@@ -1127,6 +1127,20 @@ Respond with a JSON object where each key is the unit index (0, 1, 2...) and eac
 
 CRITICAL: Each unit MUST include "keyTakeaways" (3-5 bullet points) and "externalResources" (2-5 real, specific links). See requirements below.
 
+OPEN EDUCATIONAL RESOURCES (OER) PRIORITY:
+When recommending external resources, PRIORITIZE openly licensed, free educational materials:
+- MIT OpenCourseWare (ocw.mit.edu) — free university courses with full materials
+- Khan Academy (khanacademy.org) — free K-12+ lessons with exercises
+- OpenStax (openstax.org) — free peer-reviewed textbooks
+- LibreTexts (libretexts.org) — free collaborative textbook library
+- Wikiversity (en.wikiversity.org) — community-created learning resources
+- arXiv (arxiv.org) — free preprint papers for STEM
+- YouTube educational channels (CrashCourse, MIT OCW, Stanford, 3Blue1Brown)
+- Project Gutenberg (gutenberg.org) — free public domain books
+- freeCodeCamp (freecodecamp.org) — free coding curriculum
+Only use paid resources (Coursera, Udemy, journals) when no free OER equivalent exists for the topic.
+Every URL must be hyper-specific (link to the actual course/article, not a homepage).
+
 NOTE: Grokipedia (grokipedia.com) is a high-quality encyclopedia — you may include relevant Grokipedia page links (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) if they add value alongside other resources.
 
 JSON format:
@@ -1141,14 +1155,7 @@ JSON format:
       "content": "Detailed worked example with concrete details",
       "code": "Optional code snippet if relevant"
     },
-    "quiz": [
-      {
-        "question": "Question text",
-        "options": ["A", "B", "C", "D"],
-        "correctIndex": 0,
-        "explanation": "Why this answer is correct and why others are not"
-      }
-    ],
+    "quiz": [],
     "crossLinks": [],
     "externalResources": [
       {
@@ -1171,7 +1178,6 @@ BEGINNER units MUST:
 - Focus on "what is it?" and "why does this matter to my life?"
 - Show the human story behind the discovery or invention
 - externalResources: 2-3 beginner-friendly resources (Khan Academy, Crash Course YouTube, TED Talks, introductory books)
-- Quiz questions test basic recall and "why does this matter?"
 
 INTERMEDIATE units MUST:
 - Explain the mechanisms: "how does it actually work under the hood?"
@@ -1179,7 +1185,6 @@ INTERMEDIATE units MUST:
 - Use real case studies and practical worked examples
 - Connect to adjacent concepts and build a mental model
 - externalResources: 3-4 free online courses or textbooks (MIT OpenCourseWare at ocw.mit.edu, Stanford Online at online.stanford.edu, Coursera free audits, specific open textbook chapters, arXiv survey papers)
-- Quiz questions test application and mechanism understanding
 
 ADVANCED units MUST:
 - Describe the current state of the field: what do experts know now, what is still debated?
@@ -1187,16 +1192,8 @@ ADVANCED units MUST:
 - Cover edge cases, failure modes, and nuances practitioners must know
 - Discuss active debates or competing paradigms in the field
 - externalResources: 3-5 research-grade resources (specific arXiv papers with links, journal articles, conference proceedings like NeurIPS/CVPR/Nature/Science, expert lecture series, professional community resources)
-- Quiz questions are analytical and require synthesis of multiple concepts
 
-Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanced should feel like a genuine progression in depth.
-
-QUIZ QUALITY RULES (apply to ALL tiers):
-- Every wrong answer (distractor) must be PLAUSIBLE — each must represent a common misconception or a reasonable-but-incorrect interpretation, not just a random or obviously wrong option.
-- Include at least one question testing "why does this matter?" or "what would happen if...?" — not just "what is this?"
-- For intermediate+: one question should require applying the concept to a NEW scenario not mentioned in the lesson.
-- For advanced: one question should require comparing two approaches and identifying tradeoffs.
-- Each quiz explanation must explain WHY the distractors are wrong (what misconception they represent), not just why the correct answer is right.
+IMPORTANT: Do NOT generate quiz questions. Quizzes are generated on-demand when the learner requests them. Leave the "quiz" array empty in every unit.
 
 The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
 
@@ -1250,7 +1247,6 @@ export async function generateLessonContent(
 - Focus on "what is it?" and "why does this matter to my life right now?"
 - Show the human story: who discovered or built this, what problem were they solving, what changed in the world as a result?
 - The concept should feel like reading an engaging magazine article, not a textbook
-- Quiz questions test basic recognition, "why does this matter?", and connecting to everyday experience
 - externalResources: 2-3 highly accessible resources that a complete beginner would love:
   * Khan Academy videos/articles (khanacademy.org)
   * CrashCourse YouTube videos (youtube.com/@crashcourse)
@@ -1264,7 +1260,6 @@ export async function generateLessonContent(
 - Use at least one detailed real-world case study or practical worked example from industry or research
 - Build a mental model: connect this to adjacent concepts and show how it fits into a bigger picture
 - The concept should feel like a solid college lecture — rigorous but still accessible
-- Quiz questions test mechanism understanding and ability to apply concepts to new scenarios
 - externalResources: 3-4 free courses or textbooks that provide substantial depth:
   * MIT OpenCourseWare (ocw.mit.edu) — cite specific course pages
   * Stanford Online (online.stanford.edu) or Stanford Engineering Everywhere
@@ -1280,7 +1275,6 @@ export async function generateLessonContent(
 - Discuss competing paradigms or schools of thought within the field
 - Include at least one recent development from 2022-2025 that changed or challenged prior understanding
 - The concept should feel like reading a graduate-level review or expert practitioner's guide
-- Quiz questions are analytical: require synthesizing multiple concepts, critiquing approaches, or reasoning about tradeoffs
 - externalResources: 3-5 research-grade resources:
   * Specific arXiv papers with direct links (e.g., https://arxiv.org/abs/XXXX.XXXXX)
   * Nature, Science, or top-tier journal articles
@@ -1291,7 +1285,6 @@ export async function generateLessonContent(
 - This is a frontier exploration — present the field as an active, unfinished adventure
 - Focus on what is NOT yet known and why it matters
 - Reference real, active research questions being pursued by labs right now
-- Quiz questions should be open-ended thought exercises that don't have single correct answers
 - externalResources: 3-4 research frontier resources:
   * Active arXiv categories or recent preprints
   * Open source research community forums
@@ -1307,7 +1300,13 @@ CRITICAL RESOURCE SPECIFICITY RULES:
 - For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX).
 - ALWAYS include a topic link to a relevant Grokipedia page (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) as it is incredibly useful.
 - Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
-- Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
+- Verify that the URL path describes the content clearly — avoid placeholder or example URLs.
+
+OPEN EDUCATIONAL RESOURCES (OER) PRIORITY:
+- PRIORITIZE openly licensed, free educational materials over paid resources
+- Preferred OER sources: MIT OpenCourseWare (ocw.mit.edu), Khan Academy (khanacademy.org), OpenStax (openstax.org), LibreTexts (libretexts.org), Wikiversity (en.wikiversity.org), arXiv (arxiv.org), freeCodeCamp (freecodecamp.org), Project Gutenberg (gutenberg.org)
+- Only use paid resources (Coursera, Udemy, paid journals) when no free OER equivalent exists
+- Each resource should be the BEST free resource for this specific topic and difficulty level`;
 
   const positionContext = unitContext
     ? `Unit Position: ${unitContext.position} of ${unitContext.total} in the ${unit.difficulty.toUpperCase()} tier\n` +
@@ -1361,14 +1360,7 @@ Create the lesson content in this JSON format:
     "content": "Detailed worked example appropriate to the difficulty level",
     "code": "Optional code snippet if relevant"
   },
-  "quiz": [
-    {
-      "question": "Question text",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Thorough explanation of why this is correct and why the others are not"
-    }
-  ],
+  "quiz": [],
   "crossLinks": [
     {
       "topicId": 1,
@@ -1386,8 +1378,7 @@ Create the lesson content in this JSON format:
   ]
 }
 
-Include exactly 3 quiz questions appropriate for the difficulty level.
-QUIZ RULES: Every wrong answer must be PLAUSIBLE — representing a common misconception, not obviously wrong. Include at least one "why does this matter?" or "what if?" question. Explanations must explain WHY each distractor is wrong (what misconception it represents).
+IMPORTANT: Do NOT generate quiz questions. Quizzes are generated on-demand when the learner requests them. Leave the "quiz" array empty.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}
 The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, grokipedia.com, etc). Do not invent URLs.`;
 
@@ -1439,6 +1430,87 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
       quiz: [],
       crossLinks: []
     };
+  }
+}
+
+// ── On-Demand Quiz Generation ──────────────────────────────────────────────
+// Quizzes are NOT pre-generated with lesson content. They are generated
+// on-demand when a learner requests them, using the learner's own API key (BYOK).
+// This saves ~30% token cost on every lesson generation and lets quizzes be
+// tailored to the learner's current mastery level and the specific content they just read.
+
+export async function generateOnDemandQuiz(
+  topic: { title: string; description: string },
+  unit: { title: string; difficulty: string; outline?: string | null },
+  lessonContent: unknown,
+  questionCount: number = 3
+): Promise<any> {
+  const contentStr = typeof lessonContent === "string"
+    ? lessonContent
+    : JSON.stringify(lessonContent);
+
+  const difficultyGuidance = unit.difficulty === "beginner"
+    ? "Quiz questions test basic recognition, 'why does this matter?', and connecting to everyday experience. Use simple language."
+    : unit.difficulty === "intermediate"
+    ? "Quiz questions test mechanism understanding and ability to apply concepts to new scenarios. Include at least one application question."
+    : unit.difficulty === "advanced"
+    ? "Quiz questions are analytical: require synthesizing multiple concepts, critiquing approaches, or reasoning about tradeoffs. Include at least one comparison question."
+    : "Quiz questions are open-ended thought exercises that may not have single correct answers — test creative thinking and frontier reasoning.";
+
+  const prompt = `You are an expert quiz designer. Generate ${questionCount} quiz questions for a learner who just finished studying a lesson.
+
+TOPIC: "${topic.title}"
+UNIT: "${unit.title}"
+DIFFICULTY: ${unit.difficulty.toUpperCase()}
+
+LESSON CONTENT (the learner just read this):
+${contentStr.substring(0, 4000)}
+
+${difficultyGuidance}
+
+Respond with ONLY a JSON array of quiz questions:
+[
+  {
+    "question": "Clear, specific question text",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctIndex": 0,
+    "explanation": "Why the correct answer is right AND why each distractor is wrong (what misconception each represents)"
+  }
+]
+
+CRITICAL QUIZ RULES:
+- Every wrong answer (distractor) must be PLAUSIBLE — representing a common misconception or reasonable-but-incorrect interpretation
+- Do NOT include obviously wrong or joke answers
+- Include at least one "why does this matter?" or "what if?" question
+- For intermediate+: one question should require applying the concept to a NEW scenario not mentioned in the lesson
+- For advanced: one question should require comparing two approaches and identifying tradeoffs
+- Each explanation must explain WHY the distractors are wrong (what misconception they represent), not just why the correct answer is right
+- Questions should test understanding of THIS specific lesson's content, not generic knowledge`;
+
+  try {
+    const content = await generateCourseContent(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "[]";
+
+    const parsed = JSON.parse(content);
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error("Invalid quiz response: expected non-empty array");
+    }
+
+    // Validate each question has required fields
+    for (const q of parsed) {
+      if (!q.question || !Array.isArray(q.options) || q.options.length < 2 ||
+          typeof q.correctIndex !== "number" || !q.explanation) {
+        throw new Error("Invalid quiz question structure");
+      }
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error("[OnDemandQuiz] Error generating quiz:", error);
+    return [];
   }
 }
 

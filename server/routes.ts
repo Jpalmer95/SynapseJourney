@@ -53,6 +53,7 @@ import {
   preTTSForUnit,
   generateCustomTopicContent,
   generateBatchLessonContent,
+  generateOnDemandQuiz,
   getTestCategories,
   getDefaultTimeLimit,
   generatePracticeTestQuestions,
@@ -738,6 +739,61 @@ Make the progression natural from fundamentals to advanced concepts.`,
     }
   });
 
+  // On-Demand Quiz Generation — generates a quiz tailored to the specific lesson content
+  // Quizzes are NOT pre-generated. They are created here when the learner requests them.
+  // Uses the platform AI (BYOK community pool or the platform key for pre-seeded content).
+  // For custom topics, the user's own key is used.
+  app.post("/api/lessons/unit/:unitId/quiz", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const unitId = parseInt(req.params.unitId);
+      if (isNaN(unitId) || unitId <= 0) {
+        return res.status(400).json({ error: "Invalid unit ID" });
+      }
+
+      const unit = await storage.getLessonUnit(unitId);
+      if (!unit) {
+        return res.status(404).json({ error: "Unit not found" });
+      }
+
+      const topic = await storage.getTopicById(unit.topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Learner must have lesson content to generate a quiz for
+      if (!unit.contentJson) {
+        return res.status(409).json({
+          error: "LESSON_CONTENT_REQUIRED",
+          message: "Please read the lesson first — quizzes are generated based on lesson content.",
+        });
+      }
+
+      const questionCount = Math.min(Math.max(req.body?.questionCount || 3, 1), 10);
+
+      console.log(`[OnDemandQuiz] Generating ${questionCount} questions for unit ${unitId} "${unit.title}" (${unit.difficulty})`);
+
+      const quiz = await generateOnDemandQuiz(
+        { title: topic.title, description: topic.description || "" },
+        { title: unit.title, difficulty: unit.difficulty, outline: unit.outline },
+        unit.contentJson,
+        questionCount
+      );
+
+      if (!quiz || quiz.length === 0) {
+        return res.status(500).json({
+          error: "QUIZ_GENERATION_FAILED",
+          message: "Could not generate quiz at this time. Please try again.",
+        });
+      }
+
+      console.log(`[OnDemandQuiz] Generated ${quiz.length} questions for unit ${unitId}`);
+      return res.json({ quiz, unitId });
+    } catch (error) {
+      console.error("[OnDemandQuiz] Error:", error);
+      res.status(500).json({ error: "Failed to generate quiz" });
+    }
+  });
+
   // Start a lesson (records progress and awards XP)
   app.post("/api/lessons/start", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -864,6 +920,91 @@ Make the progression natural from fundamentals to advanced concepts.`,
     } catch (error) {
       console.error("Error completing lesson:", error);
       res.status(500).json({ error: "Failed to complete lesson" });
+    }
+  });
+
+  // Course Completion Poster — generates a condensed visual summary of an entire course
+  // Called when a learner completes all units in a topic. Uses AI to create a
+  // poster-worthy summary with key takeaways, stats, and visual metadata.
+  app.post("/api/lessons/:topicId/poster", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId);
+      if (isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topic ID" });
+      }
+
+      const userId = req.user.claims.sub;
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) {
+        return res.status(404).json({ error: "Topic not found" });
+      }
+
+      // Gather all units and their content for the poster summary
+      const units = await storage.getLessonUnits(topicId);
+      if (units.length === 0) {
+        return res.status(400).json({ error: "No units found for this topic" });
+      }
+
+      // Check if user has completed all units
+      const mastery = await storage.getOrCreateTopicMastery(userId, topicId);
+      const allCompleted = units.every(u =>
+        mastery.beginnerCompleted > 0 || mastery.intermediateCompleted > 0
+      );
+
+      // Gather lesson content for summary generation
+      const unitsWithContent = units.filter(u => u.contentJson);
+      const contentSummaries = unitsWithContent.map(u => ({
+        title: u.title,
+        difficulty: u.difficulty,
+        outline: u.outline,
+        keyTakeaways: (u.contentJson as any)?.keyTakeaways || [],
+      }));
+
+      const posterPrompt = `You are creating a course completion poster for someone who just finished learning "${topic.title}".
+
+Topic Description: ${topic.description}
+
+Course Structure (${units.length} units across all tiers):
+${JSON.stringify(contentSummaries, null, 2)}
+
+Create a visually-friendly poster summary that condenses the ENTIRE course into key takeaways.
+The poster should feel like a rewarding "you did it!" moment with genuinely useful condensed info.
+
+Respond with JSON:
+{
+  "title": "${topic.title}",
+  "summary": "2-3 sentence celebration of what they learned and why it matters",
+  "keyTakeaways": ["5-10 most important concepts from the entire course"],
+  "sections": [
+    { "tier": "beginner", "title": "Foundations", "content": "1-2 sentence summary of what the beginner tier covered" },
+    { "tier": "intermediate", "title": "Core Mechanics", "content": "..." },
+    { "tier": "advanced", "title": "Advanced", "content": "..." },
+    { "tier": "nextgen", "title": "Frontier", "content": "..." }
+  ],
+  "visualStyle": "minimal|infographic|mind-map",
+  "colorScheme": "charcoal-rust|ocean|forest|sunset|aurora",
+  "celebrationMessage": "A fun, encouraging message congratulating them on completing the course"
+}`;
+
+      const { generateCourseContent } = await import("./ai-providers");
+      const posterContent = await generateCourseContent(
+        [{ role: "user", content: posterPrompt }],
+        { responseFormat: "json", temperature: 0.8 }
+      ) || "{}";
+
+      const posterData = JSON.parse(posterContent);
+
+      // Add real stats
+      posterData.stats = {
+        unitsCompleted: units.length,
+        unitsTotal: units.length,
+        tiersCompleted: 4,
+      };
+
+      return res.json({ poster: posterData, topicId, topicTitle: topic.title });
+    } catch (error) {
+      console.error("Error generating course poster:", error);
+      res.status(500).json({ error: "Failed to generate course poster" });
     }
   });
 

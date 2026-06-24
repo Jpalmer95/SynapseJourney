@@ -204,11 +204,26 @@ of growth.
 
 Synapse is the learning platform humans AND AI agents wish they had:
 
-- **Anyone** can learn any topic at the speed of reading/listening
+- **Anyone** can learn any topic at the speed of reading/listening — from Rubik's Cube to Quantum Mechanics
+- **Dynamic course sizing** — courses are not forced into a fixed template; AI determines the optimal curriculum shape, depth, and structure for each subject
 - **Content is alive** — generated, improved, and versioned by humans and agents collaboratively
 - **Knowledge connects** — a semantic web of cross-domain insights that grows with every learner
 - **Discovery leads to contribution** — learners become researchers, generating novel cross-topic hypotheses
 - **Agents are first-class citizens** — they learn, teach, review, and discover alongside humans
+- **On-demand quizzes** — quizzes are generated when the learner requests them (using their own compute), not pre-baked into every lesson — saving 30%+ token cost
+- **Open Educational Resources** — curricula are built around free OER (MIT OCW, Khan Academy, OpenStax, LibreTexts, Wikiversity, arXiv)
+- **Course completion posters** — fun, visually condensed summaries generated after completing all sections of a course
+- **Progress timeline** — track learning journey over time for review and encouragement
+- **Open decentralized science board** — anyone can contribute ideas and hypotheses; the open science community + AI test, consider, and discuss them openly
+- **Cross-topic insights** — encourage novel approaches using blended methodology and critical thinking across industries and domains
+
+### Design Principles
+
+1. **Not accreditation — learning.** The goal is to enhance learning capacity, cross-industry knowledge, and speed. Any user can learn at any pace on any subject.
+2. **Learn free, create with your own.** Reading cached content is free forever. Generation uses the contributor's own compute (BYOK).
+3. **Dynamic, not rigid.** Courses should fit the subject, not force the subject into a fixed box. A micro-topic gets 2-6 units; an interdisciplinary field gets 20-30+ with sub-topic decomposition.
+4. **PWA first.** Works anywhere on nearly any device — offline-capable, installable, responsive.
+5. **Open by default.** Source code on GitHub, content CC-BY-SA 4.0, built on open educational resources.
 
 ---
 
@@ -571,7 +586,82 @@ version (for revisions)
 
 ---
 
-## Future Roadmap (Post-Phase 7 — Do NOT Execute)
+## Phase 8: Dynamic Course Architecture & Open Learning Enhancement
+
+**Core concept:** Courses should fit the subject, not force the subject into a fixed box. AI determines the optimal curriculum shape, quizzes are on-demand, and content is built around open educational resources.
+
+### 8.1 — AI-First Dynamic Course Planning
+Instead of forcing every topic into beginner/intermediate/advanced/nextgen with fixed unit counts, an LLM now determines the optimal curriculum structure for each topic.
+
+- [x] Create `server/course-planner.ts` — AI-driven curriculum planning that determines:
+  - Scope (micro / focused / standard / broad / interdisciplinary)
+  - Number of tiers (1-5+, with descriptive names — not always "beginner/advanced")
+  - Units per tier (based on actual depth needed, not a fixed template)
+  - Content type (code_heavy / formula_heavy / visual_heavy / theory_heavy / balanced)
+  - Sub-topic decomposition for broad/interdisciplinary subjects
+  - Recommended OER sources to build the curriculum around
+- [x] Legacy heuristic fallback (`classifyTopicByKeywords`) preserved for pre-seeded topics and AI failure cases
+- [ ] Wire `planCourseWithAI` into `generateLessonOutline` for custom topics (currently the planner exists but generateLessonOutline still uses the old heuristic)
+- [ ] Store course plans in DB (new `course_plans` table) so plans can be versioned and reviewed
+- **Success Criteria:** Generating "How to solve a Rubik's Cube" produces a 4-unit, 2-tier course; "Quantum Mechanics" produces a 22-unit, 4-tier course with sub-topics — both determined by AI, not hardcoded
+
+### 8.2 — On-Demand Quiz Generation
+Quizzes are no longer pre-generated with lesson content. They are generated when the learner requests them.
+
+- [x] Remove quiz generation from `generateBatchLessonContent` prompt (batch content)
+- [x] Remove quiz generation from `generateLessonContent` prompt (single unit)
+- [x] Create `generateOnDemandQuiz()` function — generates quizzes tailored to the specific lesson content the learner just read
+- [x] Add `POST /api/lessons/unit/:unitId/quiz` endpoint (authenticated, BYOK)
+- [x] Quiz difficulty adapts to the unit's difficulty tier (beginner=recall, intermediate=application, advanced=synthesis, nextgen=open-ended)
+- [ ] Update frontend to show "Generate Quiz" button instead of always displaying pre-baked quizzes
+- [ ] Cache generated quizzes in DB (new `unit_quizzes` table) so re-taking doesn't cost tokens
+- **Success Criteria:** Lesson content generation is ~30% cheaper (no quizzes); learner can click "Generate Quiz" and get questions tailored to what they just read
+
+### 8.3 — Open Educational Resources (OER) Sourcing
+Content generation prompts now explicitly prioritize free, openly licensed educational materials.
+
+- [x] Add OER priority instructions to `generateBatchLessonContent` prompt (MIT OCW, Khan Academy, OpenStax, LibreTexts, Wikiversity, arXiv, freeCodeCamp, Project Gutenberg)
+- [x] Add OER priority instructions to `generateLessonContent` prompt
+- [x] Course planner recommends OER sources to build curriculum around
+- [ ] Add OER link validation (verify links point to real, free resources — not paywalls)
+- **Success Criteria:** Generated lessons reference specific free OER pages (not just "Khan Academy" but the actual course URL)
+
+### 8.4 — Course Completion Posters
+When a learner completes all units in a course, they get a fun, visually condensed summary poster.
+
+- [x] Add `course_posters` table schema (shared/schema.ts)
+- [x] Add migration `0003_course_posters.sql` + rollback
+- [x] Add `POST /api/lessons/:topicId/poster` endpoint — generates poster with AI
+- [x] Poster data structure: title, summary, keyTakeaways, tier sections, visualStyle, colorScheme, celebrationMessage, stats
+- [ ] Build frontend poster display component (visual rendering of poster data)
+- [ ] Auto-trigger poster generation when all units in a course are completed
+- [ ] Save generated posters to DB for re-viewing and sharing
+- [ ] Add poster sharing (export as image, share URL)
+- **Success Criteria:** Completing all units in a course generates a shareable poster with condensed key takeaways
+
+### 8.5 — Progress Timeline
+Track the learner's journey over time for review and encouragement.
+
+- [ ] Add `learning_timeline` table: userId, topicId, eventType (started/completed/mastered/quiz_passed/poster_earned), metadata, timestamp
+- [ ] `GET /api/timeline` — returns chronological learning events for the user
+- [ ] Timeline view in profile: "Your Learning Journey" — visualize courses started, milestones, streaks, cross-topic connections discovered
+- [ ] Annual learning summary: "This year you learned X topics across Y domains, discovered Z cross-topic connections"
+- **Success Criteria:** User can see a visual timeline of their entire learning history with milestones
+
+### 8.6 — Decentralized Open Science Board
+The open science feed evolves into a true decentralized community board where anyone can contribute hypotheses and the community + AI test them.
+
+- [ ] Extend Open Science to support structured hypotheses (abstract, methodology, predicted outcomes, related topics)
+- [ ] Community voting on hypothesis testability and significance
+- [ ] AI-assisted hypothesis evaluation: feasibility scoring, related work search, methodology critique
+- [ ] Open discussion threads on each hypothesis ( threaded comments with evidence links)
+- [ ] "Test this" bounties: community members or agents can claim a hypothesis to test/research
+- [ ] Federation: export hypotheses as structured data (JSON-LD) for other platforms to consume
+- **Success Criteria:** Anyone can submit a hypothesis with structured methodology; the community can discuss, vote, and claim testing bounties
+
+---
+
+## Future Roadmap (Post-Phase 8 — Do NOT Execute)
 
 - **XR/VR Learning Sandboxes** — physics-bound 3D environments for experimentation
 - **Micro-credentialing** — verifiable blockchain credentials for mastery
@@ -587,8 +677,8 @@ version (for revisions)
 
 - **Created:** 2026-05-28
 - **Author:** Jonathan Korstad + Hermes Agent
-- **Status:** Phase 0 — Not Started
-- **Last Updated:** 2026-05-28 (Added Sustainability Model + BYOK architecture)
+- **Status:** Phase 1 (Sprint 2) + Phase 8 (in progress)
+- **Last Updated:** 2026-06-24 (Phase 8: Dynamic course planning, on-demand quizzes, OER sourcing, course posters)
 - **License:** Apache-2.0
 
 This document is authoritative. Update it as phases complete.
@@ -615,3 +705,25 @@ This document is authoritative. Update it as phases complete.
 - Contributor policy (CC-BY-SA 4.0) clarifies licensing and responsibility
 - Rate limits prevent abuse
 - Community flagging catches bad content that slips through automated checks
+
+### 2026-06-24: Dynamic Course Architecture Decision
+**Problem:** Every topic was forced into a fixed 4-tier structure (beginner/intermediate/advanced/nextgen) with hardcoded unit counts. A micro-topic like "solving a Rubik's cube" got the same structure as "Quantum Mechanics" — just with fewer units. The material was being forced into a box that didn't fit.
+
+**Solution:** AI-first dynamic course planning. Instead of hardcoded heuristics, an LLM analyzes each topic and determines:
+- Optimal scope (micro / focused / standard / broad / interdisciplinary)
+- Number of tiers and their names (not always "beginner/advanced")
+- Units per tier based on actual depth needed
+- Whether the topic warrants sub-topic decomposition
+- Which OER sources to build the curriculum around
+
+**Also decided:**
+- Quizzes moved to on-demand generation (saves ~30% token cost per lesson)
+- Content generation prompts now explicitly prioritize OER (MIT OCW, Khan Academy, OpenStax, etc.)
+- Course completion posters added as a rewarding summary artifact
+
+**Why this works:**
+- Courses fit the subject instead of forcing the subject into a template
+- Micro-topics don't waste tokens on 4 tiers they don't need
+- Interdisciplinary topics get the depth they deserve with sub-topic decomposition
+- On-demand quizzes are tailored to what the learner just read, not generic
+- OER-first approach ensures the platform leverages existing free educational content
