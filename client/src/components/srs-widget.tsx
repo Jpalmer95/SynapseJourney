@@ -14,7 +14,7 @@ export function SrsWidget() {
   const [currentCardIndex, setCurrentCardIndex] = useState(0);
   const [showAnswer, setShowAnswer] = useState(false);
 
-  const { data: dueCards = [], isLoading } = useQuery({
+  const { data: dueCards = [], isLoading } = useQuery<{ flashcard: { id: number; front: string; back: string }; topicTitle: string }[]>({
     queryKey: ["/api/user/flashcards/due"],
   });
 

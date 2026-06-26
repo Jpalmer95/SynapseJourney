@@ -461,7 +461,7 @@ export default function SettingsPage() {
   const [localProfile, setLocalProfile] = useState<UserProfile>({});
   const [hasChanges, setHasChanges] = useState(false);
 
-  const { data: ttsSettings, isLoading: ttsLoading } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
+  const { data: ttsSettings, isLoading: ttsLoading } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number; qwenMode?: string; qwenStyleInstruction?: string | null; qwenVoiceDescription?: string | null; refText?: string | null }>({
     queryKey: ["/api/tts/settings"],
     staleTime: 30000,
     retry: false,
@@ -1188,12 +1188,15 @@ export default function SettingsPage() {
                   </div>
                 </div>
 
-                {/* Hugging Face Token */}
-                {localProfile.preferredAiProvider === "huggingface" && (
+                {/* Hugging Face Token — used for both AI chat (HF models) and Qwen Cloud TTS */}
+                {(localProfile.preferredAiProvider === "huggingface" || localVoicePreset === "qwen" || localVoicePreset === "custom") && (
                   <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
                     <Label htmlFor="hf-token" className="flex items-center gap-2">
                       <Key className="h-4 w-4" />
                       Hugging Face Access Token
+                      {(localVoicePreset === "qwen" || localVoicePreset === "custom") && (
+                        <span className="text-xs text-muted-foreground font-normal ml-1">· required for Qwen Cloud TTS</span>
+                      )}
                     </Label>
                     <Input
                       id="hf-token"

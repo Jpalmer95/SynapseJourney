@@ -9,19 +9,35 @@ export const KOKORO_VOICES = [
   { id: "am_adam", name: "Adam", gender: "male", style: "Thoughtful" },
 ] as const;
 
+/**
+ * Qwen3-TTS preset speakers (from the official HF Space).
+ * These are the real speaker IDs accepted by the generate_custom_voice endpoint.
+ * https://huggingface.co/spaces/Qwen/Qwen3-TTS
+ */
 export const QWEN_VOICES = [
-  { id: "aria", name: "Aria", gender: "female", color: "text-pink-500 dark:text-pink-400", voiceDescription: "A warm, friendly female educator with a clear and welcoming voice." },
-  { id: "nova", name: "Nova", gender: "female", color: "text-violet-500 dark:text-violet-400", voiceDescription: "An energetic and enthusiastic female voice, great for science and technology topics." },
-  { id: "lyra", name: "Lyra", gender: "female", color: "text-blue-500 dark:text-blue-400", voiceDescription: "A calm and soothing female voice, perfect for focused studying and meditation." },
-  { id: "echo", name: "Echo", gender: "male", color: "text-green-600 dark:text-green-400", voiceDescription: "A clear, confident male narrator with a professional and precise delivery." },
-  { id: "sage", name: "Sage", gender: "male", color: "text-amber-600 dark:text-amber-400", voiceDescription: "A deep and authoritative male voice, ideal for advanced academic content." },
-  { id: "orion", name: "Orion", gender: "male", color: "text-cyan-600 dark:text-cyan-400", voiceDescription: "A thoughtful and measured male voice, great for philosophy and reflective content." },
+  { id: "Serena", name: "Serena", gender: "female", color: "text-pink-500 dark:text-pink-400", voiceDescription: "A warm and natural female voice, great for educational content." },
+  { id: "Vivian", name: "Vivian", gender: "female", color: "text-violet-500 dark:text-violet-400", voiceDescription: "A clear and articulate female voice, ideal for science topics." },
+  { id: "Sohee", name: "Sohee", gender: "female", color: "text-blue-500 dark:text-blue-400", voiceDescription: "A gentle and soothing female voice, perfect for focused studying." },
+  { id: "Ono_anna", name: "Anna", gender: "female", color: "text-cyan-500 dark:text-cyan-400", voiceDescription: "A professional female voice with a calm, measured delivery." },
+  { id: "Ryan", name: "Ryan", gender: "male", color: "text-green-600 dark:text-green-400", voiceDescription: "A confident and clear male voice with professional delivery." },
+  { id: "Aiden", name: "Aiden", gender: "male", color: "text-amber-600 dark:text-amber-400", voiceDescription: "A friendly and approachable male voice, great for beginners." },
+  { id: "Dylan", name: "Dylan", gender: "male", color: "text-cyan-600 dark:text-cyan-400", voiceDescription: "A deep and resonant male voice, ideal for advanced content." },
+  { id: "Eric", name: "Eric", gender: "male", color: "text-orange-600 dark:text-orange-400", voiceDescription: "A professional male voice with precise, authoritative delivery." },
+  { id: "Uncle_fu", name: "Uncle Fu", gender: "male", color: "text-stone-600 dark:text-stone-400", voiceDescription: "A warm and authoritative male voice, great for philosophy." },
 ] as const;
 
 export const KOKORO_DEFAULT_VOICE = "af_bella";
-export const QWEN_DEFAULT_VOICE = "aria";
+export const QWEN_DEFAULT_VOICE = "Ryan";
 
 export type EnginePreset = "kokoro" | "browser" | "qwen" | "custom";
+
+/**
+ * Qwen3-TTS synthesis modes.
+ * - custom_voice: preset speakers with optional style instructions
+ * - voice_design: text-described custom voice (e.g. "calm female narrator with soft accent")
+ * - voice_clone: clone a voice from a reference audio sample + transcript
+ */
+export type QwenMode = "custom_voice" | "voice_design" | "voice_clone";
 
 export function getVoiceTier(presetId: EnginePreset | string): VoiceTier {
   if (presetId === "kokoro") return "local";

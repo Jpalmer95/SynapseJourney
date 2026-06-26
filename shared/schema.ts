@@ -212,9 +212,13 @@ export const userProfiles = pgTable("user_profiles", {
   geminiKey: text("gemini_key"), // Google Gemini API key
   preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
   preferredModel: text("preferred_model"), // Specific model name for the provider
-  ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS preset: "browser", or a Qwen3-TTS preset name
+  ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS engine: "browser", "kokoro", "qwen", or "custom"
   ttsReferenceAudio: text("tts_reference_audio"), // base64-encoded reference audio for voice cloning
   ttsPlaybackSpeed: text("tts_playback_speed").default("1.0"), // playback speed as string to avoid float issues
+  ttsQwenMode: text("tts_qwen_mode").default("custom_voice"), // Qwen3-TTS mode: "custom_voice", "voice_design", "voice_clone"
+  ttsQwenStyleInstruction: text("tts_qwen_style_instruction"), // optional style guidance for custom_voice mode
+  ttsQwenVoiceDescription: text("tts_qwen_voice_description"), // natural language voice description for voice_design mode
+  ttsRefText: text("tts_ref_text"), // transcript of reference audio for voice_clone mode
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });

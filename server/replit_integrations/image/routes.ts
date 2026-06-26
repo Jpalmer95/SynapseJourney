@@ -17,10 +17,14 @@ export function registerImageRoutes(app: Express): void {
         size: size as "1024x1024" | "512x512" | "256x256",
       });
 
-      const imageData = response.data[0];
+      const imageData = response.data?.[0];
+      if (!imageData) {
+        return res.status(500).json({ error: "Image generation returned no data" });
+      }
+      const { url, b64_json } = imageData;
       res.json({
-        url: imageData.url,
-        b64_json: imageData.b64_json,
+        url: url ?? null,
+        b64_json: b64_json ?? null,
       });
     } catch (error) {
       console.error("Error generating image:", error);

@@ -368,6 +368,19 @@ async function handleMessage(
 const isSharedWorker =
   typeof SharedWorkerGlobalScope !== "undefined" && self instanceof SharedWorkerGlobalScope;
 
+// ── Top-level error listener: post back to main thread before the worker dies ──
+self.addEventListener("error", (e: ErrorEvent) => {
+  const msg = `Worker error: ${e.message} at ${e.filename}:${e.lineno}`;
+  if (connectedPorts.size > 0) {
+    connectedPorts.forEach((port) => {
+      try { port.postMessage({ id: -1, type: "error", message: msg }); }
+      catch { connectedPorts.delete(port); }
+    });
+  } else {
+    (self as DedicatedWorkerGlobalScope).postMessage({ id: -1, type: "error", message: msg });
+  }
+});
+
 if (isSharedWorker) {
   // SharedWorker mode: all tabs share this single worker and its model instance.
   (self as unknown as SharedWorkerGlobalScope).onconnect = (e: MessageEvent) => {

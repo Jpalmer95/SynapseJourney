@@ -189,6 +189,10 @@ app.get("/api/tts/settings", isAuthenticated, async (req: any, res: Response) =>
       voicePreset: settings.voicePreset,
       playbackSpeed: settings.playbackSpeed,
       hasReferenceAudio: !!settings.referenceAudio,
+      qwenMode: settings.qwenMode,
+      qwenStyleInstruction: settings.qwenStyleInstruction,
+      qwenVoiceDescription: settings.qwenVoiceDescription,
+      refText: settings.refText,
     });
   } catch (err) {
     console.error("TTS settings fetch error:", err);
@@ -214,16 +218,32 @@ app.get("/api/tts/reference-audio", isAuthenticated, async (req: any, res: Respo
 app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
   try {
     const VALID_PRESETS = ["kokoro", "browser", "qwen", "custom"] as const;
+    const VALID_QWEN_MODES = ["custom_voice", "voice_design", "voice_clone"] as const;
     const schema = z.object({
       voicePreset: z.enum(VALID_PRESETS).optional(),
       playbackSpeed: z.number().min(0.5).max(3).optional(),
-    }).refine(d => d.voicePreset || d.playbackSpeed !== undefined, { message: "At least one setting must be provided" });
+      qwenMode: z.enum(VALID_QWEN_MODES).optional(),
+      qwenStyleInstruction: z.string().max(500).nullable().optional(),
+      qwenVoiceDescription: z.string().max(500).nullable().optional(),
+      refText: z.string().max(1000).nullable().optional(),
+    }).refine(d => d.voicePreset || d.playbackSpeed !== undefined || d.qwenMode || d.qwenStyleInstruction !== undefined || d.qwenVoiceDescription !== undefined || d.refText !== undefined, { message: "At least one setting must be provided" });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
-    const { voicePreset, playbackSpeed } = parsed.data;
+    if (!parsed.success) return res.status(400).json({ error: "Invalid settings", details: parsed.error.issues });
+    const { voicePreset, playbackSpeed, qwenMode, qwenStyleInstruction, qwenVoiceDescription, refText } = parsed.data;
     // Fetch current settings to fill in any unspecified fields (partial update)
     const current = await storage.getTtsSettings(req.user.claims.sub);
-    await storage.saveTtsSettings(req.user.claims.sub, voicePreset || current.voicePreset, undefined, playbackSpeed ?? current.playbackSpeed);
+    await storage.saveTtsSettings(
+      req.user.claims.sub,
+      voicePreset || current.voicePreset,
+      undefined,
+      playbackSpeed ?? current.playbackSpeed,
+      {
+        qwenMode: qwenMode || current.qwenMode,
+        qwenStyleInstruction: qwenStyleInstruction !== undefined ? qwenStyleInstruction : current.qwenStyleInstruction,
+        qwenVoiceDescription: qwenVoiceDescription !== undefined ? qwenVoiceDescription : current.qwenVoiceDescription,
+        refText: refText !== undefined ? refText : current.refText,
+      },
+    );
     res.json({ ok: true });
   } catch (err) {
     console.error("TTS settings save error:", err);
@@ -248,7 +268,7 @@ app.post("/api/tts/voice-upload", isAuthenticated, async (req: any, res: Respons
       return res.status(400).json({ error: "Reference audio must be 30 seconds or less (max 2MB). Please trim your recording." });
     }
 
-    const { hashBase64, getAudioDurationSeconds } = await import("./tts-service");
+    const { hashBase64, getAudioDurationSeconds } = await import("../tts-service");
 
     // Validate duration for all audio formats (WAV via header, others via music-metadata)
     // Reject if duration cannot be determined (unknown/unsupported format) to enforce the 30s limit strictly
@@ -278,6 +298,11 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
         preset: z.enum(VALID_PRESETS).optional(),
         referenceAudio: z.string().optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
+        speaker: z.string().optional(), // Qwen3-TTS preset speaker (e.g. "Ryan", "Serena")
+        qwenMode: z.enum(["custom_voice", "voice_design", "voice_clone"]).optional(),
+        qwenStyleInstruction: z.string().max(500).optional(),
+        qwenVoiceDescription: z.string().max(500).optional(),
+        refText: z.string().max(1000).optional(),
       }).optional(),
       forceRegenerate: z.boolean().optional(),
       firstParagraphOnly: z.boolean().optional(),
@@ -323,9 +348,25 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       return res.json({ fallback: true, message: "Browser TTS is selected" });
     }
 
-    const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("../tts-service");
     const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
     const configHash = hashVoiceConfig(voicePreset, refHash);
+
+    // Build Qwen3-TTS mode options from stored settings + client overrides
+    const userProfile = await storage.getUserProfile(userId);
+    const hfToken = userProfile?.huggingFaceToken || undefined;
+    const qwenMode = (voiceConfig?.qwenMode || ttsSettings.qwenMode) as "custom_voice" | "voice_design" | "voice_clone";
+    const buildQwenOptions = (): import("../tts-service").QwenTTSOptions => ({
+      mode: qwenMode,
+      speaker: voiceConfig?.speaker || undefined, // client-selected preset speaker (e.g. "Ryan")
+      styleInstruction: voiceConfig?.qwenStyleInstruction || ttsSettings.qwenStyleInstruction || undefined,
+      voiceDescription: voiceConfig?.qwenVoiceDescription || ttsSettings.qwenVoiceDescription || undefined,
+      referenceAudio: referenceAudio,
+      refText: voiceConfig?.refText || ttsSettings.refText || undefined,
+      hfToken,
+      language: "English",
+      modelSize: "1.7B",
+    });
 
     // Intro-only fast path: generate just the opening section for immediate play,
     // then kick off background full-audio caching so subsequent listens are instant.
@@ -334,8 +375,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       if (!introText || introText.length < 10) {
         return res.status(503).json({ error: "Intro text unavailable", fallbackToBrowser: true });
       }
-      const userProfile = await storage.getUserProfile(userId);
-      const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+      const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!introResult) {
         return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
       }
@@ -346,7 +386,8 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
         isNextGen: isNextGenUnit,
         voicePreset,
         referenceAudio,
-        hfToken: userProfile?.huggingFaceToken || undefined,
+        hfToken,
+        qwenOptions: buildQwenOptions(),
       }).catch((err: unknown) => {
         console.warn("[TTS] Background full-audio caching failed:", err instanceof Error ? err.message : String(err));
       });
@@ -364,8 +405,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 
     // Free-text requests: generate without caching (no stable key; different texts would collide at unitId=0)
     if (freeText && !unitIdForCache) {
-      const userProfile = await storage.getUserProfile(userId);
-      const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+      const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!directResult) {
         return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
       }
@@ -386,14 +426,14 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       }
     }
 
-    const userProfile = await storage.getUserProfile(userId);
     const result = await generateTTSAudio({
       unitId: unitIdForCache!,
       content: contentForTTS,
       isNextGen: isNextGenUnit,
       voicePreset,
       referenceAudio,
-      hfToken: userProfile?.huggingFaceToken || undefined,
+      hfToken,
+      qwenOptions: buildQwenOptions(),
     });
 
     if (!result) {
@@ -409,12 +449,12 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 });
 
 app.get("/api/tts/presets", (_req, res) => {
-  // Returns engine definitions for the new 3-engine model
+  // Returns engine definitions for the 3-engine model
   res.json([
     { id: "kokoro", name: "Kokoro", description: "Local WebGPU/WASM model — offline, no token needed", tier: "local" },
     { id: "browser", name: "Browser TTS", description: "Device speech engine — quality depends on your OS", tier: "server" },
-    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — high quality, requires HF token", tier: "cloud" },
-    { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample", tier: "cloud" },
+    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — 3 modes: preset speakers, voice design, voice clone. Requires HF token", tier: "cloud" },
+    { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample (Qwen3-TTS voice_clone mode)", tier: "cloud" },
   ]);
 });
 
@@ -435,7 +475,7 @@ app.get("/api/tts/cache-status/:unitId", isAuthenticated, async (req: any, res: 
     }
 
     const ttsSettings = await storage.getTtsSettings(userId);
-    const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64 } = await import("../tts-service");
     // Only include referenceAudio in the hash when preset is "custom" — matches /api/tts/generate behavior
     const isCustomPreset = ttsSettings.voicePreset === "custom";
     const refHash = (isCustomPreset && ttsSettings.referenceAudio) ? hashBase64(ttsSettings.referenceAudio) : undefined;
@@ -537,7 +577,7 @@ export async function predictivelyGenerateNextUnit(
 
 export async function revalidateUnitLinks(unitId: number, content: unknown): Promise<void> {
   try {
-    const { revalidateStoredContent } = await import("./link-validator");
+    const { revalidateStoredContent } = await import("../link-validator");
     const { content: updatedContent, changed } = await revalidateStoredContent(content);
     if (changed) {
       await storage.updateLessonContent(unitId, updatedContent as import("@shared/schema").LessonContent | import("@shared/schema").NextGenContent);
@@ -553,7 +593,7 @@ export async function preTTSForUnit(userId: string, unitId: number, content: unk
     const ttsSettings = await storage.getTtsSettings(userId);
     if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
 
-    const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("../tts-service");
     // Only include referenceAudio in hash when preset is "custom" — must match /api/tts/generate and /api/tts/cache-status
     const isCustomPreset = ttsSettings.voicePreset === "custom";
     const referenceAudio = isCustomPreset ? (ttsSettings.referenceAudio || undefined) : undefined;
@@ -722,11 +762,11 @@ export async function batchPregenerateUnits(
     // have cached server audio available immediately when they select Browser TTS or Qwen.
     // Run in background — don't block the response.
     const serverVoicePresets = ["qwen"]; // OpenAI-mapped presets available server-side
-    const { preGenerateTTSForUnit } = await import("./tts-service");
+    const { preGenerateTTSForUnit } = await import("../tts-service");
     for (const [unitId, content] of Array.from(contentMap.entries())) {
       for (const voicePreset of serverVoicePresets) {
         preGenerateTTSForUnit(unitId, content, false, voicePreset)
-          .catch(err => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err?.message || err));
+          .catch((err: unknown) => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err instanceof Error ? err.message : String(err)));
       }
     }
     console.log(`[BatchPregen] TTS pre-generation started for ${contentMap.size} units × ${serverVoicePresets.length} voices`);
@@ -873,7 +913,7 @@ export async function generateLessonOutline(topicId: number, topicTitle: string,
   const plannedSyllabus = SYLLABI_MAP.get(topicId);
   if (plannedSyllabus) {
     console.log(`[Outline] Using pre-planned syllabus for "${topicTitle}" (${plannedSyllabus.units.length} units, ${plannedSyllabus.contentType})`);
-    const { storage } = await import("./storage");
+    const { storage } = await import("../storage");
     const createdUnits = await Promise.all(
       plannedSyllabus.units.map((u, idx) => storage.createLessonUnit({
         topicId,
@@ -1006,7 +1046,7 @@ CRITICAL RULES:
       ` (${normalizedUnits.length} total)`);
 
     // Save units to database
-    const { storage } = await import("./storage");
+    const { storage } = await import("../storage");
     const createdUnits = await Promise.all(
       normalizedUnits.map((u: any) => storage.createLessonUnit({
         topicId,
@@ -1392,13 +1432,13 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
 
     // Validate and clean up external resource URLs
     if (parsed.externalResources?.length) {
-      const { validateAndRefreshResources } = await import("./link-validator");
+      const { validateAndRefreshResources } = await import("../link-validator");
       parsed.externalResources = await validateAndRefreshResources(
         parsed.externalResources,
         topic.title,
         categoryName || "general",
         unit.difficulty,
-        async (count) => {
+        async (count: number) => {
           const retryPrompt = `The following URLs for the lesson "${unit.title}" on topic "${topic.title}" (${categoryName || "general"}, ${unit.difficulty} level) failed validation. Generate ${count} alternative external resource links that are real, live, and specific to this exact topic and difficulty level. Return JSON array only:
 [{"title":"...","url":"https://...","type":"video|course|paper|book|forum|tool|encyclopedia","description":"..."}]`;
           try {
@@ -1516,7 +1556,7 @@ CRITICAL QUIZ RULES:
 
 // Default lesson units when AI fails
 export async function getDefaultLessonUnits(topicId: number, topicTitle: string) {
-  const { storage } = await import("./storage");
+  const { storage } = await import("../storage");
   const defaultUnits = [
     { difficulty: "beginner", unitIndex: 0, title: "Introduction & Basics", outline: `Get started with the fundamentals of ${topicTitle}` },
     { difficulty: "beginner", unitIndex: 1, title: "Core Vocabulary", outline: "Learn the essential terms and concepts" },
@@ -1670,8 +1710,8 @@ Requirements:
     const parsed = JSON.parse(content) as Record<string, unknown>;
 
     // Validate and filter resources + communityForums for dead links
-    const { validateResources } = await import("./link-validator");
-    type RawLinkItem = import("./link-validator").RawLinkItem;
+    const { validateResources } = await import("../link-validator");
+    type RawLinkItem = import("../link-validator").RawLinkItem;
     const isLinkArray = (v: unknown): v is RawLinkItem[] =>
       Array.isArray(v) && v.length > 0 && typeof (v[0] as Record<string, unknown>)?.url === "string";
 

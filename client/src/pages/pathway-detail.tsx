@@ -14,14 +14,7 @@ import { AppLayout } from "@/components/app-layout";
 import { Link } from "wouter";
 import { apiRequest } from "@/lib/queryClient";
 import { SkillTree } from "@/components/skill-tree";
-
-interface Topic {
-  id: number;
-  name: string;
-  description: string;
-  difficulty: string;
-  categoryId: number;
-}
+import type { Topic } from "@shared/schema";
 
 interface PathwayTopic {
   topic: Topic;
