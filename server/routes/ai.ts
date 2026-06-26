@@ -189,6 +189,10 @@ app.get("/api/tts/settings", isAuthenticated, async (req: any, res: Response) =>
       voicePreset: settings.voicePreset,
       playbackSpeed: settings.playbackSpeed,
       hasReferenceAudio: !!settings.referenceAudio,
+      qwenMode: settings.qwenMode,
+      qwenStyleInstruction: settings.qwenStyleInstruction,
+      qwenVoiceDescription: settings.qwenVoiceDescription,
+      refText: settings.refText,
     });
   } catch (err) {
     console.error("TTS settings fetch error:", err);
@@ -214,16 +218,32 @@ app.get("/api/tts/reference-audio", isAuthenticated, async (req: any, res: Respo
 app.put("/api/tts/settings", isAuthenticated, async (req: any, res: Response) => {
   try {
     const VALID_PRESETS = ["kokoro", "browser", "qwen", "custom"] as const;
+    const VALID_QWEN_MODES = ["custom_voice", "voice_design", "voice_clone"] as const;
     const schema = z.object({
       voicePreset: z.enum(VALID_PRESETS).optional(),
       playbackSpeed: z.number().min(0.5).max(3).optional(),
-    }).refine(d => d.voicePreset || d.playbackSpeed !== undefined, { message: "At least one setting must be provided" });
+      qwenMode: z.enum(VALID_QWEN_MODES).optional(),
+      qwenStyleInstruction: z.string().max(500).nullable().optional(),
+      qwenVoiceDescription: z.string().max(500).nullable().optional(),
+      refText: z.string().max(1000).nullable().optional(),
+    }).refine(d => d.voicePreset || d.playbackSpeed !== undefined || d.qwenMode || d.qwenStyleInstruction !== undefined || d.qwenVoiceDescription !== undefined || d.refText !== undefined, { message: "At least one setting must be provided" });
     const parsed = schema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ error: "Invalid settings" });
-    const { voicePreset, playbackSpeed } = parsed.data;
+    if (!parsed.success) return res.status(400).json({ error: "Invalid settings", details: parsed.error.issues });
+    const { voicePreset, playbackSpeed, qwenMode, qwenStyleInstruction, qwenVoiceDescription, refText } = parsed.data;
     // Fetch current settings to fill in any unspecified fields (partial update)
     const current = await storage.getTtsSettings(req.user.claims.sub);
-    await storage.saveTtsSettings(req.user.claims.sub, voicePreset || current.voicePreset, undefined, playbackSpeed ?? current.playbackSpeed);
+    await storage.saveTtsSettings(
+      req.user.claims.sub,
+      voicePreset || current.voicePreset,
+      undefined,
+      playbackSpeed ?? current.playbackSpeed,
+      {
+        qwenMode: qwenMode || current.qwenMode,
+        qwenStyleInstruction: qwenStyleInstruction !== undefined ? qwenStyleInstruction : current.qwenStyleInstruction,
+        qwenVoiceDescription: qwenVoiceDescription !== undefined ? qwenVoiceDescription : current.qwenVoiceDescription,
+        refText: refText !== undefined ? refText : current.refText,
+      },
+    );
     res.json({ ok: true });
   } catch (err) {
     console.error("TTS settings save error:", err);
@@ -248,7 +268,7 @@ app.post("/api/tts/voice-upload", isAuthenticated, async (req: any, res: Respons
       return res.status(400).json({ error: "Reference audio must be 30 seconds or less (max 2MB). Please trim your recording." });
     }
 
-    const { hashBase64, getAudioDurationSeconds } = await import("./tts-service");
+    const { hashBase64, getAudioDurationSeconds } = await import("../tts-service");
 
     // Validate duration for all audio formats (WAV via header, others via music-metadata)
     // Reject if duration cannot be determined (unknown/unsupported format) to enforce the 30s limit strictly
@@ -278,6 +298,11 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
         preset: z.enum(VALID_PRESETS).optional(),
         referenceAudio: z.string().optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
+        speaker: z.string().optional(), // Qwen3-TTS preset speaker (e.g. "Ryan", "Serena")
+        qwenMode: z.enum(["custom_voice", "voice_design", "voice_clone"]).optional(),
+        qwenStyleInstruction: z.string().max(500).optional(),
+        qwenVoiceDescription: z.string().max(500).optional(),
+        refText: z.string().max(1000).optional(),
       }).optional(),
       forceRegenerate: z.boolean().optional(),
       firstParagraphOnly: z.boolean().optional(),
@@ -323,9 +348,25 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       return res.json({ fallback: true, message: "Browser TTS is selected" });
     }
 
-    const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("../tts-service");
     const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
     const configHash = hashVoiceConfig(voicePreset, refHash);
+
+    // Build Qwen3-TTS mode options from stored settings + client overrides
+    const userProfile = await storage.getUserProfile(userId);
+    const hfToken = userProfile?.huggingFaceToken || undefined;
+    const qwenMode = (voiceConfig?.qwenMode || ttsSettings.qwenMode) as "custom_voice" | "voice_design" | "voice_clone";
+    const buildQwenOptions = (): import("../tts-service").QwenTTSOptions => ({
+      mode: qwenMode,
+      speaker: voiceConfig?.speaker || undefined, // client-selected preset speaker (e.g. "Ryan")
+      styleInstruction: voiceConfig?.qwenStyleInstruction || ttsSettings.qwenStyleInstruction || undefined,
+      voiceDescription: voiceConfig?.qwenVoiceDescription || ttsSettings.qwenVoiceDescription || undefined,
+      referenceAudio: referenceAudio,
+      refText: voiceConfig?.refText || ttsSettings.refText || undefined,
+      hfToken,
+      language: "English",
+      modelSize: "1.7B",
+    });
 
     // Intro-only fast path: generate just the opening section for immediate play,
     // then kick off background full-audio caching so subsequent listens are instant.
@@ -334,8 +375,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       if (!introText || introText.length < 10) {
         return res.status(503).json({ error: "Intro text unavailable", fallbackToBrowser: true });
       }
-      const userProfile = await storage.getUserProfile(userId);
-      const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+      const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!introResult) {
         return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
       }
@@ -346,7 +386,8 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
         isNextGen: isNextGenUnit,
         voicePreset,
         referenceAudio,
-        hfToken: userProfile?.huggingFaceToken || undefined,
+        hfToken,
+        qwenOptions: buildQwenOptions(),
       }).catch((err: unknown) => {
         console.warn("[TTS] Background full-audio caching failed:", err instanceof Error ? err.message : String(err));
       });
@@ -364,8 +405,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 
     // Free-text requests: generate without caching (no stable key; different texts would collide at unitId=0)
     if (freeText && !unitIdForCache) {
-      const userProfile = await storage.getUserProfile(userId);
-      const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, userProfile?.huggingFaceToken || undefined);
+      const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!directResult) {
         return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
       }
@@ -386,14 +426,14 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       }
     }
 
-    const userProfile = await storage.getUserProfile(userId);
     const result = await generateTTSAudio({
       unitId: unitIdForCache!,
       content: contentForTTS,
       isNextGen: isNextGenUnit,
       voicePreset,
       referenceAudio,
-      hfToken: userProfile?.huggingFaceToken || undefined,
+      hfToken,
+      qwenOptions: buildQwenOptions(),
     });
 
     if (!result) {
@@ -409,12 +449,12 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 });
 
 app.get("/api/tts/presets", (_req, res) => {
-  // Returns engine definitions for the new 3-engine model
+  // Returns engine definitions for the 3-engine model
   res.json([
     { id: "kokoro", name: "Kokoro", description: "Local WebGPU/WASM model — offline, no token needed", tier: "local" },
     { id: "browser", name: "Browser TTS", description: "Device speech engine — quality depends on your OS", tier: "server" },
-    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — high quality, requires HF token", tier: "cloud" },
-    { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample", tier: "cloud" },
+    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — 3 modes: preset speakers, voice design, voice clone. Requires HF token", tier: "cloud" },
+    { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample (Qwen3-TTS voice_clone mode)", tier: "cloud" },
   ]);
 });
 
@@ -435,7 +475,7 @@ app.get("/api/tts/cache-status/:unitId", isAuthenticated, async (req: any, res: 
     }
 
     const ttsSettings = await storage.getTtsSettings(userId);
-    const { hashVoiceConfig, hashBase64 } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64 } = await import("../tts-service");
     // Only include referenceAudio in the hash when preset is "custom" — matches /api/tts/generate behavior
     const isCustomPreset = ttsSettings.voicePreset === "custom";
     const refHash = (isCustomPreset && ttsSettings.referenceAudio) ? hashBase64(ttsSettings.referenceAudio) : undefined;
@@ -537,7 +577,7 @@ export async function predictivelyGenerateNextUnit(
 
 export async function revalidateUnitLinks(unitId: number, content: unknown): Promise<void> {
   try {
-    const { revalidateStoredContent } = await import("./link-validator");
+    const { revalidateStoredContent } = await import("../link-validator");
     const { content: updatedContent, changed } = await revalidateStoredContent(content);
     if (changed) {
       await storage.updateLessonContent(unitId, updatedContent as import("@shared/schema").LessonContent | import("@shared/schema").NextGenContent);
@@ -553,7 +593,7 @@ export async function preTTSForUnit(userId: string, unitId: number, content: unk
     const ttsSettings = await storage.getTtsSettings(userId);
     if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
 
-    const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("./tts-service");
+    const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("../tts-service");
     // Only include referenceAudio in hash when preset is "custom" — must match /api/tts/generate and /api/tts/cache-status
     const isCustomPreset = ttsSettings.voicePreset === "custom";
     const referenceAudio = isCustomPreset ? (ttsSettings.referenceAudio || undefined) : undefined;
@@ -722,11 +762,11 @@ export async function batchPregenerateUnits(
     // have cached server audio available immediately when they select Browser TTS or Qwen.
     // Run in background — don't block the response.
     const serverVoicePresets = ["qwen"]; // OpenAI-mapped presets available server-side
-    const { preGenerateTTSForUnit } = await import("./tts-service");
+    const { preGenerateTTSForUnit } = await import("../tts-service");
     for (const [unitId, content] of Array.from(contentMap.entries())) {
       for (const voicePreset of serverVoicePresets) {
         preGenerateTTSForUnit(unitId, content, false, voicePreset)
-          .catch(err => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err?.message || err));
+          .catch((err: unknown) => console.debug(`[BatchPregen] TTS pregen failed for unit ${unitId} voice ${voicePreset}:`, err instanceof Error ? err.message : String(err)));
       }
     }
     console.log(`[BatchPregen] TTS pre-generation started for ${contentMap.size} units × ${serverVoicePresets.length} voices`);
@@ -873,7 +913,7 @@ export async function generateLessonOutline(topicId: number, topicTitle: string,
   const plannedSyllabus = SYLLABI_MAP.get(topicId);
   if (plannedSyllabus) {
     console.log(`[Outline] Using pre-planned syllabus for "${topicTitle}" (${plannedSyllabus.units.length} units, ${plannedSyllabus.contentType})`);
-    const { storage } = await import("./storage");
+    const { storage } = await import("../storage");
     const createdUnits = await Promise.all(
       plannedSyllabus.units.map((u, idx) => storage.createLessonUnit({
         topicId,
@@ -1006,7 +1046,7 @@ CRITICAL RULES:
       ` (${normalizedUnits.length} total)`);
 
     // Save units to database
-    const { storage } = await import("./storage");
+    const { storage } = await import("../storage");
     const createdUnits = await Promise.all(
       normalizedUnits.map((u: any) => storage.createLessonUnit({
         topicId,
@@ -1127,6 +1167,20 @@ Respond with a JSON object where each key is the unit index (0, 1, 2...) and eac
 
 CRITICAL: Each unit MUST include "keyTakeaways" (3-5 bullet points) and "externalResources" (2-5 real, specific links). See requirements below.
 
+OPEN EDUCATIONAL RESOURCES (OER) PRIORITY:
+When recommending external resources, PRIORITIZE openly licensed, free educational materials:
+- MIT OpenCourseWare (ocw.mit.edu) — free university courses with full materials
+- Khan Academy (khanacademy.org) — free K-12+ lessons with exercises
+- OpenStax (openstax.org) — free peer-reviewed textbooks
+- LibreTexts (libretexts.org) — free collaborative textbook library
+- Wikiversity (en.wikiversity.org) — community-created learning resources
+- arXiv (arxiv.org) — free preprint papers for STEM
+- YouTube educational channels (CrashCourse, MIT OCW, Stanford, 3Blue1Brown)
+- Project Gutenberg (gutenberg.org) — free public domain books
+- freeCodeCamp (freecodecamp.org) — free coding curriculum
+Only use paid resources (Coursera, Udemy, journals) when no free OER equivalent exists for the topic.
+Every URL must be hyper-specific (link to the actual course/article, not a homepage).
+
 NOTE: Grokipedia (grokipedia.com) is a high-quality encyclopedia — you may include relevant Grokipedia page links (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) if they add value alongside other resources.
 
 JSON format:
@@ -1141,14 +1195,7 @@ JSON format:
       "content": "Detailed worked example with concrete details",
       "code": "Optional code snippet if relevant"
     },
-    "quiz": [
-      {
-        "question": "Question text",
-        "options": ["A", "B", "C", "D"],
-        "correctIndex": 0,
-        "explanation": "Why this answer is correct and why others are not"
-      }
-    ],
+    "quiz": [],
     "crossLinks": [],
     "externalResources": [
       {
@@ -1171,7 +1218,6 @@ BEGINNER units MUST:
 - Focus on "what is it?" and "why does this matter to my life?"
 - Show the human story behind the discovery or invention
 - externalResources: 2-3 beginner-friendly resources (Khan Academy, Crash Course YouTube, TED Talks, introductory books)
-- Quiz questions test basic recall and "why does this matter?"
 
 INTERMEDIATE units MUST:
 - Explain the mechanisms: "how does it actually work under the hood?"
@@ -1179,7 +1225,6 @@ INTERMEDIATE units MUST:
 - Use real case studies and practical worked examples
 - Connect to adjacent concepts and build a mental model
 - externalResources: 3-4 free online courses or textbooks (MIT OpenCourseWare at ocw.mit.edu, Stanford Online at online.stanford.edu, Coursera free audits, specific open textbook chapters, arXiv survey papers)
-- Quiz questions test application and mechanism understanding
 
 ADVANCED units MUST:
 - Describe the current state of the field: what do experts know now, what is still debated?
@@ -1187,16 +1232,8 @@ ADVANCED units MUST:
 - Cover edge cases, failure modes, and nuances practitioners must know
 - Discuss active debates or competing paradigms in the field
 - externalResources: 3-5 research-grade resources (specific arXiv papers with links, journal articles, conference proceedings like NeurIPS/CVPR/Nature/Science, expert lecture series, professional community resources)
-- Quiz questions are analytical and require synthesis of multiple concepts
 
-Each unit should have exactly 3 quiz questions. Beginner→Intermediate→Advanced should feel like a genuine progression in depth.
-
-QUIZ QUALITY RULES (apply to ALL tiers):
-- Every wrong answer (distractor) must be PLAUSIBLE — each must represent a common misconception or a reasonable-but-incorrect interpretation, not just a random or obviously wrong option.
-- Include at least one question testing "why does this matter?" or "what would happen if...?" — not just "what is this?"
-- For intermediate+: one question should require applying the concept to a NEW scenario not mentioned in the lesson.
-- For advanced: one question should require comparing two approaches and identifying tradeoffs.
-- Each quiz explanation must explain WHY the distractors are wrong (what misconception they represent), not just why the correct answer is right.
+IMPORTANT: Do NOT generate quiz questions. Quizzes are generated on-demand when the learner requests them. Leave the "quiz" array empty in every unit.
 
 The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
 
@@ -1250,7 +1287,6 @@ export async function generateLessonContent(
 - Focus on "what is it?" and "why does this matter to my life right now?"
 - Show the human story: who discovered or built this, what problem were they solving, what changed in the world as a result?
 - The concept should feel like reading an engaging magazine article, not a textbook
-- Quiz questions test basic recognition, "why does this matter?", and connecting to everyday experience
 - externalResources: 2-3 highly accessible resources that a complete beginner would love:
   * Khan Academy videos/articles (khanacademy.org)
   * CrashCourse YouTube videos (youtube.com/@crashcourse)
@@ -1264,7 +1300,6 @@ export async function generateLessonContent(
 - Use at least one detailed real-world case study or practical worked example from industry or research
 - Build a mental model: connect this to adjacent concepts and show how it fits into a bigger picture
 - The concept should feel like a solid college lecture — rigorous but still accessible
-- Quiz questions test mechanism understanding and ability to apply concepts to new scenarios
 - externalResources: 3-4 free courses or textbooks that provide substantial depth:
   * MIT OpenCourseWare (ocw.mit.edu) — cite specific course pages
   * Stanford Online (online.stanford.edu) or Stanford Engineering Everywhere
@@ -1280,7 +1315,6 @@ export async function generateLessonContent(
 - Discuss competing paradigms or schools of thought within the field
 - Include at least one recent development from 2022-2025 that changed or challenged prior understanding
 - The concept should feel like reading a graduate-level review or expert practitioner's guide
-- Quiz questions are analytical: require synthesizing multiple concepts, critiquing approaches, or reasoning about tradeoffs
 - externalResources: 3-5 research-grade resources:
   * Specific arXiv papers with direct links (e.g., https://arxiv.org/abs/XXXX.XXXXX)
   * Nature, Science, or top-tier journal articles
@@ -1291,7 +1325,6 @@ export async function generateLessonContent(
 - This is a frontier exploration — present the field as an active, unfinished adventure
 - Focus on what is NOT yet known and why it matters
 - Reference real, active research questions being pursued by labs right now
-- Quiz questions should be open-ended thought exercises that don't have single correct answers
 - externalResources: 3-4 research frontier resources:
   * Active arXiv categories or recent preprints
   * Open source research community forums
@@ -1307,7 +1340,13 @@ CRITICAL RESOURCE SPECIFICITY RULES:
 - For arXiv: link to a specific paper (https://arxiv.org/abs/XXXX.XXXXX).
 - ALWAYS include a topic link to a relevant Grokipedia page (e.g., https://grokipedia.com/page/${topic.title.replace(/ /g, "_")}) as it is incredibly useful.
 - Prefer resources from professional/academic sources in the ${categoryName || "relevant"} domain.
-- Verify that the URL path describes the content clearly — avoid placeholder or example URLs.`;
+- Verify that the URL path describes the content clearly — avoid placeholder or example URLs.
+
+OPEN EDUCATIONAL RESOURCES (OER) PRIORITY:
+- PRIORITIZE openly licensed, free educational materials over paid resources
+- Preferred OER sources: MIT OpenCourseWare (ocw.mit.edu), Khan Academy (khanacademy.org), OpenStax (openstax.org), LibreTexts (libretexts.org), Wikiversity (en.wikiversity.org), arXiv (arxiv.org), freeCodeCamp (freecodecamp.org), Project Gutenberg (gutenberg.org)
+- Only use paid resources (Coursera, Udemy, paid journals) when no free OER equivalent exists
+- Each resource should be the BEST free resource for this specific topic and difficulty level`;
 
   const positionContext = unitContext
     ? `Unit Position: ${unitContext.position} of ${unitContext.total} in the ${unit.difficulty.toUpperCase()} tier\n` +
@@ -1361,14 +1400,7 @@ Create the lesson content in this JSON format:
     "content": "Detailed worked example appropriate to the difficulty level",
     "code": "Optional code snippet if relevant"
   },
-  "quiz": [
-    {
-      "question": "Question text",
-      "options": ["Option A", "Option B", "Option C", "Option D"],
-      "correctIndex": 0,
-      "explanation": "Thorough explanation of why this is correct and why the others are not"
-    }
-  ],
+  "quiz": [],
   "crossLinks": [
     {
       "topicId": 1,
@@ -1386,8 +1418,7 @@ Create the lesson content in this JSON format:
   ]
 }
 
-Include exactly 3 quiz questions appropriate for the difficulty level.
-QUIZ RULES: Every wrong answer must be PLAUSIBLE — representing a common misconception, not obviously wrong. Include at least one "why does this matter?" or "what if?" question. Explanations must explain WHY each distractor is wrong (what misconception it represents).
+IMPORTANT: Do NOT generate quiz questions. Quizzes are generated on-demand when the learner requests them. Leave the "quiz" array empty.
 ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if relevant." : "Leave crossLinks as an empty array."}
 The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, grokipedia.com, etc). Do not invent URLs.`;
 
@@ -1401,13 +1432,13 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
 
     // Validate and clean up external resource URLs
     if (parsed.externalResources?.length) {
-      const { validateAndRefreshResources } = await import("./link-validator");
+      const { validateAndRefreshResources } = await import("../link-validator");
       parsed.externalResources = await validateAndRefreshResources(
         parsed.externalResources,
         topic.title,
         categoryName || "general",
         unit.difficulty,
-        async (count) => {
+        async (count: number) => {
           const retryPrompt = `The following URLs for the lesson "${unit.title}" on topic "${topic.title}" (${categoryName || "general"}, ${unit.difficulty} level) failed validation. Generate ${count} alternative external resource links that are real, live, and specific to this exact topic and difficulty level. Return JSON array only:
 [{"title":"...","url":"https://...","type":"video|course|paper|book|forum|tool|encyclopedia","description":"..."}]`;
           try {
@@ -1442,9 +1473,90 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
   }
 }
 
+// ── On-Demand Quiz Generation ──────────────────────────────────────────────
+// Quizzes are NOT pre-generated with lesson content. They are generated
+// on-demand when a learner requests them, using the learner's own API key (BYOK).
+// This saves ~30% token cost on every lesson generation and lets quizzes be
+// tailored to the learner's current mastery level and the specific content they just read.
+
+export async function generateOnDemandQuiz(
+  topic: { title: string; description: string },
+  unit: { title: string; difficulty: string; outline?: string | null },
+  lessonContent: unknown,
+  questionCount: number = 3
+): Promise<any> {
+  const contentStr = typeof lessonContent === "string"
+    ? lessonContent
+    : JSON.stringify(lessonContent);
+
+  const difficultyGuidance = unit.difficulty === "beginner"
+    ? "Quiz questions test basic recognition, 'why does this matter?', and connecting to everyday experience. Use simple language."
+    : unit.difficulty === "intermediate"
+    ? "Quiz questions test mechanism understanding and ability to apply concepts to new scenarios. Include at least one application question."
+    : unit.difficulty === "advanced"
+    ? "Quiz questions are analytical: require synthesizing multiple concepts, critiquing approaches, or reasoning about tradeoffs. Include at least one comparison question."
+    : "Quiz questions are open-ended thought exercises that may not have single correct answers — test creative thinking and frontier reasoning.";
+
+  const prompt = `You are an expert quiz designer. Generate ${questionCount} quiz questions for a learner who just finished studying a lesson.
+
+TOPIC: "${topic.title}"
+UNIT: "${unit.title}"
+DIFFICULTY: ${unit.difficulty.toUpperCase()}
+
+LESSON CONTENT (the learner just read this):
+${contentStr.substring(0, 4000)}
+
+${difficultyGuidance}
+
+Respond with ONLY a JSON array of quiz questions:
+[
+  {
+    "question": "Clear, specific question text",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "correctIndex": 0,
+    "explanation": "Why the correct answer is right AND why each distractor is wrong (what misconception each represents)"
+  }
+]
+
+CRITICAL QUIZ RULES:
+- Every wrong answer (distractor) must be PLAUSIBLE — representing a common misconception or reasonable-but-incorrect interpretation
+- Do NOT include obviously wrong or joke answers
+- Include at least one "why does this matter?" or "what if?" question
+- For intermediate+: one question should require applying the concept to a NEW scenario not mentioned in the lesson
+- For advanced: one question should require comparing two approaches and identifying tradeoffs
+- Each explanation must explain WHY the distractors are wrong (what misconception they represent), not just why the correct answer is right
+- Questions should test understanding of THIS specific lesson's content, not generic knowledge`;
+
+  try {
+    const content = await generateCourseContent(
+      [{ role: "user", content: prompt }],
+      { responseFormat: "json", temperature: 0.7 }
+    ) || "[]";
+
+    const parsed = JSON.parse(content);
+
+    if (!Array.isArray(parsed) || parsed.length === 0) {
+      throw new Error("Invalid quiz response: expected non-empty array");
+    }
+
+    // Validate each question has required fields
+    for (const q of parsed) {
+      if (!q.question || !Array.isArray(q.options) || q.options.length < 2 ||
+          typeof q.correctIndex !== "number" || !q.explanation) {
+        throw new Error("Invalid quiz question structure");
+      }
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error("[OnDemandQuiz] Error generating quiz:", error);
+    return [];
+  }
+}
+
 // Default lesson units when AI fails
 export async function getDefaultLessonUnits(topicId: number, topicTitle: string) {
-  const { storage } = await import("./storage");
+  const { storage } = await import("../storage");
   const defaultUnits = [
     { difficulty: "beginner", unitIndex: 0, title: "Introduction & Basics", outline: `Get started with the fundamentals of ${topicTitle}` },
     { difficulty: "beginner", unitIndex: 1, title: "Core Vocabulary", outline: "Learn the essential terms and concepts" },
@@ -1598,8 +1710,8 @@ Requirements:
     const parsed = JSON.parse(content) as Record<string, unknown>;
 
     // Validate and filter resources + communityForums for dead links
-    const { validateResources } = await import("./link-validator");
-    type RawLinkItem = import("./link-validator").RawLinkItem;
+    const { validateResources } = await import("../link-validator");
+    type RawLinkItem = import("../link-validator").RawLinkItem;
     const isLinkArray = (v: unknown): v is RawLinkItem[] =>
       Array.isArray(v) && v.length > 0 && typeof (v[0] as Record<string, unknown>)?.url === "string";
 

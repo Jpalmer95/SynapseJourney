@@ -212,9 +212,13 @@ export const userProfiles = pgTable("user_profiles", {
   geminiKey: text("gemini_key"), // Google Gemini API key
   preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
   preferredModel: text("preferred_model"), // Specific model name for the provider
-  ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS preset: "browser", or a Qwen3-TTS preset name
+  ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS engine: "browser", "kokoro", "qwen", or "custom"
   ttsReferenceAudio: text("tts_reference_audio"), // base64-encoded reference audio for voice cloning
   ttsPlaybackSpeed: text("tts_playback_speed").default("1.0"), // playback speed as string to avoid float issues
+  ttsQwenMode: text("tts_qwen_mode").default("custom_voice"), // Qwen3-TTS mode: "custom_voice", "voice_design", "voice_clone"
+  ttsQwenStyleInstruction: text("tts_qwen_style_instruction"), // optional style guidance for custom_voice mode
+  ttsQwenVoiceDescription: text("tts_qwen_voice_description"), // natural language voice description for voice_design mode
+  ttsRefText: text("tts_ref_text"), // transcript of reference audio for voice_clone mode
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -595,6 +599,24 @@ export const agentProfiles = pgTable("agent_profiles", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Course Completion Posters — generated when a learner completes all units in a course
+// Contains a condensed, visually-friendly summary of the entire course
+export const coursePosters = pgTable("course_posters", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  posterData: jsonb("poster_data").notNull(), // { title, summary, keyTakeaways, visualStyle, colorScheme, stats }
+  // posterData structure:
+  //   title: string — course title
+  //   summary: string — 2-3 sentence course summary
+  //   keyTakeaways: string[] — 5-10 most important concepts from the entire course
+  //   stats: { unitsCompleted, quizAvgScore, timeSpent, xpEarned }
+  //   visualStyle: string — e.g. "minimal", "infographic", "mind-map"
+  //   colorScheme: string — e.g. "charcoal-rust", "ocean", "forest"
+  //   sections: { title, content }[] — condensed sections per tier
+  generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -687,6 +709,7 @@ export const insertUserApiKeySchema = createInsertSchema(userApiKeys).omit({ id:
 export const insertAgentProfileSchema = createInsertSchema(agentProfiles).omit({ id: true, createdAt: true });
 export const insertCommunityPoolUsageSchema = createInsertSchema(communityPoolUsage).omit({ id: true, updatedAt: true });
 export const insertCommunityPoolQueueSchema = createInsertSchema(communityPoolQueue).omit({ id: true, createdAt: true, processedAt: true });
+export const insertCoursePosterSchema = createInsertSchema(coursePosters).omit({ id: true, generatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -794,6 +817,8 @@ export type CommunityPoolUsage = typeof communityPoolUsage.$inferSelect;
 export type InsertCommunityPoolUsage = z.infer<typeof insertCommunityPoolUsageSchema>;
 export type CommunityPoolQueue = typeof communityPoolQueue.$inferSelect;
 export type InsertCommunityPoolQueue = z.infer<typeof insertCommunityPoolQueueSchema>;
+export type CoursePoster = typeof coursePosters.$inferSelect;
+export type InsertCoursePoster = z.infer<typeof insertCoursePosterSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

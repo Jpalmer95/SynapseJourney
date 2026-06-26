@@ -295,8 +295,21 @@ export interface IStorage {
   awardNovaCoin(userId: string): Promise<NovaCoin>;
 
   // TTS Settings
-  getTtsSettings(userId: string): Promise<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }>;
-  saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void>;
+  getTtsSettings(userId: string): Promise<{
+    voicePreset: string;
+    referenceAudio: string | null;
+    playbackSpeed: number;
+    qwenMode: string;
+    qwenStyleInstruction: string | null;
+    qwenVoiceDescription: string | null;
+    refText: string | null;
+  }>;
+  saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number, qwenOptions?: {
+    qwenMode?: string;
+    qwenStyleInstruction?: string | null;
+    qwenVoiceDescription?: string | null;
+    refText?: string | null;
+  }): Promise<void>;
   getTtsAudioCache(unitId: number, voiceConfigHash: string): Promise<{ audioData: string; audioFormat: string } | null>;
   saveTtsAudioCache(unitId: number, voiceConfigHash: string, audioData: string, audioFormat: string): Promise<void>;
 
@@ -1955,21 +1968,42 @@ export class DatabaseStorage implements IStorage {
     return updated || existing;
   }
 
-  async getTtsSettings(userId: string): Promise<{ voicePreset: string; referenceAudio: string | null; playbackSpeed: number }> {
+  async getTtsSettings(userId: string): Promise<{
+    voicePreset: string;
+    referenceAudio: string | null;
+    playbackSpeed: number;
+    qwenMode: string;
+    qwenStyleInstruction: string | null;
+    qwenVoiceDescription: string | null;
+    refText: string | null;
+  }> {
     const profile = await this.getUserProfile(userId);
     return {
       voicePreset: profile?.ttsVoicePreset || "browser",
       referenceAudio: profile?.ttsReferenceAudio || null,
       playbackSpeed: parseFloat(profile?.ttsPlaybackSpeed || "1.0") || 1.0,
+      qwenMode: profile?.ttsQwenMode || "custom_voice",
+      qwenStyleInstruction: profile?.ttsQwenStyleInstruction || null,
+      qwenVoiceDescription: profile?.ttsQwenVoiceDescription || null,
+      refText: profile?.ttsRefText || null,
     };
   }
 
-  async saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number): Promise<void> {
+  async saveTtsSettings(userId: string, voicePreset: string, referenceAudio?: string | null, playbackSpeed?: number, qwenOptions?: {
+    qwenMode?: string;
+    qwenStyleInstruction?: string | null;
+    qwenVoiceDescription?: string | null;
+    refText?: string | null;
+  }): Promise<void> {
     const updates: Partial<InsertUserProfile> = {
       ttsVoicePreset: voicePreset,
     };
     if (referenceAudio !== undefined) updates.ttsReferenceAudio = referenceAudio;
     if (playbackSpeed !== undefined) updates.ttsPlaybackSpeed = String(playbackSpeed);
+    if (qwenOptions?.qwenMode !== undefined) updates.ttsQwenMode = qwenOptions.qwenMode;
+    if (qwenOptions?.qwenStyleInstruction !== undefined) updates.ttsQwenStyleInstruction = qwenOptions.qwenStyleInstruction;
+    if (qwenOptions?.qwenVoiceDescription !== undefined) updates.ttsQwenVoiceDescription = qwenOptions.qwenVoiceDescription;
+    if (qwenOptions?.refText !== undefined) updates.ttsRefText = qwenOptions.refText;
     // createOrUpdateUserProfile appends updatedAt internally
     await this.createOrUpdateUserProfile(userId, updates);
   }

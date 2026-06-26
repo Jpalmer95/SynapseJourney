@@ -292,7 +292,7 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
 
                 <div className="flex-1 min-w-0">
                   <h4 className="font-bold text-sm leading-none line-clamp-2 text-foreground mb-1 group-hover:text-primary transition-colors">
-                    {node.topic.name}
+                    {node.topic.title}
                   </h4>
                   <span className="text-[10px] uppercase tracking-wider text-muted-foreground">
                     {node.status}

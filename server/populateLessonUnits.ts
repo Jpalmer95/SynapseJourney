@@ -1,5 +1,4 @@
 import { storage } from "./storage";
-import { generateLessonOutline } from "./routes";
 import { SYLLABI } from "./syllabi";
 import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 
@@ -36,7 +35,8 @@ export async function populateMissingLessonUnits(): Promise<void> {
           }
           console.log(`  -> Created ${plannedSyllabus.units.length} units from syllabus + seed content.`);
         } else {
-          // Fallback to AI generation
+          // Fallback to AI generation (dynamically imported to avoid circular dependency)
+          const { generateLessonOutline } = await import("./routes/ai");
           await generateLessonOutline(topic.id, topic.title, topic.description);
         }
         

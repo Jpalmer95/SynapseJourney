@@ -2,24 +2,16 @@ import { useState, useRef, useCallback, useEffect, createContext, useContext } f
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
 import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE, QWEN_DEFAULT_VOICE, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
+import type { QwenMode } from "@/lib/tts-constants";
 import { useToast } from "@/hooks/use-toast";
 
 // localStorage keys used by the TTS engine
-const HF_TOKEN_KEY = "hf_token";
-const HF_SPACE_URL_KEY = "hf_space_url";
 const KOKORO_VOICE_KEY = "kokoro_voice";
 const QWEN_VOICE_KEY = "qwen_voice";
-const QWEN_CUSTOM_DESC_KEY = "qwen_custom_description";
-// Default HF model ID used when no custom space URL is configured
-const HF_DEFAULT_MODEL = "Qwen/Qwen3-TTS";
-
-function getHFEndpoint(): string {
-  try {
-    const custom = localStorage.getItem(HF_SPACE_URL_KEY);
-    if (custom) return custom.replace(/\/$/, "");
-  } catch { /* ignore */ }
-  return `https://api-inference.huggingface.co/models/${HF_DEFAULT_MODEL}`;
-}
+const QWEN_MODE_KEY = "qwen_mode";
+const QWEN_STYLE_KEY = "qwen_style_instruction";
+const QWEN_VOICE_DESC_KEY = "qwen_voice_description";
+const QWEN_REF_TEXT_KEY = "qwen_ref_text";
 
 export interface VoicePreset {
   id: string;
@@ -60,9 +52,6 @@ interface UseTTSReturn extends TTSState {
   serverVoicePreset: string;
   setServerVoicePreset: (preset: string) => Promise<void>;
   isAudioCached: (unitId: number) => Promise<boolean>;
-  hfToken: string | null;
-  setHFToken: (token: string) => void;
-  clearHFToken: () => void;
   kokoroReady: boolean;
   kokoroLoading: boolean;
   kokoroDownloadPercent: number | null;
@@ -73,13 +62,18 @@ interface UseTTSReturn extends TTSState {
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
   kokoroIncompatible: boolean;
-  hfWarming: boolean;
   kokoroVoice: string;
   setKokoroVoice: (voiceId: string) => void;
   qwenVoice: string;
   setQwenVoice: (voiceId: string) => void;
-  qwenCustomDescription: string;
-  setQwenCustomDescription: (desc: string) => void;
+  qwenMode: QwenMode;
+  setQwenMode: (mode: QwenMode) => void;
+  qwenStyleInstruction: string;
+  setQwenStyleInstruction: (text: string) => void;
+  qwenVoiceDescription: string;
+  setQwenVoiceDescription: (text: string) => void;
+  refText: string;
+  setRefText: (text: string) => void;
 }
 
 const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
@@ -105,13 +99,15 @@ async function waitForBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
-async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
+async function fetchServerTTSAudio(unitId: number, voiceConfig?: object): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
   try {
+    const body: Record<string, unknown> = { unitId };
+    if (voiceConfig) body.voiceConfig = voiceConfig;
     const res = await fetch("/api/tts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ unitId }),
+      body: JSON.stringify(body),
     });
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
@@ -123,13 +119,15 @@ async function fetchServerTTSAudio(unitId: number): Promise<{ audioData: string;
   }
 }
 
-async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number; restText: string | null } | null> {
+async function fetchServerTTSIntro(unitId: number, voiceConfig?: object): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number; restText: string | null } | null> {
   try {
+    const body: Record<string, unknown> = { unitId, firstParagraphOnly: true };
+    if (voiceConfig) body.voiceConfig = voiceConfig;
     const res = await fetch("/api/tts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ unitId, firstParagraphOnly: true }),
+      body: JSON.stringify(body),
     });
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
@@ -146,13 +144,15 @@ async function fetchServerTTSIntro(unitId: number): Promise<{ audioData: string;
   }
 }
 
-async function fetchServerTTSText(text: string): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
+async function fetchServerTTSText(text: string, voiceConfig?: object): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
   try {
+    const body: Record<string, unknown> = { text };
+    if (voiceConfig) body.voiceConfig = voiceConfig;
     const res = await fetch("/api/tts/generate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
-      body: JSON.stringify({ text }),
+      body: JSON.stringify(body),
     });
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
@@ -216,13 +216,23 @@ function useTTSImpl(): UseTTSReturn {
       return valid ? stored! : QWEN_DEFAULT_VOICE;
     } catch { return QWEN_DEFAULT_VOICE; }
   });
-  const [qwenCustomDescription, setQwenCustomDescriptionState] = useState<string>(() => {
-    try { return localStorage.getItem(QWEN_CUSTOM_DESC_KEY) || ""; } catch { return ""; }
+  const [qwenMode, setQwenModeState] = useState<QwenMode>(() => {
+    try {
+      const stored = localStorage.getItem(QWEN_MODE_KEY);
+      if (stored === "custom_voice" || stored === "voice_design" || stored === "voice_clone") return stored;
+    } catch { /* ignore */ }
+    return "custom_voice";
+  });
+  const [qwenStyleInstruction, setQwenStyleInstructionState] = useState<string>(() => {
+    try { return localStorage.getItem(QWEN_STYLE_KEY) || ""; } catch { return ""; }
+  });
+  const [qwenVoiceDescription, setQwenVoiceDescriptionState] = useState<string>(() => {
+    try { return localStorage.getItem(QWEN_VOICE_DESC_KEY) || ""; } catch { return ""; }
+  });
+  const [refText, setRefTextState] = useState<string>(() => {
+    try { return localStorage.getItem(QWEN_REF_TEXT_KEY) || ""; } catch { return ""; }
   });
 
-  const [hfToken, setHFTokenState] = useState<string | null>(() =>
-    typeof localStorage !== "undefined" ? localStorage.getItem(HF_TOKEN_KEY) : null
-  );
   const [kokoroReady, setKokoroReady] = useState(false);
   const [kokoroLoading, setKokoroLoading] = useState(false);
   const [kokoroDownloadPercent, setKokoroDownloadPercent] = useState<number | null>(null);
@@ -268,8 +278,6 @@ function useTTSImpl(): UseTTSReturn {
     }
     return false;
   });
-  const [hfWarming, setHfWarming] = useState(false);
-  const hfToastShownRef = useRef(false);
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   // Persistent AudioContext singleton. Pre-unlocked during the user gesture so
@@ -284,10 +292,12 @@ function useTTSImpl(): UseTTSReturn {
   const rateRef = useRef(rate);
   const voiceRef = useRef<string | null>(selectedVoiceName);
   const audioUnlockedRef = useRef<boolean>(false);
-  const hfTokenRef = useRef<string | null>(hfToken);
   const kokoroVoiceRef = useRef<string>(kokoroVoice);
   const qwenVoiceRef = useRef<string>(qwenVoice);
-  const qwenCustomDescriptionRef = useRef<string>(qwenCustomDescription);
+  const qwenModeRef = useRef<QwenMode>(qwenMode);
+  const qwenStyleInstructionRef = useRef<string>(qwenStyleInstruction);
+  const qwenVoiceDescriptionRef = useRef<string>(qwenVoiceDescription);
+  const refTextRef = useRef<string>(refText);
   const kokoroIncompatibleRef = useRef<boolean>(kokoroIncompatible);
   const autoSwitchedToBrowserRef = useRef<boolean>(false);
   // serverVoicePreset ref: updated synchronously in setServerVoicePreset so speak/speakSections
@@ -301,13 +311,16 @@ function useTTSImpl(): UseTTSReturn {
   const msgIdRef = useRef(0);
   const workerReadyRef = useRef(false);
   const workerReadyPromiseRef = useRef<Promise<void> | null>(null);
+  const workerRetryCount = useRef(0);
 
   useEffect(() => { rateRef.current = rate; }, [rate]);
   useEffect(() => { voiceRef.current = selectedVoiceName; }, [selectedVoiceName]);
-  useEffect(() => { hfTokenRef.current = hfToken; }, [hfToken]);
   useEffect(() => { kokoroVoiceRef.current = kokoroVoice; }, [kokoroVoice]);
   useEffect(() => { qwenVoiceRef.current = qwenVoice; }, [qwenVoice]);
-  useEffect(() => { qwenCustomDescriptionRef.current = qwenCustomDescription; }, [qwenCustomDescription]);
+  useEffect(() => { qwenModeRef.current = qwenMode; }, [qwenMode]);
+  useEffect(() => { qwenStyleInstructionRef.current = qwenStyleInstruction; }, [qwenStyleInstruction]);
+  useEffect(() => { qwenVoiceDescriptionRef.current = qwenVoiceDescription; }, [qwenVoiceDescription]);
+  useEffect(() => { refTextRef.current = refText; }, [refText]);
   useEffect(() => { kokoroIncompatibleRef.current = kokoroIncompatible; }, [kokoroIncompatible]);
 
   // Auto-switch to Browser TTS when Kokoro is detected incompatible and user still has it selected.
@@ -324,7 +337,15 @@ function useTTSImpl(): UseTTSReturn {
     }
   }, [kokoroIncompatible, serverVoicePreset, toast]);
 
-  const { data: ttsSettings } = useQuery<{ voicePreset: string; hasReferenceAudio: boolean; playbackSpeed: number }>({
+  const { data: ttsSettings } = useQuery<{
+    voicePreset: string;
+    hasReferenceAudio: boolean;
+    playbackSpeed: number;
+    qwenMode?: QwenMode;
+    qwenStyleInstruction?: string;
+    qwenVoiceDescription?: string;
+    refText?: string;
+  }>({
     queryKey: ["/api/tts/settings"],
     staleTime: 60000,
     retry: false,
@@ -363,6 +384,26 @@ function useTTSImpl(): UseTTSReturn {
       }
       if (ttsSettings.playbackSpeed) {
         setRateState(ttsSettings.playbackSpeed);
+      }
+      if (ttsSettings.qwenMode) {
+        setQwenModeState(ttsSettings.qwenMode);
+        qwenModeRef.current = ttsSettings.qwenMode;
+        try { localStorage.setItem(QWEN_MODE_KEY, ttsSettings.qwenMode); } catch { /* ignore */ }
+      }
+      if (ttsSettings.qwenStyleInstruction !== undefined) {
+        setQwenStyleInstructionState(ttsSettings.qwenStyleInstruction);
+        qwenStyleInstructionRef.current = ttsSettings.qwenStyleInstruction;
+        try { if (ttsSettings.qwenStyleInstruction) localStorage.setItem(QWEN_STYLE_KEY, ttsSettings.qwenStyleInstruction); else localStorage.removeItem(QWEN_STYLE_KEY); } catch { /* ignore */ }
+      }
+      if (ttsSettings.qwenVoiceDescription !== undefined) {
+        setQwenVoiceDescriptionState(ttsSettings.qwenVoiceDescription);
+        qwenVoiceDescriptionRef.current = ttsSettings.qwenVoiceDescription;
+        try { if (ttsSettings.qwenVoiceDescription) localStorage.setItem(QWEN_VOICE_DESC_KEY, ttsSettings.qwenVoiceDescription); else localStorage.removeItem(QWEN_VOICE_DESC_KEY); } catch { /* ignore */ }
+      }
+      if (ttsSettings.refText !== undefined) {
+        setRefTextState(ttsSettings.refText);
+        refTextRef.current = ttsSettings.refText;
+        try { if (ttsSettings.refText) localStorage.setItem(QWEN_REF_TEXT_KEY, ttsSettings.refText); else localStorage.removeItem(QWEN_REF_TEXT_KEY); } catch { /* ignore */ }
       }
     }
   }, [ttsSettings]);
@@ -635,8 +676,16 @@ function useTTSImpl(): UseTTSReturn {
       }
     };
 
-    const onError = () => {
-      Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error("Worker crashed")));
+    const createDedicatedWorker = (): WorkerBridge => {
+      const w = new Worker(workerUrl, { type: "module" });
+      w.onmessage = onMessage;
+      w.onerror = onError;
+      return { postMessage: (data: unknown) => w.postMessage(data) };
+    };
+
+    const onError = (event: ErrorEvent) => {
+      console.error(`[TTS] Worker error: ${event.message} at ${event.filename}:${event.lineno}`);
+      Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error(`Worker error: ${event.message}`)));
       pendingRef.current.clear();
       workerReadyRef.current = false;
       workerReadyPromiseRef.current = null;
@@ -644,6 +693,19 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroLoading(false);
       setKokoroDownloadPercent(null);
       setKokoroDownloadPhase(null);
+
+      if (workerRetryCount.current < 1) {
+        workerRetryCount.current++;
+        console.log("[TTS] Retrying with DedicatedWorker…");
+        try {
+          workerRef.current = createDedicatedWorker();
+        } catch (e) {
+          console.error("[TTS] DedicatedWorker retry failed:", e);
+          setKokoroLoadError("Kokoro worker crashed — please refresh the page.");
+        }
+        return;
+      }
+
       setKokoroLoadError("Kokoro worker crashed — please refresh the page.");
     };
 
@@ -655,21 +717,29 @@ function useTTSImpl(): UseTTSReturn {
         // Wrapped in try/catch because some browsers declare SharedWorker but
         // do not support module workers, throwing on construction.
         const sw = new SharedWorker(workerUrl, { type: "module" });
-        sw.port.onmessage = onMessage;
-        sw.onerror = onError;
+        let gotMessage = false;
+
+        sw.port.onmessage = (e) => { gotMessage = true; onMessage(e); };
+        sw.onerror = (e) => { gotMessage = true; onError(e); };
         sw.port.start();
+
         bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
+
+        // Connection timeout: if the port doesn't connect within 3 seconds, fall back to DedicatedWorker.
+        setTimeout(() => {
+          if (!gotMessage && workerRef.current === bridge) {
+            console.debug("[TTS] SharedWorker connection timeout, falling back to DedicatedWorker");
+            try { sw.port.close(); } catch { /* ignore */ }
+            workerRef.current = null;
+          }
+        }, 3000);
       } catch (swErr) {
         console.debug("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
       }
     }
 
     if (!bridge) {
-      // DedicatedWorker fallback for older browsers / engines without module SharedWorker support.
-      const w = new Worker(workerUrl, { type: "module" });
-      w.onmessage = onMessage;
-      w.onerror = onError;
-      bridge = { postMessage: (data: unknown) => w.postMessage(data) };
+      bridge = createDedicatedWorker();
     }
 
     workerRef.current = bridge;
@@ -839,129 +909,14 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, [getAudioCtx]);
 
-  // ── HF cloud TTS (ZeroGPU Space / Inference API) ─────────────────────────
-  // Handles cold-start 503 retries and optional reference audio for voice cloning.
-
-  const fetchQwenCloudTTS = useCallback(async (
-    text: string,
-    voiceDescription: string | undefined,
-    token: string,
-    referenceAudioBase64?: string,
-  ): Promise<Blob | null> => {
-    const endpoint = getHFEndpoint();
-    const parameters: Record<string, unknown> = {};
-
-    if (referenceAudioBase64) {
-      parameters.reference_audio = referenceAudioBase64;
-    } else if (voiceDescription) {
-      parameters.voice_description = voiceDescription;
-    }
-
-    const body: Record<string, unknown> = { inputs: text };
-    if (Object.keys(parameters).length > 0) {
-      body.parameters = parameters;
-    }
-
-    // Retry on 503 (ZeroGPU space warming up). Maximum 12 retries, up to 60 s total.
-    const MAX_RETRIES = 12;
-    let retries = 0;
-
-    while (retries <= MAX_RETRIES) {
-      let res: Response;
-      try {
-        res = await fetch(endpoint, {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(body),
-        });
-      } catch {
-        setHfWarming(false);
-        hfToastShownRef.current = false;
-        return null;
-      }
-
-      if (res.ok) {
-        setHfWarming(false);
-        hfToastShownRef.current = false;
-        const blob = await res.blob();
-        if (!blob || blob.size === 0) return null;
-        return blob;
-      }
-
-      if (res.status === 503) {
-        // Show the "Warming up engine…" toast exactly once per request sequence.
-        if (!hfToastShownRef.current) {
-          hfToastShownRef.current = true;
-          setHfWarming(true);
-          toast({
-            title: "Warming up engine…",
-            description: "The cloud TTS engine is starting up. This usually takes 15–20 seconds.",
-            duration: 20000,
-          });
-        }
-        retries++;
-        if (retries > MAX_RETRIES) break;
-        // Back off based on estimated_time header if present, else 5 s.
-        let waitMs = 5000;
-        try {
-          const errJson = await res.json() as { estimated_time?: number };
-          if (typeof errJson.estimated_time === "number") {
-            waitMs = Math.min(errJson.estimated_time * 1000, 30000);
-          }
-        } catch { /* ignore parse errors */ }
-        await new Promise(r => setTimeout(r, waitMs));
-        continue;
-      }
-
-      // Non-503 error — bail immediately.
-      setHfWarming(false);
-      hfToastShownRef.current = false;
-      return null;
-    }
-
-    setHfWarming(false);
-    hfToastShownRef.current = false;
-    return null;
-  }, [toast, setHfWarming]);
-
-  // ── HF token management ───────────────────────────────────────────────────
-
-  const setHFToken = useCallback((token: string) => {
-    setHFTokenState(token);
-    hfTokenRef.current = token;
-    try { localStorage.setItem(HF_TOKEN_KEY, token); } catch { /* ignore */ }
-  }, []);
-
-  const clearHFToken = useCallback(() => {
-    setHFTokenState(null);
-    hfTokenRef.current = null;
-    try { localStorage.removeItem(HF_TOKEN_KEY); } catch { /* ignore */ }
-  }, []);
-
-  const setKokoroVoice = useCallback((voiceId: string) => {
-    setKokoroVoiceState(voiceId);
-    kokoroVoiceRef.current = voiceId;
-    try { localStorage.setItem(KOKORO_VOICE_KEY, voiceId); } catch { /* ignore */ }
-  }, []);
-
-  const setQwenVoice = useCallback((voiceId: string) => {
-    setQwenVoiceState(voiceId);
-    qwenVoiceRef.current = voiceId;
-    try { localStorage.setItem(QWEN_VOICE_KEY, voiceId); } catch { /* ignore */ }
-  }, []);
-
-  const setQwenCustomDescription = useCallback((desc: string) => {
-    const trimmed = desc.slice(0, 500);
-    setQwenCustomDescriptionState(trimmed);
-    qwenCustomDescriptionRef.current = trimmed;
-    try {
-      if (trimmed) localStorage.setItem(QWEN_CUSTOM_DESC_KEY, trimmed);
-      else localStorage.removeItem(QWEN_CUSTOM_DESC_KEY);
-    } catch { /* ignore */ }
-  }, []);
+  // Helper to build the voiceConfig object sent to the server for Qwen TTS.
+  const getVoiceConfig = useCallback(() => ({
+    speaker: qwenVoiceRef.current,
+    qwenMode: qwenModeRef.current,
+    qwenStyleInstruction: qwenStyleInstructionRef.current,
+    qwenVoiceDescription: qwenVoiceDescriptionRef.current,
+    refText: refTextRef.current,
+  }), []);
 
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1009,8 +964,8 @@ function useTTSImpl(): UseTTSReturn {
       return true;
     };
 
-    /** Helper: try server TTS as last resort */
-    const speakViaServer = async (txt: string, uid?: number): Promise<boolean> => {
+    /** Helper: try server TTS */
+    const speakViaServer = async (txt: string, uid?: number, vcfg?: object): Promise<boolean> => {
       if (uid) {
         let isCached = false;
         try {
@@ -1022,7 +977,7 @@ function useTTSImpl(): UseTTSReturn {
         } catch { /* ignore — treat as uncached */ }
 
         if (isCached) {
-          const serverResult = await fetchServerTTSAudio(uid);
+          const serverResult = await fetchServerTTSAudio(uid, vcfg);
           if (serverResult && !cancelledRef.current) {
             setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
             try {
@@ -1034,11 +989,11 @@ function useTTSImpl(): UseTTSReturn {
             }
           }
         } else {
-          const introResult = await fetchServerTTSIntro(uid);
+          const introResult = await fetchServerTTSIntro(uid, vcfg);
 
           if (introResult && !cancelledRef.current) {
             const { restText } = introResult;
-            const restPromise = restText ? fetchServerTTSText(restText) : Promise.resolve(null);
+            const restPromise = restText ? fetchServerTTSText(restText, vcfg) : Promise.resolve(null);
             setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
             try {
               await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
@@ -1057,7 +1012,7 @@ function useTTSImpl(): UseTTSReturn {
               if (audioErr instanceof Error && audioErr.message === "cancelled") throw audioErr;
             }
           } else if (!introResult) {
-            const serverResult = await fetchServerTTSAudio(uid);
+            const serverResult = await fetchServerTTSAudio(uid, vcfg);
             if (serverResult && !cancelledRef.current) {
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
               try {
@@ -1071,7 +1026,7 @@ function useTTSImpl(): UseTTSReturn {
           }
         }
       } else {
-        const serverResult = await fetchServerTTSText(txt);
+        const serverResult = await fetchServerTTSText(txt, vcfg);
         if (serverResult && !cancelledRef.current) {
           setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
           try {
@@ -1116,61 +1071,17 @@ function useTTSImpl(): UseTTSReturn {
           console.warn("[TTS] Kokoro local failed:", kokoroErr);
         }
 
-        // Fallback: if Kokoro failed and user has HF token, try Qwen cloud before browser
-        if (!kokoroDone && hfTokenRef.current) {
-          try {
-            const fallbackDesc = qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
-            const blob = await fetchQwenCloudTTS(text, fallbackDesc, hfTokenRef.current);
-            if (blob && !cancelledRef.current) {
-              setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-              await playBlobAudio(blob);
-              if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
-              return;
-            }
-          } catch (hfErr) {
-            if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-            console.warn("[TTS] HF cloud fallback after Kokoro failure:", hfErr);
-          }
-        }
-        // Fall through to browser TTS (not server — browser is free and instant)
+        // Fallback: fall through to browser TTS (free and instant)
       }
 
-      // ── Tier 2: HF cloud TTS (qwen / custom presets) ─────────────────────
+      // ── Tier 2: Server Qwen TTS (qwen / custom presets) ────────────────────
       if (voiceTier === "cloud") {
-        if (!hfTokenRef.current) {
-          setState(prev => ({
-            ...prev,
-            error: "Add a Hugging Face token in Settings to enable cloud voice synthesis.",
-          }));
-          // Fall through to browser TTS
-        } else {
-          try {
-            let referenceAudio: string | undefined;
-            if (currentPreset === "custom") {
-              try {
-                const refRes = await fetch("/api/tts/reference-audio", { credentials: "include" });
-                if (refRes.ok) {
-                  const refData = await refRes.json() as { audioBase64: string };
-                  referenceAudio = refData.audioBase64;
-                }
-              } catch { /* ignore */ }
-            }
-
-            const voiceDesc = currentPreset === "qwen"
-              ? (qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription)
-              : undefined;
-
-            const blob = await fetchQwenCloudTTS(text, voiceDesc, hfTokenRef.current, referenceAudio);
-            if (blob && !cancelledRef.current) {
-              setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-              await playBlobAudio(blob);
-              if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
-              return;
-            }
-          } catch (cloudErr) {
-            if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
-            console.warn("[TTS] HF cloud TTS failed, falling back to browser:", cloudErr);
-          }
+        try {
+          const vcfg = getVoiceConfig();
+          if (await speakViaServer(text, unitId, vcfg)) return;
+        } catch (cloudErr) {
+          if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
+          console.warn("[TTS] Server Qwen TTS failed, falling back to browser:", cloudErr);
         }
         // Fall through to browser TTS
       }
@@ -1178,7 +1089,7 @@ function useTTSImpl(): UseTTSReturn {
       // ── Tier 3: Browser TTS (free, instant, works on nearly every device) ──
       if (await speakViaBrowser(text)) return;
 
-      // ── Tier 4: Server OpenAI (last resort — requires valid API keys) ──────
+      // ── Tier 4: Server fallback (last resort) ─────────────────────────────
       if (shouldTryServer) {
         if (await speakViaServer(text, unitId)) return;
       }
@@ -1209,7 +1120,7 @@ function useTTSImpl(): UseTTSReturn {
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, fetchQwenCloudTTS]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
   // Pre-fetches the next section's audio while the current section plays to minimize gaps.
@@ -1265,18 +1176,6 @@ function useTTSImpl(): UseTTSReturn {
     try {
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0 }));
 
-      // For cloud voice cloning, fetch the stored reference audio once before iterating.
-      let cloudReferenceAudio: string | undefined;
-      if (voiceTier === "cloud" && currentPreset === "custom" && hfTokenRef.current) {
-        try {
-          const refRes = await fetch("/api/tts/reference-audio", { credentials: "include" });
-          if (refRes.ok) {
-            const refData = await refRes.json() as { audioBase64: string };
-            cloudReferenceAudio = refData.audioBase64;
-          }
-        } catch { /* ignore — will fall back to browser/server */ }
-      }
-
       // Pre-fetch next section's audio while the current one plays (server path only).
       let nextFetch: Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> | null = null;
 
@@ -1319,49 +1218,46 @@ function useTTSImpl(): UseTTSReturn {
           }
           if (kokoroDone) continue;
 
-          // Fallback: Qwen cloud (if Kokoro failed and user has HF token)
-          if (hfTokenRef.current) {
-            try {
-              const fallbackDesc = qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription;
-              const blob = await fetchQwenCloudTTS(sectionText, fallbackDesc, hfTokenRef.current);
-              if (blob && !cancelledRef.current) {
-                setState(prev => ({ ...prev, usingServerTTS: false }));
-                await playBlobAudio(blob);
-                continue;
-              }
-            } catch (hfErr) {
-              if (hfErr instanceof Error && hfErr.message === "cancelled") return;
-              console.warn("[TTS sections] HF cloud fallback failed for section", i, ":", hfErr);
-            }
-          }
           // Fall through to browser TTS
         }
 
-        // ── Tier 2: HF Cloud (qwen / custom presets) ──────────────────────
+        // ── Tier 2: Server Qwen TTS (cloud presets) ───────────────────────
         if (voiceTier === "cloud") {
-          if (!hfTokenRef.current) {
-            if (i === start) {
-              setState(prev => ({
-                ...prev,
-                error: "Add a Hugging Face token in Settings to enable cloud voice synthesis.",
-              }));
+          try {
+            const vcfg = getVoiceConfig();
+            let result: { audioData: string; audioFormat: string; playbackSpeed: number } | null;
+
+            if (nextFetch !== null) {
+              result = await nextFetch;
+              nextFetch = null;
+            } else {
+              result = await fetchServerTTSText(sectionText, vcfg);
             }
-            // Fall through to browser TTS
-          } else {
-            try {
-              const voiceDesc = currentPreset === "qwen"
-                ? (qwenCustomDescriptionRef.current.trim() || QWEN_VOICES.find(v => v.id === qwenVoiceRef.current)?.voiceDescription)
-                : undefined;
-              const blob = await fetchQwenCloudTTS(sectionText, voiceDesc, hfTokenRef.current, cloudReferenceAudio);
-              if (blob && !cancelledRef.current) {
-                setState(prev => ({ ...prev, usingServerTTS: false }));
-                await playBlobAudio(blob);
+
+            // Pre-fetch next section while playing this one
+            if (i + 1 < sections.length && !cancelledRef.current) {
+              nextFetch = fetchServerTTSText(sections[i + 1].text, vcfg);
+            }
+
+            if (result && !cancelledRef.current) {
+              setState(prev => ({ ...prev, usingServerTTS: true }));
+              try {
+                await playServerAudio(result.audioData, result.audioFormat, result.playbackSpeed || rate);
                 continue;
+              } catch (audioErr: unknown) {
+                if (audioErr instanceof Error && audioErr.message === "cancelled") return;
+                // Server audio failed — nothing left to try
+                setState(prev => ({
+                  ...prev, isLoading: false, isSpeaking: false, isPaused: false,
+                  usingServerTTS: false,
+                  error: "Audio unavailable. Choose an AI voice preset in settings.",
+                }));
+                return;
               }
-            } catch (cloudErr) {
-              if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
-              console.warn("[TTS sections] HF cloud failed for section", i, ":", cloudErr);
             }
+          } catch (cloudErr) {
+            if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
+            console.warn("[TTS sections] Server Qwen failed for section", i, ":", cloudErr);
           }
           // Fall through to browser TTS
         }
@@ -1369,8 +1265,8 @@ function useTTSImpl(): UseTTSReturn {
         // ── Tier 3: Browser TTS (free, instant) ───────────────────────────
         if (await speakSectionViaBrowser(sectionText, i === start)) continue;
 
-        // ── Tier 4: Server OpenAI (last resort) ───────────────────────────
-        if (shouldTryServer) {
+        // ── Tier 4: Server fallback (last resort) ───────────────────────────
+        if (shouldTryServer && voiceTier !== "cloud") {
           let result: { audioData: string; audioFormat: string; playbackSpeed: number } | null;
 
           if (nextFetch !== null) {
@@ -1443,7 +1339,7 @@ function useTTSImpl(): UseTTSReturn {
         totalSections: 0,
       }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, fetchQwenCloudTTS]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig]);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
@@ -1543,6 +1439,69 @@ function useTTSImpl(): UseTTSReturn {
     }
   }, []);
 
+  const setKokoroVoice = useCallback((voiceId: string) => {
+    setKokoroVoiceState(voiceId);
+    kokoroVoiceRef.current = voiceId;
+    try { localStorage.setItem(KOKORO_VOICE_KEY, voiceId); } catch { /* ignore */ }
+  }, []);
+
+  const setQwenVoice = useCallback((voiceId: string) => {
+    setQwenVoiceState(voiceId);
+    qwenVoiceRef.current = voiceId;
+    try { localStorage.setItem(QWEN_VOICE_KEY, voiceId); } catch { /* ignore */ }
+  }, []);
+
+  const setQwenMode = useCallback((mode: QwenMode) => {
+    setQwenModeState(mode);
+    qwenModeRef.current = mode;
+    try { localStorage.setItem(QWEN_MODE_KEY, mode); } catch { /* ignore */ }
+    fetch("/api/tts/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ qwenMode: mode }),
+    }).catch(() => {});
+  }, []);
+
+  const setQwenStyleInstruction = useCallback((text: string) => {
+    const trimmed = text.slice(0, 500);
+    setQwenStyleInstructionState(trimmed);
+    qwenStyleInstructionRef.current = trimmed;
+    try { if (trimmed) localStorage.setItem(QWEN_STYLE_KEY, trimmed); else localStorage.removeItem(QWEN_STYLE_KEY); } catch { /* ignore */ }
+    fetch("/api/tts/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ qwenStyleInstruction: trimmed }),
+    }).catch(() => {});
+  }, []);
+
+  const setQwenVoiceDescription = useCallback((text: string) => {
+    const trimmed = text.slice(0, 500);
+    setQwenVoiceDescriptionState(trimmed);
+    qwenVoiceDescriptionRef.current = trimmed;
+    try { if (trimmed) localStorage.setItem(QWEN_VOICE_DESC_KEY, trimmed); else localStorage.removeItem(QWEN_VOICE_DESC_KEY); } catch { /* ignore */ }
+    fetch("/api/tts/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ qwenVoiceDescription: trimmed }),
+    }).catch(() => {});
+  }, []);
+
+  const setRefText = useCallback((text: string) => {
+    const trimmed = text.slice(0, 1000);
+    setRefTextState(trimmed);
+    refTextRef.current = trimmed;
+    try { if (trimmed) localStorage.setItem(QWEN_REF_TEXT_KEY, trimmed); else localStorage.removeItem(QWEN_REF_TEXT_KEY); } catch { /* ignore */ }
+    fetch("/api/tts/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ refText: trimmed }),
+    }).catch(() => {});
+  }, []);
+
   return {
     ...state,
     speak,
@@ -1557,9 +1516,6 @@ function useTTSImpl(): UseTTSReturn {
     serverVoicePreset,
     setServerVoicePreset,
     isAudioCached,
-    hfToken,
-    setHFToken,
-    clearHFToken,
     kokoroReady,
     kokoroLoading,
     kokoroDownloadPercent,
@@ -1570,13 +1526,18 @@ function useTTSImpl(): UseTTSReturn {
     kokoroLoadMs,
     kokoroFromCache,
     kokoroIncompatible,
-    hfWarming,
     kokoroVoice,
     setKokoroVoice,
     qwenVoice,
     setQwenVoice,
-    qwenCustomDescription,
-    setQwenCustomDescription,
+    qwenMode,
+    setQwenMode,
+    qwenStyleInstruction,
+    setQwenStyleInstruction,
+    qwenVoiceDescription,
+    setQwenVoiceDescription,
+    refText,
+    setRefText,
   };
 }
 

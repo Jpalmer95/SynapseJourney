@@ -229,111 +229,281 @@ async function callOpenAITTS(text: string, voicePresetId: string): Promise<Buffe
 }
 
 /**
- * Call Qwen3-TTS via the Gradio 5.x HTTP REST API (no WebSocket, pure fetch).
- * The Gradio REST protocol:
- *   1. POST /call/{api_name} → { event_id }
- *   2. GET  /call/{api_name}/{event_id} → SSE stream with "event: complete" + "data: [...]"
- * All errors and timeouts are caught locally; no process-level listeners are used.
+ * Qwen3-TTS mode options.
+ * - custom_voice: preset speakers (Serena, Ryan, etc.) with optional style instructions
+ * - voice_design: text-described custom voice (e.g. "calm female narrator with soft accent")
+ * - voice_clone: clone a voice from a reference audio sample
  */
-async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?: string): Promise<Buffer | null> {
-  const spaceHost = process.env.QWEN_TTS_SPACE_HOST || "qwen-qwen3-tts.hf.space";
-  const apiName = process.env.QWEN_TTS_API_NAME || "synthesize";
+export interface QwenTTSOptions {
+  mode: "custom_voice" | "voice_design" | "voice_clone";
+  /** For custom_voice mode: speaker ID (Serena, Ryan, Aiden, etc.) */
+  speaker?: string;
+  /** For custom_voice mode: optional natural language style guidance */
+  styleInstruction?: string;
+  /** For voice_design mode: natural language voice description */
+  voiceDescription?: string;
+  /** For voice_clone mode: base64-encoded reference audio */
+  referenceAudio?: string;
+  /** For voice_clone mode: transcript of the reference audio */
+  refText?: string;
+  /** HF token for ZeroGPU access */
+  hfToken?: string;
+  /** Language for synthesis (default: "English") */
+  language?: string;
+  /** Model size for voice_clone and custom_voice (default: "1.7B") */
+  modelSize?: string;
+}
+
+const QWEN_SPACE_HOST = "qwen-qwen3-tts.hf.space";
+const GRADIO_API_PREFIX = "/gradio_api";
+
+/**
+ * Core Gradio REST helper: submit a prediction job and stream the SSE result.
+ *
+ * The Gradio 5.x REST protocol:
+ *   1. POST /gradio_api/call/{api_name}  → { event_id }
+ *   2. GET  /gradio_api/call/{api_name}/{event_id} → SSE stream with "event: complete" + "data: [...]"
+ *
+ * Returns the first file URL from the result data, or null on failure.
+ */
+async function gradioPredict(
+  apiName: string,
+  data: unknown[],
+  hfToken?: string,
+  submitTimeoutMs = 15_000,
+  sseTimeoutMs = 60_000,
+): Promise<string | null> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  if (hfToken) {
+    headers["Authorization"] = `Bearer ${hfToken}`;
+  }
+
+  // Step 1: Submit prediction job
+  const postRes = await fetch(`https://${QWEN_SPACE_HOST}${GRADIO_API_PREFIX}/call/${apiName}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ data }),
+    signal: AbortSignal.timeout(submitTimeoutMs),
+  });
+
+  if (!postRes.ok) {
+    console.info(`[TTS] Qwen3-TTS /call/${apiName} returned ${postRes.status} — skipping`);
+    return null;
+  }
+
+  const postBody = await postRes.json() as { event_id?: string };
+  const eventId = postBody.event_id;
+  if (!eventId) {
+    console.info("[TTS] Qwen3-TTS: No event_id in response — skipping");
+    return null;
+  }
+
+  // Step 2: Stream SSE result
+  const sseRes = await fetch(`https://${QWEN_SPACE_HOST}${GRADIO_API_PREFIX}/call/${apiName}/${eventId}`, {
+    headers: hfToken ? { Authorization: `Bearer ${hfToken}` } : undefined,
+    signal: AbortSignal.timeout(sseTimeoutMs),
+  });
+
+  if (!sseRes.ok || !sseRes.body) {
+    console.info(`[TTS] Qwen3-TTS SSE stream returned ${sseRes.status} — skipping`);
+    return null;
+  }
+
+  const reader = sseRes.body.getReader();
+  const decoder = new TextDecoder();
+  let sseBuffer = "";
+  let audioUrl: string | null = null;
+  let currentEvent = "";
 
   try {
-    // Apply voice style as a text prefix (Qwen3-TTS supports style prompts)
-    const preset = getVoicePreset(voicePresetId);
-    const styledText = preset ? `[${preset.style}] ${text}` : text;
+    outer: while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      sseBuffer += decoder.decode(value, { stream: true });
 
-    // Build request payload — include reference audio blob if custom voice clone
-    const requestPayload: Record<string, unknown> = { data: [styledText] };
-    if (referenceAudio) {
-      // Pass base64-encoded reference audio as the second argument
-      requestPayload.data = [styledText, { data: referenceAudio, mime_type: "audio/wav" }];
-    }
+      const lines = sseBuffer.split("\n");
+      sseBuffer = lines.pop() ?? "";
 
-    // Step 1: Submit prediction job and get event_id
-    const postRes = await fetch(`https://${spaceHost}/call/${apiName}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestPayload),
-      signal: AbortSignal.timeout(10000),
-    });
-
-    if (!postRes.ok) {
-      console.info(`[TTS] Qwen3-TTS: /call/${apiName} returned ${postRes.status} — skipping`);
-      return null;
-    }
-
-    const postBody = await postRes.json() as { event_id?: string };
-    const eventId = postBody.event_id;
-    if (!eventId) {
-      console.info("[TTS] Qwen3-TTS: No event_id in response — skipping");
-      return null;
-    }
-
-    // Step 2: Stream SSE result (timeout: 45s to allow for slow TTS generation)
-    const sseRes = await fetch(`https://${spaceHost}/call/${apiName}/${eventId}`, {
-      signal: AbortSignal.timeout(45000),
-    });
-
-    if (!sseRes.ok || !sseRes.body) {
-      console.info(`[TTS] Qwen3-TTS: SSE stream returned ${sseRes.status} — skipping`);
-      return null;
-    }
-
-    const reader = sseRes.body.getReader();
-    const decoder = new TextDecoder();
-    let sseBuffer = "";
-    let audioUrl: string | null = null;
-    let currentEvent = "";
-
-    try {
-      outer: while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        sseBuffer += decoder.decode(value, { stream: true });
-
-        const lines = sseBuffer.split("\n");
-        sseBuffer = lines.pop() ?? "";
-
-        for (const line of lines) {
-          if (line.startsWith("event: ")) {
-            currentEvent = line.slice(7).trim();
-          } else if (line.startsWith("data: ") && currentEvent === "complete") {
-            try {
-              const parsed = JSON.parse(line.slice(6)) as unknown;
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                const first = parsed[0] as Record<string, unknown>;
-                if (typeof first?.url === "string") {
-                  audioUrl = first.url;
-                  break outer;
-                }
+      for (const line of lines) {
+        if (line.startsWith("event: ")) {
+          currentEvent = line.slice(7).trim();
+        } else if (line.startsWith("data: ") && currentEvent === "complete") {
+          try {
+            const parsed = JSON.parse(line.slice(6)) as unknown;
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              const first = parsed[0] as Record<string, unknown>;
+              // Gradio returns a FileData object with a `url` field
+              if (typeof first?.url === "string") {
+                audioUrl = first.url;
+                break outer;
               }
-            } catch {
-              // malformed JSON line — skip
+              // Some Gradio versions return { path: "..." } without url
+              if (typeof first?.path === "string") {
+                audioUrl = `https://${QWEN_SPACE_HOST}${GRADIO_API_PREFIX}/file=${first.path}`;
+                break outer;
+              }
             }
-          } else if (line.startsWith("data: ") && currentEvent === "error") {
-            console.info("[TTS] Qwen3-TTS: Space returned an error event — skipping");
-            break outer;
+          } catch {
+            // malformed JSON line — skip
           }
+        } else if (line.startsWith("data: ") && currentEvent === "error") {
+          console.info("[TTS] Qwen3-TTS: Space returned an error event — skipping");
+          break outer;
         }
       }
-    } finally {
-      reader.cancel().catch(() => {});
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+
+  return audioUrl;
+}
+
+/**
+ * Upload a file to the Gradio Space for use as a reference audio in voice cloning.
+ * Returns the server file path that can be passed to the generate_voice_clone endpoint.
+ */
+async function gradioUploadFile(
+  audioBase64: string,
+  mimeType: string,
+  hfToken?: string,
+): Promise<string | null> {
+  const headers: Record<string, string> = {};
+  if (hfToken) {
+    headers["Authorization"] = `Bearer ${hfToken}`;
+  }
+
+  // Convert base64 to a Buffer, then to a Blob for multipart upload
+  const buffer = Buffer.from(audioBase64, "base64");
+  const ext = mimeType.includes("wav") ? "wav" : mimeType.includes("mp3") ? "mp3" : "audio";
+  const filename = `ref_audio.${ext}`;
+  const blob = new Blob([buffer], { type: mimeType || "audio/wav" });
+
+  const formData = new FormData();
+  formData.append("files", blob, filename);
+
+  const uploadRes = await fetch(`https://${QWEN_SPACE_HOST}${GRADIO_API_PREFIX}/upload`, {
+    method: "POST",
+    headers,
+    body: formData,
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!uploadRes.ok) {
+    console.info(`[TTS] Qwen3-TTS upload returned ${uploadRes.status} — skipping`);
+    return null;
+  }
+
+  const uploadBody = await uploadRes.json() as unknown;
+  // Gradio returns an array of file paths
+  if (Array.isArray(uploadBody) && uploadBody.length > 0) {
+    const first = uploadBody[0] as string | Record<string, unknown>;
+    if (typeof first === "string") return first;
+    if (typeof first === "object" && first !== null && typeof (first as Record<string, unknown>).path === "string") {
+      return (first as Record<string, string>).path;
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch audio bytes from a Gradio file URL.
+ */
+async function fetchGradioAudio(url: string, hfToken?: string): Promise<Buffer | null> {
+  const headers: Record<string, string> = {};
+  if (hfToken) {
+    headers["Authorization"] = `Bearer ${hfToken}`;
+  }
+  const audioRes = await fetch(url, {
+    headers,
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!audioRes.ok) {
+    console.info(`[TTS] Qwen3-TTS audio fetch returned ${audioRes.status}`);
+    return null;
+  }
+  return Buffer.from(await audioRes.arrayBuffer());
+}
+
+/**
+ * Call Qwen3-TTS with the appropriate endpoint based on the mode.
+ *
+ * Three modes:
+ * - custom_voice:  generate_custom_voice (preset speakers + optional style instructions)
+ * - voice_design: generate_voice_design (text-described voice, 1.7B only)
+ * - voice_clone:   generate_voice_clone (reference audio cloning)
+ *
+ * Returns audio as a Buffer, or null on any failure.
+ */
+async function callQwen3TTS(text: string, opts: QwenTTSOptions): Promise<Buffer | null> {
+  const hfToken = opts.hfToken;
+  const language = opts.language || "English";
+
+  try {
+    let audioUrl: string | null = null;
+
+    if (opts.mode === "voice_design") {
+      // Voice Design mode — text-described voice (1.7B only)
+      const desc = opts.voiceDescription || "A clear, natural-sounding narrator.";
+      audioUrl = await gradioPredict(
+        "generate_voice_design",
+        [text, language, desc],
+        hfToken,
+      );
+    } else if (opts.mode === "voice_clone") {
+      // Voice Clone mode — requires reference audio + transcript
+      if (!opts.referenceAudio) {
+        console.info("[TTS] Qwen3-TTS voice_clone: no reference audio provided — skipping");
+        return null;
+      }
+      if (!opts.refText) {
+        console.info("[TTS] Qwen3-TTS voice_clone: no reference text provided — skipping");
+        return null;
+      }
+
+      // Step 1: Upload the reference audio
+      const uploadedPath = await gradioUploadFile(opts.referenceAudio, "audio/wav", hfToken);
+      if (!uploadedPath) {
+        console.info("[TTS] Qwen3-TTS voice_clone: upload failed — skipping");
+        return null;
+      }
+
+      // Step 2: Call generate_voice_clone with the uploaded file path
+      const modelSize = opts.modelSize || "1.7B";
+      audioUrl = await gradioPredict(
+        "generate_voice_clone",
+        [
+          uploadedPath,       // ref_audio (filepath from upload)
+          opts.refText,       // ref_text (transcript of reference audio)
+          text,               // target_text (text to synthesize)
+          language,           // language
+          false,              // use_xvector_only (false = better quality)
+          modelSize,           // model_size ("0.6B" or "1.7B")
+        ],
+        hfToken,
+        15_000,
+        90_000, // voice clone may take longer
+      );
+    } else {
+      // Custom Voice mode (default) — preset speakers
+      const speaker = opts.speaker || "Ryan";
+      const styleInstruction = opts.styleInstruction || null;
+      const modelSize = opts.modelSize || "1.7B";
+      audioUrl = await gradioPredict(
+        "generate_custom_voice",
+        [text, language, speaker, styleInstruction, modelSize],
+        hfToken,
+      );
     }
 
     if (!audioUrl) return null;
 
-    // Step 3: Fetch the generated audio file (may be hosted on the Space itself)
-    const audioRes = await fetch(audioUrl, { signal: AbortSignal.timeout(15000) });
-    if (!audioRes.ok) {
-      console.info(`[TTS] Qwen3-TTS: Audio fetch returned ${audioRes.status}`);
-      return null;
-    }
-
-    return Buffer.from(await audioRes.arrayBuffer());
+    // Fetch the generated audio file
+    const audioBuffer = await fetchGradioAudio(audioUrl, hfToken);
+    return audioBuffer;
   } catch (err: unknown) {
-    // AbortError = timeout; TypeError = network error — both handled gracefully
     const name = err instanceof Error ? err.name : undefined;
     const message = err instanceof Error ? err.message : String(err);
     if (name === "AbortError" || name === "TimeoutError") {
@@ -347,41 +517,36 @@ async function callQwen3TTS(text: string, voicePresetId: string, referenceAudio?
 
 /**
  * Call HF Inference API for TTS.
- * Uses the provided token (may be server-side HF_API_TOKEN or user's personal token).
- * First attempts Qwen3-TTS on the Inference API; falls back to facebook/mms-tts-eng.
+ * Last-resort server-side fallback using facebook/mms-tts-eng.
  */
 async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {
-  // Attempt Qwen3-TTS via HF Inference API (available for paid inference)
-  const models = ["Qwen/Qwen3-TTS", "facebook/mms-tts-eng"];
-  for (const model of models) {
-    try {
-      const response = await fetch(
-        `https://api-inference.huggingface.co/models/${model}`,
-        {
-          method: "POST",
-          headers: {
-            "Authorization": `Bearer ${hfToken}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ inputs: text }),
-          signal: AbortSignal.timeout(30000),
-        }
-      );
-
-      if (!response.ok) {
-        const errText = await response.text().catch(() => "");
-        console.info(`[TTS] HF Inference (${model}): ${response.status} — ${errText.slice(0, 100)}`);
-        continue;
+  try {
+    const response = await fetch(
+      "https://api-inference.huggingface.co/models/facebook/mms-tts-eng",
+      {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${hfToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ inputs: text }),
+        signal: AbortSignal.timeout(30000),
       }
+    );
 
-      const arrayBuf = await response.arrayBuffer();
-      if (arrayBuf.byteLength > 0) {
-        return Buffer.from(arrayBuf);
-      }
-    } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      console.info(`[TTS] HF Inference (${model}): ${message}`);
+    if (!response.ok) {
+      const errText = await response.text().catch(() => "");
+      console.info(`[TTS] HF Inference (mms-tts-eng): ${response.status} — ${errText.slice(0, 100)}`);
+      return null;
     }
+
+    const arrayBuf = await response.arrayBuffer();
+    if (arrayBuf.byteLength > 0) {
+      return Buffer.from(arrayBuf);
+    }
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.info(`[TTS] HF Inference (mms-tts-eng): ${message}`);
   }
   return null;
 }
@@ -393,6 +558,8 @@ export interface TTSGenerateOptions {
   voicePreset: string;
   referenceAudio?: string;
   hfToken?: string;
+  /** Qwen3-TTS mode options (used when voicePreset is "qwen" or "custom") */
+  qwenOptions?: QwenTTSOptions;
 }
 
 export interface TTSResult {
@@ -403,7 +570,7 @@ export interface TTSResult {
 }
 
 export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSResult | null> {
-  const { unitId, content, isNextGen, voicePreset, referenceAudio, hfToken } = opts;
+  const { unitId, content, isNextGen, voicePreset, referenceAudio, hfToken, qwenOptions } = opts;
 
   const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
   const configHash = hashVoiceConfig(voicePreset, refHash);
@@ -423,10 +590,24 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   let fallback = false;
 
   if (voicePreset !== "browser") {
-    // 1. OpenAI TTS — primary server provider (reliable, fast, high quality)
-    audioBuffer = await callOpenAITTS(truncatedText, voicePreset);
+    // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets with HF token)
+    if ((voicePreset === "qwen" || voicePreset === "custom") && hfToken) {
+      const qwenOpts: QwenTTSOptions = qwenOptions || {
+        mode: voicePreset === "custom" ? "voice_clone" : "custom_voice",
+        referenceAudio,
+        hfToken,
+      };
+      // Ensure hfToken is always set
+      qwenOpts.hfToken = hfToken;
+      audioBuffer = await callQwen3TTS(truncatedText, qwenOpts);
+    }
 
-    // 2. HF Inference API — last server-side fallback (uses server env token or user token)
+    // 2. OpenAI TTS — server fallback (reliable, fast, high quality)
+    if (!audioBuffer) {
+      audioBuffer = await callOpenAITTS(truncatedText, voicePreset);
+    }
+
+    // 3. HF Inference API — last server-side fallback (uses server env token or user token)
     if (!audioBuffer) {
       const effectiveToken = process.env.HF_API_TOKEN || hfToken;
       if (effectiveToken) {
@@ -456,16 +637,32 @@ export async function callTTSDirect(
   text: string,
   voicePreset: string,
   referenceAudio?: string,
-  hfToken?: string
+  hfToken?: string,
+  qwenOptions?: QwenTTSOptions,
 ): Promise<{ buffer: Buffer; format: string } | null> {
   if (!text || text.length < 3) return null;
   const MAX_CHARS = 3000;
   const truncated = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS) + "..." : text;
 
-  // 1. OpenAI TTS — primary server provider
-  let audioBuffer: Buffer | null = await callOpenAITTS(truncated, voicePreset);
+  let audioBuffer: Buffer | null = null;
 
-  // 2. HF Inference API — last server-side fallback
+  // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets with HF token)
+  if ((voicePreset === "qwen" || voicePreset === "custom") && hfToken) {
+    const qwenOpts: QwenTTSOptions = qwenOptions || {
+      mode: voicePreset === "custom" ? "voice_clone" : "custom_voice",
+      referenceAudio,
+      hfToken,
+    };
+    qwenOpts.hfToken = hfToken;
+    audioBuffer = await callQwen3TTS(truncated, qwenOpts);
+  }
+
+  // 2. OpenAI TTS — server fallback
+  if (!audioBuffer) {
+    audioBuffer = await callOpenAITTS(truncated, voicePreset);
+  }
+
+  // 3. HF Inference API — last server-side fallback
   if (!audioBuffer) {
     const effectiveToken = process.env.HF_API_TOKEN || hfToken;
     if (effectiveToken) {
@@ -483,9 +680,10 @@ export async function preGenerateTTSForUnit(
   isNextGen: boolean,
   voicePreset: string,
   referenceAudio?: string,
-  hfToken?: string
+  hfToken?: string,
+  qwenOptions?: QwenTTSOptions,
 ): Promise<void> {
   if (!voicePreset || voicePreset === "browser") return;
-  generateTTSAudio({ unitId, content, isNextGen, voicePreset, referenceAudio, hfToken })
-    .catch(err => console.warn("[TTS] Background pre-generation failed:", err?.message || err));
+  generateTTSAudio({ unitId, content, isNextGen, voicePreset, referenceAudio, hfToken, qwenOptions })
+    .catch((err: unknown) => console.warn("[TTS] Background pre-generation failed:", err instanceof Error ? err.message : String(err)));
 }
