@@ -609,7 +609,7 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
 
     // 3. HF Inference API — last server-side fallback (uses server env token or user token)
     if (!audioBuffer) {
-      const effectiveToken = process.env.HF_API_TOKEN || hfToken;
+      const effectiveToken = process.env.HF_TOKEN || hfToken;
       if (effectiveToken) {
         audioBuffer = await callHFInferenceTTS(truncatedText, effectiveToken);
         if (audioBuffer) fallback = true;
@@ -664,7 +664,7 @@ export async function callTTSDirect(
 
   // 3. HF Inference API — last server-side fallback
   if (!audioBuffer) {
-    const effectiveToken = process.env.HF_API_TOKEN || hfToken;
+    const effectiveToken = process.env.HF_TOKEN || hfToken;
     if (effectiveToken) {
       audioBuffer = await callHFInferenceTTS(truncated, effectiveToken);
     }
