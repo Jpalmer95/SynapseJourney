@@ -425,8 +425,25 @@ export class DatabaseStorage implements IStorage {
   }
 
   async createTopic(topic: InsertTopic): Promise<Topic> {
-    const [created] = await db.insert(topics).values(topic).returning();
-    return created;
+    // Never accept a client-supplied id — always use the sequence
+    const { id: _ignore, ...safe } = topic as InsertTopic & { id?: number };
+    try {
+      const [created] = await db.insert(topics).values(safe as InsertTopic).returning();
+      return created;
+    } catch (err: any) {
+      // Seeded topics used explicit IDs; sequences can lag behind MAX(id)
+      if (err?.code === "23505" && String(err?.constraint || "").includes("topics_pkey")) {
+        await db.execute(sql`
+          SELECT setval(
+            pg_get_serial_sequence('topics', 'id'),
+            (SELECT COALESCE(MAX(id), 1) FROM topics)
+          )
+        `);
+        const [created] = await db.insert(topics).values(safe as InsertTopic).returning();
+        return created;
+      }
+      throw err;
+    }
   }
 
   // Knowledge Cards
@@ -963,10 +980,34 @@ export class DatabaseStorage implements IStorage {
 
   async getOrCreateTopicMastery(userId: string, topicId: number): Promise<TopicMastery> {
     const existing = await this.getTopicMastery(userId, topicId);
-    if (existing) return existing;
-    
+    if (existing) {
+      // BYOC open platform: all tiers always available (no unlock keys)
+      if (
+        !existing.intermediateUnlocked ||
+        !existing.advancedUnlocked ||
+        !existing.nextgenUnlocked ||
+        !existing.keyUnlocked
+      ) {
+        return this.updateTopicMastery(userId, topicId, {
+          intermediateUnlocked: true,
+          advancedUnlocked: true,
+          nextgenUnlocked: true,
+          keyUnlocked: true,
+        });
+      }
+      return existing;
+    }
+
     const [created] = await db.insert(topicMastery)
-      .values({ userId, topicId })
+      .values({
+        userId,
+        topicId,
+        beginnerUnlocked: true,
+        intermediateUnlocked: true,
+        advancedUnlocked: true,
+        nextgenUnlocked: true,
+        keyUnlocked: true,
+      })
       .returning();
     return created;
   }
@@ -1017,9 +1058,11 @@ export class DatabaseStorage implements IStorage {
       intermediateCompleted,
       advancedCompleted,
       nextgenCompleted,
-      intermediateUnlocked,
-      advancedUnlocked,
-      nextgenUnlocked,
+      // BYOC: tiers stay open; completion counters still track progress
+      intermediateUnlocked: true,
+      advancedUnlocked: true,
+      nextgenUnlocked: true,
+      keyUnlocked: true,
     });
   }
 

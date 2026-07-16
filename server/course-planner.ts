@@ -17,7 +17,8 @@
  * that already have syllabi defined.
  */
 
-import { generateCourseContent } from "./ai-providers";
+import { generateCourseContent, generateByokOrPool, type ProviderConfig } from "./ai-providers";
+import { classifyTopicByKeywords } from "./routes/ai";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -146,7 +147,12 @@ export type LearningIntent = "survey" | "standard" | "deep" | "speed_run" | "goa
 export async function planCourseWithAI(
   topicTitle: string,
   topicDescription: string,
-  options?: { learningIntent?: LearningIntent; goalDescription?: string }
+  options?: {
+    learningIntent?: LearningIntent;
+    goalDescription?: string;
+    /** BYOC: use learner's keys first, then platform pool */
+    userConfig?: ProviderConfig;
+  }
 ): Promise<CoursePlan> {
   const learningIntent = options?.learningIntent || "standard";
   const goalDescription = options?.goalDescription || "";
@@ -158,10 +164,21 @@ export async function planCourseWithAI(
     .replace("{goalDescription}", goalDescription || "(none — general mastery of the topic)");
 
   try {
-    const content = await generateCourseContent(
-      [{ role: "user", content: prompt }],
-      { responseFormat: "json", temperature: 0.7 }
-    ) || "{}";
+    let content: string;
+    if (options?.userConfig) {
+      const result = await generateByokOrPool(
+        [{ role: "user", content: prompt }],
+        options.userConfig,
+        { responseFormat: "json", temperature: 0.7 }
+      );
+      content = result.content || "{}";
+      console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
+    } else {
+      content = (await generateCourseContent(
+        [{ role: "user", content: prompt }],
+        { responseFormat: "json", temperature: 0.7 }
+      )) || "{}";
+    }
 
     const parsed = JSON.parse(content);
 
@@ -263,8 +280,6 @@ export async function planCourseWithAI(
 }
 
 // ── Legacy Heuristic Fallback ──────────────────────────────────────────────
-
-import { classifyTopicByKeywords } from "./routes/ai";
 
 /**
  * Fallback: build a CoursePlan from the legacy keyword-based heuristic.

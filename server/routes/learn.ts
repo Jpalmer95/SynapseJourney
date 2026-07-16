@@ -7,6 +7,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { generateLessonOutline } from "./ai";
+import { providerConfigFromProfile } from "../ai-providers";
 
 const depthModes = ["survey", "standard", "deep", "speed_run", "goal"] as const;
 const tutorModes = ["direct", "socratic", "feynman"] as const;
@@ -202,6 +203,10 @@ export function registerLearnRoutes(app: Express) {
         } as any);
       }
 
+      // BYOC: learner's Settings keys first (xAI / Gemini / OpenRouter / HF / Ollama), then platform pool
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
       // Ensure units exist — generate goal-intent outline if empty
       let units = await storage.getLessonUnits(topic.id);
       if (units.length === 0) {
@@ -209,6 +214,7 @@ export function registerLearnRoutes(app: Express) {
           learningIntent: "goal",
           goalDescription: goalText,
           createdByUserId: userId,
+          userConfig,
         });
       }
 
@@ -247,10 +253,17 @@ export function registerLearnRoutes(app: Express) {
         units,
         coursePlan: plan || null,
         nextUnit: units[0] || null,
+        compute: {
+          byoc: !!profile && !!(profile.xaiKey || profile.geminiKey || profile.openRouterKey || profile.huggingFaceToken || profile.ollamaUrl),
+          preferredProvider: profile?.preferredAiProvider || null,
+        },
       });
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error creating learning goal:", error);
-      res.status(500).json({ error: "Failed to create learning goal" });
+      res.status(500).json({
+        error: "Failed to create learning goal",
+        message: error?.message || String(error),
+      });
     }
   });
 
