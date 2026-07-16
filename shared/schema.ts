@@ -591,15 +591,27 @@ export const userApiKeys = pgTable("user_api_keys", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// Personal access tokens (Hermes / external agents upload authored content)
+export const userAccessTokens = pgTable("user_access_tokens", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  name: text("name").notNull().default("Hermes"),
+  tokenPrefix: varchar("token_prefix", { length: 16 }).notNull(), // first chars for UI display
+  tokenHash: text("token_hash").notNull(), // sha256 hex
+  lastUsedAt: timestamp("last_used_at"),
+  revokedAt: timestamp("revoked_at"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Agent Profiles (registered AI agents with owner accountability)
 export const agentProfiles = pgTable("agent_profiles", {
   id: serial("id").primaryKey(),
-  agentId: varchar("agent_id").notNull().unique(), // unique agent identifier
-  ownerId: varchar("owner_id").notNull(), // human user who vouches for this agent
+  agentId: varchar("agent_id").notNull().unique(),
+  ownerId: varchar("owner_id").notNull(),
   name: text("name").notNull(),
   description: text("description"),
-  apiKey: text("api_key").notNull(), // agent's auth key (hashed)
-  modelUsed: text("model_used"), // which LLM the agent uses
+  apiKey: text("api_key"), // hashed agent auth key (legacy)
+  modelUsed: text("model_used"),
   isVerified: boolean("is_verified").default(false).notNull(),
   rateLimitPerHour: integer("rate_limit_per_hour").default(50).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -758,6 +770,7 @@ export const insertFlashcardReviewSchema = createInsertSchema(flashcardReviews).
 export const insertContentVersionSchema = createInsertSchema(contentVersions).omit({ id: true, createdAt: true });
 export const insertContentReviewSchema = createInsertSchema(contentReviews).omit({ id: true, reviewedAt: true });
 export const insertUserApiKeySchema = createInsertSchema(userApiKeys).omit({ id: true, createdAt: true, lastUsedAt: true });
+export const insertUserAccessTokenSchema = createInsertSchema(userAccessTokens).omit({ id: true, createdAt: true, lastUsedAt: true, revokedAt: true });
 export const insertAgentProfileSchema = createInsertSchema(agentProfiles).omit({ id: true, createdAt: true });
 export const insertCommunityPoolUsageSchema = createInsertSchema(communityPoolUsage).omit({ id: true, updatedAt: true });
 export const insertCommunityPoolQueueSchema = createInsertSchema(communityPoolQueue).omit({ id: true, createdAt: true, processedAt: true });
@@ -867,6 +880,8 @@ export type ContentReview = typeof contentReviews.$inferSelect;
 export type InsertContentReview = z.infer<typeof insertContentReviewSchema>;
 export type UserApiKey = typeof userApiKeys.$inferSelect;
 export type InsertUserApiKey = z.infer<typeof insertUserApiKeySchema>;
+export type UserAccessToken = typeof userAccessTokens.$inferSelect;
+export type InsertUserAccessToken = z.infer<typeof insertUserAccessTokenSchema>;
 export type AgentProfile = typeof agentProfiles.$inferSelect;
 export type InsertAgentProfile = z.infer<typeof insertAgentProfileSchema>;
 export type CommunityPoolUsage = typeof communityPoolUsage.$inferSelect;

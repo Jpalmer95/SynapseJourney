@@ -165,6 +165,7 @@ export async function planCourseWithAI(
 
   try {
     let content: string;
+    // Always BYOC-or-fail for dynamic plans — never silent platform spend
     if (options?.userConfig) {
       const result = await generateByokOrPool(
         [{ role: "user", content: prompt }],
@@ -174,10 +175,9 @@ export async function planCourseWithAI(
       content = result.content || "{}";
       console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
     } else {
-      content = (await generateCourseContent(
-        [{ role: "user", content: prompt }],
-        { responseFormat: "json", temperature: 0.7 }
-      )) || "{}";
+      // No user config → heuristic only (no platform AI)
+      console.warn(`[CoursePlanner] No userConfig for "${topicTitle}" — using heuristic (BYOC-only mode)`);
+      return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
     }
 
     const parsed = JSON.parse(content);

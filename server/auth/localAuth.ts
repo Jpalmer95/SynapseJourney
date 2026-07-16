@@ -3,6 +3,8 @@ import type { Express, RequestHandler } from "express";
 import connectPg from "connect-pg-simple";
 import { authStorage } from "../replit_integrations/auth/storage";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
+import { storage } from "../storage";
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
@@ -31,16 +33,32 @@ export async function setupAuth(app: Express) {
   app.set("trust proxy", 1);
   app.use(getSession());
 
-  // Compatibility middleware: populate req.user from session
-  // so existing code using req.user.claims.sub continues to work
-  app.use((req: any, _res, next) => {
+  // Populate req.user from session OR Bearer PAT (sj_...)
+  app.use(async (req: any, _res, next) => {
     if (req.session?.userId) {
-      req.user = { claims: { sub: req.session.userId } };
+      req.user = { claims: { sub: req.session.userId }, authMethod: "session" };
+      return next();
+    }
+
+    const header = req.headers.authorization as string | undefined;
+    if (header?.startsWith("Bearer ")) {
+      const token = header.slice(7).trim();
+      if (token.startsWith("sj_")) {
+        try {
+          const hash = crypto.createHash("sha256").update(token).digest("hex");
+          const row = await storage.findUserAccessTokenByHash(hash);
+          if (row) {
+            req.user = { claims: { sub: row.userId }, authMethod: "pat", tokenId: row.id };
+            storage.touchUserAccessToken(row.id).catch(() => {});
+          }
+        } catch {
+          // isAuthenticated will 401 if unresolved
+        }
+      }
     }
     next();
   });
 
-  // Register
   app.post("/api/auth/register", async (req, res) => {
     try {
       const { email, password, firstName, lastName } = req.body;
@@ -71,7 +89,6 @@ export async function setupAuth(app: Express) {
     }
   });
 
-  // Login
   app.post("/api/auth/login", async (req, res) => {
     try {
       const { email, password } = req.body;
@@ -80,13 +97,13 @@ export async function setupAuth(app: Express) {
       }
 
       const user = await authStorage.getUserByEmail(email);
-      if (!user || !user.passwordHash) {
-        return res.status(401).json({ message: "Invalid credentials" });
+      if (!user?.passwordHash) {
+        return res.status(401).json({ message: "Invalid email or password" });
       }
 
-      const valid = await bcrypt.compare(password, user.passwordHash);
-      if (!valid) {
-        return res.status(401).json({ message: "Invalid credentials" });
+      const ok = await bcrypt.compare(password, user.passwordHash);
+      if (!ok) {
+        return res.status(401).json({ message: "Invalid email or password" });
       }
 
       (req.session as any).userId = user.id;
@@ -99,24 +116,21 @@ export async function setupAuth(app: Express) {
     }
   });
 
-  // Logout
   app.post("/api/auth/logout", (req, res) => {
     req.session?.destroy(() => {
       res.json({ message: "Logged out" });
     });
   });
 
-  // Legacy logout route (GET for backward compatibility)
   app.get("/api/logout", (req, res) => {
     req.session?.destroy(() => {
       res.redirect("/");
     });
   });
 
-  // Get current user
   app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
     try {
-      const userId = req.session.userId;
+      const userId = req.user.claims.sub;
       const user = await authStorage.getUser(userId);
       if (!user) {
         return res.status(404).json({ message: "User not found" });
@@ -130,22 +144,18 @@ export async function setupAuth(app: Express) {
 }
 
 export const isAuthenticated: RequestHandler = async (req: any, res, next) => {
-  if (req.session?.userId) {
-    // Ensure req.user compatibility
-    req.user = { claims: { sub: req.session.userId } };
+  if (req.user?.claims?.sub || req.session?.userId) {
+    if (!req.user && req.session?.userId) {
+      req.user = { claims: { sub: req.session.userId }, authMethod: "session" };
+    }
     return next();
   }
   return res.status(401).json({ message: "Unauthorized" });
 };
 
-/**
- * Optional auth — populates req.user if session exists, but does NOT block
- * unauthenticated requests. Use on public read endpoints that benefit from
- * personalization when logged in but should work for anonymous visitors too.
- */
 export const optionalAuth: RequestHandler = async (req: any, _res, next) => {
-  if (req.session?.userId) {
-    req.user = { claims: { sub: req.session.userId } };
+  if (req.session?.userId && !req.user) {
+    req.user = { claims: { sub: req.session.userId }, authMethod: "session" };
   }
   return next();
 };

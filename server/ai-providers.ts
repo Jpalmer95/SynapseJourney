@@ -590,41 +590,41 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
 }
 
 /**
- * Generate content using BYOK or community pool.
- * 
- * Resolution order:
- * 1. User's BYOK key (user pays)
- * 2. Community pool / platform keys (if available)
- * 3. Reject with error
+ * Generate content using ONLY the learner's BYOC keys.
+ * No platform free-pool fallback (prevents compute abuse).
+ *
+ * For Hermes-authored content, use POST /api/learn/ingest instead —
+ * generation happens in Hermes; Synapse only stores the result.
  */
 export async function generateByokOrPool(
   messages: { role: string; content: string }[],
   config: ProviderConfig,
   options?: ChatOptions
 ): Promise<{ content: string; source: "byok" | "pool"; provider: string }> {
-  // 1. Try user's BYOK first
   const byokCheck = validateByokCredentials(config);
-  if (byokCheck.valid) {
-    const provider = getByokProvider(config);
-    if (provider) {
-      try {
-        const content = await provider.chat(messages, options);
-        return { content, source: "byok", provider: provider.name };
-      } catch (err) {
-        console.warn(`[BYOK] User's ${provider.name} failed: ${err instanceof Error ? err.message : err}. Trying pool.`);
-        // Fall through to community pool
-      }
-    }
+  if (!byokCheck.valid) {
+    throw new Error(
+      "BYOC_REQUIRED: Add your own AI key in Settings (xAI, Gemini, OpenRouter, Hugging Face, Ollama), " +
+        "or use Hermes Agent to author the course and upload it via a personal access token. " +
+        "Platform free compute is disabled."
+    );
   }
 
-  // 2. Platform / community pool
+  const provider = getByokProvider(config);
+  if (!provider) {
+    throw new Error(
+      "BYOC_REQUIRED: No usable provider client for your configured keys. Check Settings → AI Provider."
+    );
+  }
+
   try {
-    const content = await generateCourseContent(messages, options);
-    return { content, source: "pool", provider: "platform" };
+    const content = await provider.chat(messages, options);
+    return { content, source: "byok", provider: provider.name };
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
-      `No working AI compute available. Add an API key in Settings (xAI, Gemini, OpenRouter, Hugging Face, or Ollama). Detail: ${msg}`
+      `Your BYOC provider (${provider.name}) failed: ${msg}. ` +
+        `Fix the key/model, or author the course in Hermes and upload it.`
     );
   }
 }
