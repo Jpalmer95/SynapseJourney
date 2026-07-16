@@ -12,6 +12,7 @@ import {
   openScienceIdeas, openScienceComments,
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
   coursePlans, learningGoals, learningTimeline, topicLearningPrefs,
+  coursePosters,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -77,6 +78,8 @@ import {
   type InsertLearningTimelineEvent,
   type TopicLearningPrefs,
   type InsertTopicLearningPrefs,
+  type CoursePoster,
+  type InsertCoursePoster,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -386,6 +389,9 @@ export interface IStorage {
     depthMode: string | null;
   }[]>;
   updateLessonSection(userId: string, unitId: number, lastSection: string): Promise<void>;
+  saveCoursePoster(data: InsertCoursePoster): Promise<CoursePoster>;
+  getCoursePoster(userId: string, topicId: number): Promise<CoursePoster | undefined>;
+  getUserCoursePosters(userId: string): Promise<CoursePoster[]>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2635,6 +2641,33 @@ export class DatabaseStorage implements IStorage {
     }
 
     return results;
+  }
+
+  async saveCoursePoster(data: InsertCoursePoster): Promise<CoursePoster> {
+    const existing = await this.getCoursePoster(data.userId, data.topicId);
+    if (existing) {
+      const [updated] = await db.update(coursePosters)
+        .set({ posterData: data.posterData, generatedAt: new Date() })
+        .where(eq(coursePosters.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(coursePosters).values(data).returning();
+    return created;
+  }
+
+  async getCoursePoster(userId: string, topicId: number): Promise<CoursePoster | undefined> {
+    const [poster] = await db.select().from(coursePosters)
+      .where(and(eq(coursePosters.userId, userId), eq(coursePosters.topicId, topicId)))
+      .orderBy(desc(coursePosters.generatedAt))
+      .limit(1);
+    return poster;
+  }
+
+  async getUserCoursePosters(userId: string): Promise<CoursePoster[]> {
+    return db.select().from(coursePosters)
+      .where(eq(coursePosters.userId, userId))
+      .orderBy(desc(coursePosters.generatedAt));
   }
 }
 

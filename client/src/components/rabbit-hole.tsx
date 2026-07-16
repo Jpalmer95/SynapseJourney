@@ -45,6 +45,7 @@ import {
   AlertTriangle,
   Coins,
   Play,
+  Target,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -67,6 +68,7 @@ import { AiChat } from "@/components/ai-chat";
 import { TTSButton } from "@/components/tts-button";
 import { MermaidDiagram } from "@/components/mermaid";
 import { CodeSandbox } from "@/components/code-sandbox";
+import { CoursePoster, type CoursePosterData } from "@/components/course-poster";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
@@ -256,6 +258,12 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const [tutorMode, setTutorMode] = useState<string>("direct");
   const [contentView, setContentView] = useState<"full" | "skim">("full");
   const [resumeApplied, setResumeApplied] = useState(false);
+  const [quizFirst, setQuizFirst] = useState(false);
+  const [onDemandQuiz, setOnDemandQuiz] = useState<LessonContent["quiz"] | null>(null);
+  const [quizGenerating, setQuizGenerating] = useState(false);
+  const [poster, setPoster] = useState<CoursePosterData | null>(null);
+  const [posterLoading, setPosterLoading] = useState(false);
+  const [replanLoading, setReplanLoading] = useState(false);
   const [bulkRegenStatus, setBulkRegenStatus] = useState<{
     isRunning: boolean;
     completed: number;
@@ -332,6 +340,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     setDepthMode(topicPrefs.depthMode || "standard");
     setTutorMode(topicPrefs.tutorMode || "direct");
     setContentView((topicPrefs.contentView as "full" | "skim") || "full");
+    setQuizFirst(topicPrefs.depthMode === "speed_run");
   }, [topicPrefs?.depthMode, topicPrefs?.tutorMode, topicPrefs?.contentView]);
 
   const saveTopicPrefs = async (patch: { depthMode?: string; tutorMode?: string; contentView?: string }) => {
@@ -341,6 +350,117 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
     } catch {
       // non-blocking
+    }
+  };
+
+  /** Safe depth replan — never wipes progress */
+  const replanDepth = async (intent: string) => {
+    setDepthMode(intent);
+    setReplanLoading(true);
+    try {
+      const res = await apiRequest("POST", `/api/learn/topics/${topic.id}/replan`, {
+        learningIntent: intent,
+        expandUnits: intent === "deep" || intent === "standard",
+      });
+      const data = await res.json();
+      if (data.presentation?.contentView) {
+        setContentView(data.presentation.contentView);
+      }
+      setQuizFirst(!!data.presentation?.quizFirst);
+      toast({
+        title: "Learning mode updated",
+        description: data.message || `Switched to ${intent}. Progress preserved.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "course-plan"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
+    } catch (err: any) {
+      toast({
+        title: "Could not reshape path",
+        description: err?.message || "Prefs still updated locally.",
+        variant: "destructive",
+      });
+      // fallback to prefs-only
+      if (intent === "survey" || intent === "speed_run") {
+        setContentView("skim");
+        setQuizFirst(intent === "speed_run");
+        await saveTopicPrefs({ depthMode: intent, contentView: "skim" });
+      } else {
+        setQuizFirst(false);
+        await saveTopicPrefs({ depthMode: intent });
+      }
+    } finally {
+      setReplanLoading(false);
+    }
+  };
+
+  const generateQuiz = async () => {
+    if (!selectedUnit) return;
+    setQuizGenerating(true);
+    try {
+      const res = await apiRequest("POST", `/api/lessons/unit/${selectedUnit.id}/quiz`, {
+        questionCount: depthMode === "speed_run" ? 4 : 3,
+      });
+      const data = await res.json();
+      if (data.quiz?.length) {
+        setOnDemandQuiz(data.quiz);
+        setQuizAnswers({});
+        setQuizSubmitted(false);
+        queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit", selectedUnit.id, "content"] });
+        toast({ title: "Quiz ready", description: `${data.quiz.length} questions generated for this lesson.` });
+      } else {
+        throw new Error(data.message || "Empty quiz");
+      }
+    } catch (err: any) {
+      toast({
+        title: "Quiz generation failed",
+        description: err?.message || "Try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setQuizGenerating(false);
+    }
+  };
+
+  const generatePoster = async () => {
+    setPosterLoading(true);
+    try {
+      const res = await apiRequest("POST", `/api/lessons/${topic.id}/poster`);
+      const data = await res.json();
+      if (data.poster) {
+        setPoster(data.poster);
+        toast({ title: "Poster earned!", description: "Your course completion poster is ready." });
+      }
+    } catch (err: any) {
+      toast({
+        title: "Poster failed",
+        description: err?.message || "Could not generate poster.",
+        variant: "destructive",
+      });
+    } finally {
+      setPosterLoading(false);
+    }
+  };
+
+  // Active goal for this topic
+  const { data: topicGoalData } = useQuery<{ goal: any | null }>({
+    queryKey: ["/api/learn/topics", topic.id, "goal"],
+  });
+  const topicGoal = topicGoalData?.goal;
+
+  const toggleMilestone = async (index: number, done: boolean) => {
+    if (!topicGoal) return;
+    try {
+      const res = await apiRequest("POST", `/api/learn/goals/${topicGoal.id}/milestones/${index}`, { done });
+      const data = await res.json();
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "goal"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/goals"] });
+      if (data.allDone) {
+        toast({ title: "Goal complete!", description: "All milestones checked. Generating poster…" });
+        generatePoster();
+      }
+    } catch {
+      toast({ title: "Could not update milestone", variant: "destructive" });
     }
   };
 
@@ -637,6 +757,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       setQuizAnswers({});
       setQuizSubmitted(false);
       setShowResources(false);
+      setOnDemandQuiz(null);
     }
   }, [selectedUnit?.id]);
 
@@ -670,17 +791,21 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
 
   const handleSubmitQuiz = () => {
     const content = unitContent?.content;
-    if (!content || !('quiz' in content) || !content.quiz) return;
-    
-    const quiz = content.quiz as LessonContent['quiz'];
+    const quizSource =
+      onDemandQuiz ||
+      (content && "quiz" in content && content.quiz && content.quiz.length > 0
+        ? (content.quiz as LessonContent["quiz"])
+        : null);
+    if (!quizSource) return;
+
     let correct = 0;
-    quiz.forEach((q: LessonContent['quiz'][0], i: number) => {
+    quizSource.forEach((q, i) => {
       if (quizAnswers[i] === q.correctIndex) correct++;
     });
-    
-    const score = Math.round((correct / quiz.length) * 100);
+
+    const score = Math.round((correct / quizSource.length) * 100);
     setQuizSubmitted(true);
-    
+
     if (selectedUnit) {
       completeLessonMutation.mutate({ unitId: selectedUnit.id, quizScore: score });
     }
@@ -1234,7 +1359,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
               </div>
             ) : lessonContent ? (
               /* Standard Lesson Content View */
-              <div className="space-y-8 w-full min-w-0 max-w-full">
+              <div className="space-y-8 w-full min-w-0 max-w-full flex flex-col">
                 {/* Listen Button / Audio Player */}
                 <div className="flex justify-center">
                   <TTSButton
@@ -1247,6 +1372,17 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     className={lessonSections.length > 0 ? "w-full" : undefined}
                   />
                 </div>
+
+                {(quizFirst || depthMode === "speed_run") && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm flex items-center justify-between gap-3" data-testid="banner-speed-run">
+                    <span>
+                      <strong>Speed-run:</strong> skim takeaways, then quiz yourself. Deep content is optional.
+                    </span>
+                    <Button size="sm" variant="secondary" onClick={generateQuiz} disabled={quizGenerating}>
+                      {quizGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : "Quiz now"}
+                    </Button>
+                  </div>
+                )}
 
                 {/* Key Takeaways Section */}
                 {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (() => {
@@ -1421,16 +1557,60 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </section>
                 )}
 
-                {/* Quiz Section */}
-                {lessonContent.quiz && lessonContent.quiz.length > 0 && (
-                  <section className="min-w-0 w-full">
+                {/* Quiz Section — on-demand generation when empty */}
+                {(() => {
+                  const activeQuiz =
+                    onDemandQuiz ||
+                    (lessonContent.quiz && lessonContent.quiz.length > 0 ? lessonContent.quiz : null);
+                  const quizBlock = !activeQuiz ? (
+                  <section className={cn("min-w-0 w-full", quizFirst && "order-first")} data-testid="section-generate-quiz">
                     <div className="flex items-center gap-2 mb-4">
                       <Brain className="h-5 w-5 text-primary shrink-0" />
                       <h2 className="text-xl font-semibold">Check Your Understanding</h2>
+                      {(quizFirst || depthMode === "speed_run") && (
+                        <Badge variant="secondary" className="text-[10px]">Speed-run</Badge>
+                      )}
+                    </div>
+                    <Card className="overflow-hidden w-full border-primary/20">
+                      <CardContent className="p-4 sm:p-6 space-y-3">
+                        <p className="text-sm text-muted-foreground">
+                          Quizzes are generated on demand from this lesson — tailored to what you just read, not generic bank questions.
+                        </p>
+                        <Button
+                          onClick={generateQuiz}
+                          disabled={quizGenerating}
+                          className="w-full"
+                          data-testid="button-generate-quiz"
+                        >
+                          {quizGenerating ? (
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                          ) : (
+                            <Brain className="h-4 w-4 mr-2" />
+                          )}
+                          Generate Quiz
+                        </Button>
+                      </CardContent>
+                    </Card>
+                  </section>
+                  ) : (
+                  <section className={cn("min-w-0 w-full", quizFirst && "order-first")} data-testid="section-quiz">
+                    <div className="flex items-center gap-2 mb-4">
+                      <Brain className="h-5 w-5 text-primary shrink-0" />
+                      <h2 className="text-xl font-semibold">Check Your Understanding</h2>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="ml-auto text-xs"
+                        onClick={generateQuiz}
+                        disabled={quizGenerating}
+                        data-testid="button-regenerate-quiz"
+                      >
+                        {quizGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : "New quiz"}
+                      </Button>
                     </div>
                     <Card className="overflow-hidden w-full">
                       <CardContent className="p-4 sm:p-6 space-y-6 overflow-hidden">
-                        {lessonContent.quiz.map((q, qIndex) => (
+                        {activeQuiz.map((q, qIndex) => (
                           <div key={qIndex} className="space-y-3">
                             <p className="font-medium break-words [overflow-wrap:anywhere]">
                               {qIndex + 1}. {q.question}
@@ -1474,7 +1654,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         {!quizSubmitted && (
                           <Button 
                             onClick={handleSubmitQuiz}
-                            disabled={Object.keys(quizAnswers).length < lessonContent.quiz.length}
+                            disabled={Object.keys(quizAnswers).length < activeQuiz.length}
                             className="w-full"
                             data-testid="button-submit-quiz"
                           >
@@ -1485,7 +1665,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       </CardContent>
                     </Card>
                   </section>
-                )}
+                  );
+                  return quizBlock;
+                })()}
 
                 {/* Go Deeper: External Resources */}
                 {lessonContent.externalResources && lessonContent.externalResources.length > 0 && (
@@ -1682,20 +1864,14 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   key={m.id}
                   type="button"
                   title={m.hint}
-                  onClick={() => {
-                    setDepthMode(m.id);
-                    if (m.id === "survey" || m.id === "speed_run") {
-                      setContentView("skim");
-                      saveTopicPrefs({ depthMode: m.id, contentView: "skim" });
-                    } else {
-                      saveTopicPrefs({ depthMode: m.id });
-                    }
-                  }}
+                  disabled={replanLoading}
+                  onClick={() => replanDepth(m.id)}
                   className={cn(
                     "text-xs px-2.5 py-1 rounded-full border transition-colors",
                     depthMode === m.id
                       ? "bg-primary text-primary-foreground border-primary"
-                      : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                      : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground",
+                    replanLoading && "opacity-60"
                   )}
                   data-testid={`chip-depth-${m.id}`}
                 >
@@ -1765,6 +1941,50 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </a>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {topicGoal && (
+              <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-3 space-y-2" data-testid="section-goal-milestones">
+                <div className="flex items-center gap-2 text-sm font-semibold">
+                  <Target className="h-4 w-4 text-amber-500" />
+                  Goal: {topicGoal.goalText}
+                </div>
+                <ul className="space-y-1.5">
+                  {(Array.isArray(topicGoal.milestones) ? topicGoal.milestones : []).map((m: any, i: number) => (
+                    <li key={i}>
+                      <label className="flex items-start gap-2 text-sm cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="mt-1 rounded border-border"
+                          checked={!!m.done}
+                          onChange={(e) => toggleMilestone(i, e.target.checked)}
+                          data-testid={`checkbox-milestone-${i}`}
+                        />
+                        <span className={cn(m.done && "line-through text-muted-foreground")}>{m.title}</span>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+
+            {poster && (
+              <CoursePoster poster={poster} topicTitle={topic.title} className="mt-2" />
+            )}
+
+            {!poster && (
+              <div className="flex justify-end">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={generatePoster}
+                  disabled={posterLoading}
+                  data-testid="button-generate-poster"
+                >
+                  {posterLoading ? <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> : <Trophy className="h-3.5 w-3.5 mr-1.5" />}
+                  Completion poster
+                </Button>
               </div>
             )}
           </div>

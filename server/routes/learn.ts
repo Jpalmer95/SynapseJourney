@@ -310,4 +310,209 @@ export function registerLearnRoutes(app: Express) {
       res.status(500).json({ error: "Failed to record resume" });
     }
   });
+
+  // ── Safe intent re-plan (never wipes progress) ────────────────────────────
+  // Changes presentation + optionally APPENDs units for deep mode.
+  // Never deletes lesson units or progress rows.
+  app.post("/api/learn/topics/:topicId/replan", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+
+      const body = z.object({
+        learningIntent: z.enum(["survey", "standard", "deep", "speed_run", "goal"]),
+        goalDescription: z.string().max(500).optional(),
+        expandUnits: z.boolean().optional().default(true),
+      }).safeParse(req.body);
+      if (!body.success) {
+        return res.status(400).json({ error: "Invalid body", details: body.error.flatten() });
+      }
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) return res.status(404).json({ error: "Topic not found" });
+
+      const { learningIntent, goalDescription, expandUnits } = body.data;
+      const { planCourseWithAI } = await import("../course-planner");
+
+      const plan = await planCourseWithAI(
+        topic.title,
+        topic.description || goalDescription || `Learning ${topic.title}`,
+        { learningIntent, goalDescription }
+      );
+
+      await storage.saveCoursePlan({
+        topicId,
+        learningIntent,
+        goalDescription: goalDescription || null,
+        planJson: plan as any,
+        createdByUserId: userId,
+        version: 1,
+      });
+
+      // Presentation prefs — never delete progress
+      const contentView =
+        learningIntent === "survey" || learningIntent === "speed_run" || learningIntent === "goal"
+          ? "skim"
+          : "full";
+
+      const prefs = await storage.upsertTopicLearningPrefs(userId, topicId, {
+        depthMode: learningIntent === "goal" ? "speed_run" : learningIntent,
+        contentView,
+      });
+
+      let addedUnits: any[] = [];
+      const existing = await storage.getLessonUnits(topicId);
+
+      // Soft expand: only for deep/standard and only if expandUnits — append titles that don't exist yet
+      if (expandUnits && (learningIntent === "deep" || learningIntent === "standard") && plan.units?.length) {
+        const existingTitles = new Set(existing.map((u) => u.title.toLowerCase().trim()));
+        const byDiffIndex: Record<string, number> = {};
+        for (const u of existing) {
+          byDiffIndex[u.difficulty] = Math.max(byDiffIndex[u.difficulty] ?? -1, u.unitIndex);
+        }
+
+        for (const pu of plan.units) {
+          const key = pu.title.toLowerCase().trim();
+          if (existingTitles.has(key)) continue;
+          // skip if a very similar title exists (substring)
+          const similar = Array.from(existingTitles).some(
+            (t) => t.includes(key) || key.includes(t)
+          );
+          if (similar) continue;
+
+          const nextIndex = (byDiffIndex[pu.difficulty] ?? -1) + 1;
+          byDiffIndex[pu.difficulty] = nextIndex;
+          const created = await storage.createLessonUnit({
+            topicId,
+            difficulty: pu.difficulty,
+            contentType: plan.contentType,
+            unitIndex: nextIndex,
+            title: pu.title,
+            outline: `${pu.outline}${pu.tierName ? ` [${pu.tierName}]` : ""} (added via ${learningIntent} replan)`,
+          });
+          addedUnits.push(created);
+          existingTitles.add(key);
+        }
+      }
+
+      // Presentation filter (client uses this to hide tiers without deleting)
+      const presentation = {
+        learningIntent,
+        contentView,
+        quizFirst: learningIntent === "speed_run" || learningIntent === "goal",
+        // speed_run/survey: still show all units but prefer lower tiers first; never hide completed
+        preferDifficulties:
+          learningIntent === "speed_run" || learningIntent === "goal"
+            ? ["beginner", "intermediate"]
+            : learningIntent === "survey"
+            ? ["beginner", "intermediate", "advanced"]
+            : ["beginner", "intermediate", "advanced", "nextgen"],
+        softCapUnits:
+          learningIntent === "speed_run" ? 8 : learningIntent === "survey" ? 12 : null,
+      };
+
+      await storage.recordTimelineEvent({
+        userId,
+        topicId,
+        eventType: "mode_changed",
+        metadata: {
+          learningIntent,
+          replan: true,
+          addedUnits: addedUnits.length,
+          preservedProgress: true,
+        },
+      });
+
+      const units = await storage.getLessonUnits(topicId);
+      res.json({
+        plan,
+        prefs,
+        presentation,
+        units,
+        addedUnitCount: addedUnits.length,
+        preservedProgress: true,
+        message:
+          addedUnits.length > 0
+            ? `Reshaped for ${learningIntent}: added ${addedUnits.length} new units. Your progress is intact.`
+            : `Switched to ${learningIntent} mode. Your progress is intact — no units were removed.`,
+      });
+    } catch (error) {
+      console.error("Error re-planning topic:", error);
+      res.status(500).json({ error: "Failed to re-plan topic" });
+    }
+  });
+
+  // ── Goal milestone toggle ─────────────────────────────────────────────────
+  app.post("/api/learn/goals/:id/milestones/:index", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const id = parseInt(req.params.id, 10);
+      const index = parseInt(req.params.index, 10);
+      if (Number.isNaN(id) || Number.isNaN(index) || index < 0) {
+        return res.status(400).json({ error: "Invalid id/index" });
+      }
+      const done = req.body?.done !== false;
+
+      const goals = await storage.getUserLearningGoals(userId);
+      const goal = goals.find((g) => g.id === id);
+      if (!goal) return res.status(404).json({ error: "Goal not found" });
+
+      const milestones = Array.isArray(goal.milestones) ? [...(goal.milestones as any[])] : [];
+      if (!milestones[index]) return res.status(404).json({ error: "Milestone not found" });
+      milestones[index] = { ...milestones[index], done };
+
+      const allDone = milestones.length > 0 && milestones.every((m: any) => m.done);
+      const updated = await storage.updateLearningGoal(id, userId, {
+        milestones,
+        ...(allDone ? { status: "completed", completedAt: new Date() } : {}),
+      } as any);
+
+      res.json({ goal: updated, allDone });
+    } catch (error) {
+      console.error("Error updating milestone:", error);
+      res.status(500).json({ error: "Failed to update milestone" });
+    }
+  });
+
+  // Active goal for a topic
+  app.get("/api/learn/topics/:topicId/goal", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+      const goals = await storage.getUserLearningGoals(userId, "active");
+      const goal = goals.find((g) => g.topicId === topicId) || null;
+      res.json({ goal });
+    } catch (error) {
+      console.error("Error fetching topic goal:", error);
+      res.status(500).json({ error: "Failed to fetch goal" });
+    }
+  });
+
+  // Course posters CRUD helpers
+  app.get("/api/learn/posters", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const posters = await storage.getUserCoursePosters(userId);
+      res.json(posters);
+    } catch (error) {
+      console.error("Error listing posters:", error);
+      res.status(500).json({ error: "Failed to list posters" });
+    }
+  });
+
+  app.get("/api/learn/topics/:topicId/poster", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+      const poster = await storage.getCoursePoster(userId, topicId);
+      if (!poster) return res.status(404).json({ error: "No poster yet" });
+      res.json(poster);
+    } catch (error) {
+      console.error("Error fetching poster:", error);
+      res.status(500).json({ error: "Failed to fetch poster" });
+    }
+  });
 }

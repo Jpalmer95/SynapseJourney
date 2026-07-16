@@ -671,7 +671,7 @@ See [PHASE9-ADAPTIVE-LEARNING.md](PHASE9-ADAPTIVE-LEARNING.md) for full plan.
 - [x] Extend `planCourseWithAI` with learningIntent (survey/standard/deep/speed_run/goal)
 - [x] Wire planner into `generateLessonOutline` for non-seeded topics
 - [x] Persist plans in `course_plans` (+ OER list surface)
-- [ ] Intent-aware re-plan without wiping progress
+- [x] Intent-aware re-plan without wiping progress (`POST /api/learn/topics/:id/replan` appends only)
 
 ### 9.2 — Resume continuum
 - [x] `GET /api/learn/continue` + home Continue strip
@@ -682,18 +682,18 @@ See [PHASE9-ADAPTIVE-LEARNING.md](PHASE9-ADAPTIVE-LEARNING.md) for full plan.
 ### 9.3 — Goal-oriented learning
 - [x] `POST /api/learn/goal` + Goal Start card on home
 - [x] `learning_goals` table + milestones snapshot
-- [ ] Milestone check-off UI + goal completion poster
+- [x] Milestone check-off UI + completion poster trigger
 
 ### 9.4 — In-lesson adaptive chrome
 - [x] Depth / Tutor / Skim chips in RabbitHole
 - [x] Socratic/Feynman open from chips with initial mode
 - [x] Skim hides concept/analogy/example; keeps takeaways + resources
-- [ ] Speed-run quiz-first flow
+- [x] Speed-run quiz-first flow + Generate Quiz UI (on-demand)
 
 ### 9.5 — TTS de-clunk
 - [x] Default Browser TTS for instant first play
 - [x] Skip Kokoro path until model ready
-- [ ] Sticky mini-player across navigation (Phase 7.2 overlap)
+- [x] Sticky mini-player across navigation
 
 ---
 
