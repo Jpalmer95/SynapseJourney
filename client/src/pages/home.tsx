@@ -4,6 +4,7 @@ import { NebulaFeed } from "@/components/nebula-feed";
 import { RabbitHole } from "@/components/rabbit-hole";
 import { AppLayout } from "@/components/app-layout";
 import { ContinueLearningStrip } from "@/components/continue-learning-strip";
+import { MyCoursesStrip } from "@/components/my-courses-strip";
 import { GoalStartCard } from "@/components/goal-start-card";
 import { useAuth } from "@/hooks/use-auth";
 import type { Topic, Category } from "@shared/schema";
@@ -41,6 +42,7 @@ export function HomePage() {
           <div key="feed" className="flex flex-col h-full min-h-0">
             {user && (
               <div className="shrink-0 z-30 bg-background/90 backdrop-blur border-b border-border/40">
+                <MyCoursesStrip onOpen={(topic, category) => handleDive(topic, category)} />
                 <ContinueLearningStrip onContinue={handleDive} />
                 <GoalStartCard onStart={(topic, category) => handleDive(topic, category)} />
               </div>

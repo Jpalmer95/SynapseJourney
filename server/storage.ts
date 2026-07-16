@@ -390,6 +390,18 @@ export interface IStorage {
     lastAccessedAt: Date | null;
     depthMode: string | null;
   }[]>;
+  getMyCourses(userId: string, limit?: number): Promise<{
+    topic: Topic;
+    category?: Category;
+    source: "goal" | "hermes" | "progress" | "prefs";
+    goal?: LearningGoal;
+    completedUnits: number;
+    totalUnits: number;
+    progressPercent: number;
+    lastAccessedAt: Date | null;
+    depthMode: string | null;
+    status: string;
+  }[]>;
   updateLessonSection(userId: string, unitId: number, lastSection: string): Promise<void>;
   saveCoursePoster(data: InsertCoursePoster): Promise<CoursePoster>;
   getCoursePoster(userId: string, topicId: number): Promise<CoursePoster | undefined>;
@@ -2691,6 +2703,108 @@ export class DatabaseStorage implements IStorage {
     }
 
     return results;
+  }
+
+  /**
+   * Library of user-owned / started courses: goals, Hermes ingest, prefs, progress.
+   * Does not require lesson progress — goals appear immediately after creation.
+   */
+  async getMyCourses(userId: string, limit = 40): Promise<{
+    topic: Topic;
+    category?: Category;
+    source: "goal" | "hermes" | "progress" | "prefs";
+    goal?: LearningGoal;
+    completedUnits: number;
+    totalUnits: number;
+    progressPercent: number;
+    lastAccessedAt: Date | null;
+    depthMode: string | null;
+    status: string;
+  }[]> {
+    const topicIds = new Set<number>();
+    const goalsByTopic = new Map<number, LearningGoal>();
+
+    const goals = await this.getUserLearningGoals(userId);
+    for (const g of goals) {
+      if (g.topicId) {
+        topicIds.add(g.topicId);
+        goalsByTopic.set(g.topicId, g);
+      }
+    }
+
+    const prefs = await db.select().from(topicLearningPrefs)
+      .where(eq(topicLearningPrefs.userId, userId));
+    for (const p of prefs) topicIds.add(p.topicId);
+
+    const progressRows = await db.select().from(userProgress)
+      .where(eq(userProgress.userId, userId));
+    for (const p of progressRows) topicIds.add(p.topicId);
+
+    // Timeline events (goal_set / started from Hermes ingest)
+    const timeline = await db.select().from(learningTimeline)
+      .where(eq(learningTimeline.userId, userId))
+      .orderBy(desc(learningTimeline.createdAt))
+      .limit(100);
+    for (const e of timeline) {
+      if (e.topicId) topicIds.add(e.topicId);
+    }
+
+    const results: {
+      topic: Topic;
+      category?: Category;
+      source: "goal" | "hermes" | "progress" | "prefs";
+      goal?: LearningGoal;
+      completedUnits: number;
+      totalUnits: number;
+      progressPercent: number;
+      lastAccessedAt: Date | null;
+      depthMode: string | null;
+      status: string;
+    }[] = [];
+
+    for (const topicId of Array.from(topicIds)) {
+      const topic = await this.getTopicById(topicId);
+      if (!topic) continue;
+      const units = await this.getLessonUnits(topicId);
+      let completedUnits = 0;
+      for (const u of units) {
+        const lp = await this.getLessonProgress(userId, u.id);
+        if (lp?.status === "completed") completedUnits++;
+      }
+      const progress = progressRows.find((p) => p.topicId === topicId);
+      const topicPrefs = prefs.find((p) => p.topicId === topicId);
+      const goal = goalsByTopic.get(topicId);
+      const tl = timeline.find((e) => e.topicId === topicId);
+      const meta = (tl?.metadata || {}) as Record<string, unknown>;
+      const hermes = meta.hermes === true || meta.source === "hermes" || meta.source === "ingest";
+
+      let source: "goal" | "hermes" | "progress" | "prefs" = "prefs";
+      if (goal) source = hermes ? "hermes" : "goal";
+      else if (hermes) source = "hermes";
+      else if (progress) source = "progress";
+
+      const category = topic.categoryId ? await this.getCategoryById(topic.categoryId) : undefined;
+      results.push({
+        topic,
+        category,
+        source,
+        goal,
+        completedUnits,
+        totalUnits: units.length,
+        progressPercent: units.length ? Math.round((completedUnits / units.length) * 100) : 0,
+        lastAccessedAt: progress?.lastAccessedAt ?? goal?.createdAt ?? topicPrefs?.updatedAt ?? null,
+        depthMode: topicPrefs?.depthMode ?? null,
+        status: goal?.status || progress?.status || "ready",
+      });
+    }
+
+    results.sort((a, b) => {
+      const at = a.lastAccessedAt ? new Date(a.lastAccessedAt).getTime() : 0;
+      const bt = b.lastAccessedAt ? new Date(b.lastAccessedAt).getTime() : 0;
+      return bt - at;
+    });
+
+    return results.slice(0, limit);
   }
 
   async saveCoursePoster(data: InsertCoursePoster): Promise<CoursePoster> {
