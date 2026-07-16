@@ -142,6 +142,40 @@ function CopyWalletAddress({ testIdPrefix = "" }: { testIdPrefix?: string }) {
 }
 
 function KeysAndSupportSection() {
+  const { toast } = useToast();
+  const [newToken, setNewToken] = useState<string | null>(null);
+
+  const { data: tokens = [], isLoading: tokensLoading } = useQuery<
+    { id: number; name: string; tokenPrefix: string; lastUsedAt: string | null; createdAt: string }[]
+  >({
+    queryKey: ["/api/learn/tokens"],
+  });
+
+  const createToken = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/learn/tokens", { name: "Hermes" });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      setNewToken(data.token);
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/tokens"] });
+      toast({ title: "Token created", description: "Copy it now — it won't be shown again." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not create token", description: err?.message, variant: "destructive" });
+    },
+  });
+
+  const revokeToken = useMutation({
+    mutationFn: async (id: number) => {
+      await apiRequest("DELETE", `/api/learn/tokens/${id}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/tokens"] });
+      toast({ title: "Token revoked" });
+    },
+  });
+
   return (
     <div className="space-y-6">
       <Card>
@@ -151,17 +185,87 @@ function KeysAndSupportSection() {
             <CardTitle>BYOC — Bring Your Own Compute</CardTitle>
           </div>
           <CardDescription>
-            Unlock keys are retired. Every prebuilt course and difficulty tier is open to all learners.
-            Custom goals, pathways, and generated lessons use your own AI keys (xAI, Gemini, OpenRouter, Hugging Face, or Ollama) from the AI Provider section below.
+            Platform free AI is disabled. Prebuilt courses stay open for everyone.
+            Custom goals/quizzes/replans use either (1) your API keys below, or (2) Hermes Agent
+            authoring + upload with a personal access token.
           </CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>
-            Platform-hosted core courses stay free to browse and learn. When you generate new content (goal paths, quizzes, replan, posters), Synapse uses your configured compute first, then falls back to the community pool if available.
+            <strong className="text-foreground">Option A — In-app keys:</strong> add xAI, Gemini, OpenRouter, Hugging Face, or Ollama in AI Provider.
           </p>
           <p>
-            Optional: support the open-source mission below — never required for access.
+            <strong className="text-foreground">Option B — Hermes:</strong> generate with Hermes (your Grok/Gemini/Nous compute), then upload via token. Monthly chat subscriptions rarely expose API to third-party apps; Hermes is the bridge.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Key className="h-5 w-5 text-primary" />
+            <CardTitle>Hermes Personal Access Token</CardTitle>
+          </div>
+          <CardDescription>
+            Let Hermes (or any agent) upload authored courses into your account without using Synapse server AI.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Button
+            onClick={() => createToken.mutate()}
+            disabled={createToken.isPending}
+            data-testid="button-create-pat"
+          >
+            {createToken.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Key className="h-4 w-4 mr-2" />}
+            Create Hermes token
+          </Button>
+
+          {newToken && (
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 space-y-2" data-testid="pat-once">
+              <p className="text-sm font-medium text-amber-200">Copy now — shown once</p>
+              <code className="block text-xs break-all bg-black/30 p-2 rounded">{newToken}</code>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  navigator.clipboard.writeText(newToken);
+                  toast({ title: "Copied to clipboard" });
+                }}
+              >
+                <Copy className="h-3.5 w-3.5 mr-1.5" />
+                Copy token
+              </Button>
+              <p className="text-xs text-muted-foreground">
+                Save as <code>SYNAPSE_PAT</code> in <code>~/.hermes/.env</code>, then:{" "}
+                <code>hermes -s synapse-journey -q "author and upload a goal course for …"</code>
+              </p>
+            </div>
+          )}
+
+          {tokensLoading ? (
+            <Skeleton className="h-10 w-full" />
+          ) : tokens.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No active tokens yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {tokens.map((t) => (
+                <li key={t.id} className="flex items-center justify-between gap-2 text-sm border rounded-md px-3 py-2">
+                  <div>
+                    <span className="font-medium">{t.name}</span>
+                    <span className="text-muted-foreground ml-2 font-mono text-xs">{t.tokenPrefix}…</span>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => revokeToken.mutate(t.id)}
+                    disabled={revokeToken.isPending}
+                  >
+                    Revoke
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          )}
         </CardContent>
       </Card>
 
@@ -172,7 +276,7 @@ function KeysAndSupportSection() {
             <CardTitle>Support the Builder</CardTitle>
           </div>
           <CardDescription>
-            Optional donations keep SynapseJourney open and improving — thank you.
+            Optional donations keep SynapseJourney open — never required for access.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

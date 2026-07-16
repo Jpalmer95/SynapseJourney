@@ -12,7 +12,7 @@ import {
   openScienceIdeas, openScienceComments,
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
   coursePlans, learningGoals, learningTimeline, topicLearningPrefs,
-  coursePosters,
+  coursePosters, userAccessTokens,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -80,6 +80,8 @@ import {
   type InsertTopicLearningPrefs,
   type CoursePoster,
   type InsertCoursePoster,
+  type UserAccessToken,
+  type InsertUserAccessToken,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -392,6 +394,11 @@ export interface IStorage {
   saveCoursePoster(data: InsertCoursePoster): Promise<CoursePoster>;
   getCoursePoster(userId: string, topicId: number): Promise<CoursePoster | undefined>;
   getUserCoursePosters(userId: string): Promise<CoursePoster[]>;
+  createUserAccessToken(data: InsertUserAccessToken): Promise<UserAccessToken>;
+  listUserAccessTokens(userId: string): Promise<UserAccessToken[]>;
+  revokeUserAccessToken(id: number, userId: string): Promise<boolean>;
+  findUserAccessTokenByHash(tokenHash: string): Promise<UserAccessToken | undefined>;
+  touchUserAccessToken(id: number): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -2711,6 +2718,38 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(coursePosters)
       .where(eq(coursePosters.userId, userId))
       .orderBy(desc(coursePosters.generatedAt));
+  }
+
+  async createUserAccessToken(data: InsertUserAccessToken): Promise<UserAccessToken> {
+    const [created] = await db.insert(userAccessTokens).values(data).returning();
+    return created;
+  }
+
+  async listUserAccessTokens(userId: string): Promise<UserAccessToken[]> {
+    return db.select().from(userAccessTokens)
+      .where(and(eq(userAccessTokens.userId, userId), sql`${userAccessTokens.revokedAt} IS NULL`))
+      .orderBy(desc(userAccessTokens.createdAt));
+  }
+
+  async revokeUserAccessToken(id: number, userId: string): Promise<boolean> {
+    const [updated] = await db.update(userAccessTokens)
+      .set({ revokedAt: new Date() })
+      .where(and(eq(userAccessTokens.id, id), eq(userAccessTokens.userId, userId)))
+      .returning();
+    return !!updated;
+  }
+
+  async findUserAccessTokenByHash(tokenHash: string): Promise<UserAccessToken | undefined> {
+    const [row] = await db.select().from(userAccessTokens)
+      .where(and(eq(userAccessTokens.tokenHash, tokenHash), sql`${userAccessTokens.revokedAt} IS NULL`))
+      .limit(1);
+    return row;
+  }
+
+  async touchUserAccessToken(id: number): Promise<void> {
+    await db.update(userAccessTokens)
+      .set({ lastUsedAt: new Date() })
+      .where(eq(userAccessTokens.id, id));
   }
 }
 

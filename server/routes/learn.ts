@@ -210,12 +210,24 @@ export function registerLearnRoutes(app: Express) {
       // Ensure units exist — generate goal-intent outline if empty
       let units = await storage.getLessonUnits(topic.id);
       if (units.length === 0) {
-        units = await generateLessonOutline(topic.id, topic.title, description, {
-          learningIntent: "goal",
-          goalDescription: goalText,
-          createdByUserId: userId,
-          userConfig,
-        });
+        try {
+          units = await generateLessonOutline(topic.id, topic.title, description, {
+            learningIntent: "goal",
+            goalDescription: goalText,
+            createdByUserId: userId,
+            userConfig,
+          });
+        } catch (genErr: any) {
+          const msg = genErr?.message || String(genErr);
+          if (msg.includes("BYOC_REQUIRED")) {
+            return res.status(402).json({
+              error: "BYOC_REQUIRED",
+              message:
+                "Platform free AI is disabled. Add API keys in Settings, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
+            });
+          }
+          throw genErr;
+        }
       }
 
       const plan = await storage.getLatestCoursePlan(topic.id);
@@ -526,6 +538,229 @@ export function registerLearnRoutes(app: Express) {
     } catch (error) {
       console.error("Error fetching poster:", error);
       res.status(500).json({ error: "Failed to fetch poster" });
+    }
+  });
+
+  // ── Personal access tokens (Hermes BYOC bridge) ───────────────────────────
+  app.get("/api/learn/tokens", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const tokens = await storage.listUserAccessTokens(userId);
+      res.json(tokens.map((t) => ({
+        id: t.id,
+        name: t.name,
+        tokenPrefix: t.tokenPrefix,
+        lastUsedAt: t.lastUsedAt,
+        createdAt: t.createdAt,
+      })));
+    } catch (error) {
+      console.error("Error listing tokens:", error);
+      res.status(500).json({ error: "Failed to list tokens" });
+    }
+  });
+
+  app.post("/api/learn/tokens", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const name = (req.body?.name || "Hermes").toString().slice(0, 64);
+      const crypto = await import("crypto");
+      const raw = `sj_${crypto.randomBytes(24).toString("base64url")}`;
+      const tokenHash = crypto.createHash("sha256").update(raw).digest("hex");
+      const tokenPrefix = raw.slice(0, 12);
+
+      const row = await storage.createUserAccessToken({
+        userId,
+        name,
+        tokenPrefix,
+        tokenHash,
+      });
+
+      // Return full token ONCE
+      res.status(201).json({
+        id: row.id,
+        name: row.name,
+        token: raw,
+        tokenPrefix,
+        createdAt: row.createdAt,
+        message: "Copy this token now — it will not be shown again. Use: Authorization: Bearer <token>",
+      });
+    } catch (error) {
+      console.error("Error creating token:", error);
+      res.status(500).json({ error: "Failed to create token" });
+    }
+  });
+
+  app.delete("/api/learn/tokens/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+      const ok = await storage.revokeUserAccessToken(id, userId);
+      if (!ok) return res.status(404).json({ error: "Token not found" });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error revoking token:", error);
+      res.status(500).json({ error: "Failed to revoke token" });
+    }
+  });
+
+  /**
+   * Hermes / external agent course ingest — NO server-side AI.
+   * Author content with Hermes (your Grok/Gemini/etc subscription compute), then upload.
+   */
+  app.post("/api/learn/ingest", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const schema = z.object({
+        goalText: z.string().min(3).max(1000).optional(),
+        topic: z.object({
+          title: z.string().min(2).max(200),
+          description: z.string().max(2000).optional(),
+          categoryId: z.number().int().positive().optional().nullable(),
+          difficulty: z.enum(["beginner", "intermediate", "advanced", "nextgen"]).optional(),
+        }),
+        learningIntent: z.enum(["survey", "standard", "deep", "speed_run", "goal"]).optional(),
+        plan: z.object({
+          contentType: z.string().optional(),
+          scope: z.string().optional(),
+          rationale: z.string().optional(),
+          recommendedOER: z.array(z.object({
+            name: z.string(),
+            url: z.string(),
+            reason: z.string().optional(),
+          })).optional(),
+          units: z.array(z.object({
+            title: z.string(),
+            outline: z.string().optional(),
+            difficulty: z.enum(["beginner", "intermediate", "advanced", "nextgen"]).optional(),
+            tierName: z.string().optional(),
+          })).optional(),
+        }).optional(),
+        units: z.array(z.object({
+          title: z.string().min(1).max(200),
+          difficulty: z.enum(["beginner", "intermediate", "advanced", "nextgen"]).default("beginner"),
+          outline: z.string().max(4000).optional(),
+          unitIndex: z.number().int().min(0).optional(),
+          contentJson: z.any().optional(), // full lesson content if authored offline
+        })).min(1).max(80),
+        createGoal: z.boolean().optional().default(true),
+        source: z.string().max(64).optional(), // e.g. "hermes"
+      });
+
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid ingest payload", details: parsed.error.flatten() });
+      }
+
+      const body = parsed.data;
+      const title = body.topic.title;
+      let topic = (await storage.getTopics()).find((t) => t.title.toLowerCase() === title.toLowerCase());
+      if (!topic) {
+        topic = await storage.createTopic({
+          title,
+          description: body.topic.description || body.goalText || `Hermes-authored course: ${title}`,
+          categoryId: body.topic.categoryId || null,
+          difficulty: body.topic.difficulty || "beginner",
+        } as any);
+      }
+
+      // Create units (skip exact title matches already present)
+      const existing = await storage.getLessonUnits(topic.id);
+      const existingTitles = new Set(existing.map((u) => u.title.toLowerCase().trim()));
+      const createdUnits: any[] = [];
+      const byDiffIndex: Record<string, number> = {};
+      for (const u of existing) {
+        byDiffIndex[u.difficulty] = Math.max(byDiffIndex[u.difficulty] ?? -1, u.unitIndex);
+      }
+
+      for (let i = 0; i < body.units.length; i++) {
+        const u = body.units[i];
+        const key = u.title.toLowerCase().trim();
+        if (existingTitles.has(key)) {
+          const match = existing.find((e) => e.title.toLowerCase().trim() === key);
+          if (match && u.contentJson && !match.contentJson) {
+            await storage.updateLessonContent(match.id, u.contentJson);
+          }
+          continue;
+        }
+        const difficulty = u.difficulty || "beginner";
+        const nextIndex = u.unitIndex ?? ((byDiffIndex[difficulty] ?? -1) + 1);
+        byDiffIndex[difficulty] = nextIndex;
+        const created = await storage.createLessonUnit({
+          topicId: topic.id,
+          difficulty,
+          contentType: body.plan?.contentType || "standard",
+          unitIndex: nextIndex,
+          title: u.title,
+          outline: u.outline || null,
+        });
+        if (u.contentJson) {
+          await storage.updateLessonContent(created.id, u.contentJson);
+        }
+        createdUnits.push(created);
+        existingTitles.add(key);
+      }
+
+      if (body.plan) {
+        await storage.saveCoursePlan({
+          topicId: topic.id,
+          learningIntent: body.learningIntent || (body.goalText ? "goal" : "standard"),
+          goalDescription: body.goalText || null,
+          planJson: {
+            ...body.plan,
+            units: body.units.map((u) => ({
+              title: u.title,
+              outline: u.outline || "",
+              difficulty: u.difficulty || "beginner",
+            })),
+            source: body.source || "ingest",
+          } as any,
+          createdByUserId: userId,
+          version: 1,
+        });
+      }
+
+      await storage.upsertTopicLearningPrefs(userId, topic.id, {
+        depthMode: body.learningIntent === "goal" || body.goalText ? "speed_run" : (body.learningIntent || "standard"),
+        contentView: body.goalText ? "skim" : "full",
+      });
+
+      let goal = null;
+      const allUnits = await storage.getLessonUnits(topic.id);
+      if (body.createGoal && body.goalText) {
+        goal = await storage.createLearningGoal({
+          userId,
+          goalText: body.goalText,
+          topicId: topic.id,
+          status: "active",
+          planJson: body.plan || null,
+          milestones: allUnits.slice(0, 8).map((u) => ({ title: u.title, unitId: u.id, done: false })),
+        });
+        await storage.recordTimelineEvent({
+          userId,
+          topicId: topic.id,
+          eventType: "goal_set",
+          metadata: { goalId: goal.id, source: body.source || "ingest", hermes: true },
+        });
+      } else {
+        await storage.recordTimelineEvent({
+          userId,
+          topicId: topic.id,
+          eventType: "started",
+          metadata: { source: body.source || "ingest", addedUnits: createdUnits.length },
+        });
+      }
+
+      res.status(201).json({
+        topic,
+        unitsCreated: createdUnits.length,
+        unitsTotal: allUnits.length,
+        goal,
+        message: "Ingested without platform AI — content authored externally (Hermes/BYOC).",
+      });
+    } catch (error: any) {
+      console.error("Error ingesting course:", error);
+      res.status(500).json({ error: "Failed to ingest course", message: error?.message || String(error) });
     }
   });
 }
