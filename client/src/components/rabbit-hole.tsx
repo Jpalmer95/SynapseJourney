@@ -826,19 +826,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     return { completed, total: units.length, percentage: units.length > 0 ? (completed / units.length) * 100 : 0 };
   };
 
-  const isTabLocked = (difficulty: string) => {
-    if (isAdmin) return false;
-    if (mastery?.keyUnlocked) return false;
-    
-    if (!mastery) return difficulty !== "beginner";
-    switch (difficulty) {
-      case "beginner": return !mastery.beginnerUnlocked;
-      case "intermediate": return !mastery.intermediateUnlocked;
-      case "advanced": return !mastery.advancedUnlocked;
-      case "nextgen": return !mastery.nextgenUnlocked;
-      default: return true;
-    }
-  };
+  const isTabLocked = (_difficulty: string) => false;
 
   // TTS section-level state shared with TTSButton via context
   const { currentSectionIndex, speakSections } = useTTS();
@@ -1818,19 +1806,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
           </div>
 
           <div className="flex items-center gap-3">
-            {keysData && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => setShowBuyKeys(true)}
-                className="gap-1.5"
-                data-testid="button-keys-balance"
-              >
-                <Key className="h-4 w-4 text-amber-500" />
-                <span className="text-sm font-medium">{keysData.availableKeys}</span>
-              </Button>
-            )}
-            {userXp && (
+                      {userXp && (
               <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-full bg-primary/10 border border-primary/20">
                 <Trophy className="h-4 w-4 text-primary" />
                 <span className="text-sm font-medium">Lvl {userXp.level}</span>
@@ -1997,35 +1973,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
             <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
             <p className="text-lg text-muted-foreground">{topic.description}</p>
 
-            {/* Daily Key Earn Progress */}
-            {keysData && !keysData.earnProgress.alreadyEarnedToday && (
-              <div className="mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
-                <div className="flex items-center gap-2 mb-2">
-                  <Key className="h-4 w-4 text-amber-500" />
-                  <span className="text-sm font-medium text-amber-700 dark:text-amber-400">Daily Key Progress</span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <Progress 
-                    value={(keysData.earnProgress.topicsCompletedToday / keysData.earnProgress.topicsNeeded) * 100} 
-                    className="flex-1 h-2" 
-                  />
-                  <span className="text-xs text-muted-foreground whitespace-nowrap">
-                    {keysData.earnProgress.topicsCompletedToday}/{keysData.earnProgress.topicsNeeded} topics mastered
-                  </span>
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Complete beginner, intermediate, and advanced for {keysData.earnProgress.topicsNeeded} topics to earn a free key today
-                </p>
-              </div>
-            )}
-            {keysData?.earnProgress.alreadyEarnedToday && (
-              <div className="mt-4 p-3 rounded-lg bg-green-500/10 border border-green-500/20">
-                <div className="flex items-center gap-2">
-                  <Gift className="h-4 w-4 text-green-500" />
-                  <span className="text-sm font-medium text-green-700 dark:text-green-400">Daily key earned! Come back tomorrow for another.</span>
-                </div>
-              </div>
-            )}
+            {/* Donate / support builder — optional, not gated compute */}
+            <div className="mt-4 p-3 rounded-lg bg-primary/5 border border-primary/15 text-sm text-muted-foreground">
+              All courses and tiers are open. Custom goals and pathways use your own compute (API keys in Settings). Support the mission anytime via Settings → Donate.
+            </div>
             
             {/* Admin batch generation controls */}
             {isAdmin && (

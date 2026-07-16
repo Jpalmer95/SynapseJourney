@@ -36,7 +36,7 @@ export function GoalStartCard({ onStart }: GoalStartCardProps) {
     onError: (err: any) => {
       toast({
         title: "Could not build goal path",
-        description: err?.message || "Try again with a clearer goal.",
+        description: err?.message || "Try again with a clearer goal. If this persists, add an AI API key in Settings (BYOC).",
         variant: "destructive",
       });
     },

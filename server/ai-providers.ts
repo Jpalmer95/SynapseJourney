@@ -594,14 +594,8 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
  * 
  * Resolution order:
  * 1. User's BYOK key (user pays)
- * 2. Community pool (platform pays, daily budget capped)
+ * 2. Community pool / platform keys (if available)
  * 3. Reject with error
- * 
- * @param messages - Chat messages to send to the AI provider
- * @param config - User's provider configuration (from userProfiles + userApiKeys)
- * @param options - Chat options (model, temperature, etc.)
- * @returns Generated content string
- * @throws Error if no BYOK credentials and community pool is exhausted
  */
 export async function generateByokOrPool(
   messages: { role: string; content: string }[],
@@ -623,12 +617,41 @@ export async function generateByokOrPool(
     }
   }
 
-  // 2. Try community pool
-  // Community pool check is handled by the caller (route handler checks budget)
-  // Here we just use the platform's default provider
-  const provider = getCourseContentProvider();
-  const content = await provider.chat(messages, options);
-  return { content, source: "pool", provider: provider.name };
+  // 2. Platform / community pool
+  try {
+    const content = await generateCourseContent(messages, options);
+    return { content, source: "pool", provider: "platform" };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new Error(
+      `No working AI compute available. Add an API key in Settings (xAI, Gemini, OpenRouter, Hugging Face, or Ollama). Detail: ${msg}`
+    );
+  }
+}
+
+/**
+ * Build ProviderConfig from a user_profiles row (BYOC).
+ */
+export function providerConfigFromProfile(profile: {
+  preferredAiProvider?: string | null;
+  preferredModel?: string | null;
+  huggingFaceToken?: string | null;
+  ollamaUrl?: string | null;
+  openRouterKey?: string | null;
+  xaiKey?: string | null;
+  anthropicKey?: string | null;
+  geminiKey?: string | null;
+} | null | undefined): ProviderConfig {
+  return {
+    provider: (profile?.preferredAiProvider as ProviderConfig["provider"]) || "openai",
+    preferredModel: profile?.preferredModel || undefined,
+    huggingFaceToken: profile?.huggingFaceToken || undefined,
+    ollamaUrl: profile?.ollamaUrl || undefined,
+    openRouterKey: profile?.openRouterKey || undefined,
+    xaiKey: profile?.xaiKey || undefined,
+    anthropicKey: profile?.anthropicKey || undefined,
+    geminiKey: profile?.geminiKey || undefined,
+  };
 }
 
 export { DEFAULT_MODELS };

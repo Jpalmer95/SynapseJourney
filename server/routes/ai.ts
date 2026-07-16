@@ -677,22 +677,14 @@ export async function generateCustomTopicContent(customTopicId: number, title: s
 }
 
 // Helper function to check if a difficulty level is unlocked
-// If isAdmin is true, all levels are unlocked (admin bypass)
+// BYOC open platform: all difficulty tiers are available to every learner.
+// Progress is still tracked; keys/gating are retired.
 export function isUnitUnlocked(
-  difficulty: string, 
-  mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean; keyUnlocked?: boolean },
-  isAdmin: boolean = false
+  _difficulty: string, 
+  _mastery: { beginnerUnlocked: boolean; intermediateUnlocked: boolean; advancedUnlocked: boolean; nextgenUnlocked?: boolean; keyUnlocked?: boolean },
+  _isAdmin: boolean = false
 ): boolean {
-  if (isAdmin) return true;
-  if (mastery.keyUnlocked) return true;
-  
-  switch (difficulty) {
-    case "beginner": return mastery.beginnerUnlocked;
-    case "intermediate": return mastery.intermediateUnlocked;
-    case "advanced": return mastery.advancedUnlocked;
-    case "nextgen": return mastery.nextgenUnlocked ?? false;
-    default: return mastery.beginnerUnlocked;
-  }
+  return true;
 }
 
 // Background batch pre-generation helper — called fire-and-forget after outline creation.
@@ -916,6 +908,7 @@ export async function generateLessonOutline(
     learningIntent?: "survey" | "standard" | "deep" | "speed_run" | "goal";
     goalDescription?: string;
     createdByUserId?: string;
+    userConfig?: import("../ai-providers").ProviderConfig;
   }
 ): Promise<any[]> {
   // ── Use pre-planned syllabus if available ───────────────────────────────────
@@ -946,6 +939,7 @@ export async function generateLessonOutline(
     const plan = await planCourseWithAI(topicTitle, topicDescription, {
       learningIntent,
       goalDescription: options?.goalDescription,
+      userConfig: options?.userConfig,
     });
 
     // Persist plan for OER surface + versioning

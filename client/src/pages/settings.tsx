@@ -142,254 +142,26 @@ function CopyWalletAddress({ testIdPrefix = "" }: { testIdPrefix?: string }) {
 }
 
 function KeysAndSupportSection() {
-  const { toast } = useToast();
-  const [buyQuantity, setBuyQuantity] = useState(1);
-
-  const { data: keysData, isLoading: keysLoading } = useQuery<{
-    totalKeys: number;
-    usedKeys: number;
-    availableKeys: number;
-    earnProgress: {
-      topicsCompletedToday: number;
-      topicsNeeded: number;
-      alreadyEarnedToday: boolean;
-      qualifyingTopics: number[];
-    };
-  }>({
-    queryKey: ["/api/keys"],
-  });
-
-  const { data: adminCheck } = useQuery<{ isAdmin: boolean }>({
-    queryKey: ["/api/admin/check"],
-  });
-  const isAdmin = adminCheck?.isAdmin ?? false;
-
-  const { data: pendingPurchases = [] } = useQuery<any[]>({
-    queryKey: ["/api/admin/keys/pending"],
-    enabled: isAdmin,
-  });
-
-  const purchaseMutation = useMutation({
-    mutationFn: async (quantity: number) => {
-      const res = await apiRequest("POST", "/api/keys/purchase", { quantity });
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Purchase Request Submitted", description: "Your request is pending admin approval. Send your Dogecoin payment and we'll approve it shortly." });
-      setBuyQuantity(1);
-      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/keys/purchases"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Purchase Failed", description: err.message || "Could not submit purchase", variant: "destructive" });
-    },
-  });
-
-  const resolveMutation = useMutation({
-    mutationFn: async ({ requestId, approved }: { requestId: number; approved: boolean }) => {
-      const res = await apiRequest("POST", `/api/admin/keys/resolve/${requestId}`, { approved });
-      return res.json();
-    },
-    onSuccess: (_data, variables) => {
-      toast({ title: variables.approved ? "Purchase Approved" : "Purchase Rejected" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/keys/pending"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
-    },
-  });
-
-  const earnProgress = keysData?.earnProgress;
-  const progressPct = earnProgress ? Math.min(100, (earnProgress.topicsCompletedToday / earnProgress.topicsNeeded) * 100) : 0;
-
   return (
     <div className="space-y-6">
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">
-            <Key className="h-5 w-5 text-amber-500" />
-            <CardTitle>Unlock Keys</CardTitle>
+            <Sparkles className="h-5 w-5 text-primary" />
+            <CardTitle>BYOC — Bring Your Own Compute</CardTitle>
           </div>
           <CardDescription>
-            Use keys to unlock all difficulty levels for any topic instantly
+            Unlock keys are retired. Every prebuilt course and difficulty tier is open to all learners.
+            Custom goals, pathways, and generated lessons use your own AI keys (xAI, Gemini, OpenRouter, Hugging Face, or Ollama) from the AI Provider section below.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-5">
-          {keysLoading ? (
-            <div className="space-y-3">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-20 w-full" />
-            </div>
-          ) : (
-            <>
-              <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
-                <span className="text-sm font-medium">Your Keys</span>
-                <Badge variant="secondary" className="text-base gap-1" data-testid="badge-settings-key-balance">
-                  <Key className="h-3.5 w-3.5 text-amber-500" />
-                  {keysData?.availableKeys ?? 0} available
-                </Badge>
-              </div>
-
-              <div className="space-y-2">
-                <p className="text-sm font-medium">How to get keys:</p>
-                <div className="space-y-2 text-sm text-muted-foreground">
-                  <div className="flex items-start gap-2">
-                    <Gift className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
-                    <span>3 free keys when you join</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Trophy className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                    <span>Earn 1 key/day by completing beginner + intermediate + advanced on 3 topics</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <ShoppingCart className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                    <span>Buy keys with Dogecoin (1 DOGE = 1 key)</span>
-                  </div>
-                </div>
-              </div>
-
-              {earnProgress && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between text-sm">
-                    <span className="text-muted-foreground">Daily Key Progress</span>
-                    <span className="font-medium">
-                      {earnProgress.alreadyEarnedToday
-                        ? "Earned today!"
-                        : `${earnProgress.topicsCompletedToday}/${earnProgress.topicsNeeded} topics`}
-                    </span>
-                  </div>
-                  <div className="h-2 rounded-full bg-muted overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-amber-500 transition-all"
-                      style={{ width: `${earnProgress.alreadyEarnedToday ? 100 : progressPct}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-
-              {isAdmin && pendingPurchases.length > 0 && (
-                <div className="border-t pt-4 space-y-2">
-                  <p className="text-sm font-medium text-orange-600 dark:text-orange-400">
-                    Pending Purchase Requests ({pendingPurchases.length})
-                  </p>
-                  {pendingPurchases.map((req: any) => (
-                    <div key={req.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
-                      <div className="min-w-0">
-                        <p className="text-sm font-medium truncate">{req.username || "User"}</p>
-                        <p className="text-xs text-muted-foreground">{req.quantity} keys ({req.dogeAmount} DOGE)</p>
-                      </div>
-                      <div className="flex gap-1 shrink-0">
-                        <Button
-                          size="sm"
-                          variant="default"
-                          onClick={() => resolveMutation.mutate({ requestId: req.id, approved: true })}
-                          disabled={resolveMutation.isPending}
-                          className="gap-1"
-                          data-testid={`button-settings-approve-${req.id}`}
-                        >
-                          <Check className="h-3 w-3" />
-                          Approve
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => resolveMutation.mutate({ requestId: req.id, approved: false })}
-                          disabled={resolveMutation.isPending}
-                          className="gap-1"
-                          data-testid={`button-settings-reject-${req.id}`}
-                        >
-                          <X className="h-3 w-3" />
-                          Reject
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="border-t pt-4 space-y-3">
-                <p className="text-sm font-medium">Buy Keys with Dogecoin</p>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <label className="text-sm text-muted-foreground shrink-0">Quantity:</label>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setBuyQuantity(q => Math.max(1, q - 1))}
-                      disabled={buyQuantity <= 1}
-                      data-testid="button-settings-decrease-quantity"
-                    >
-                      <span className="text-lg leading-none">-</span>
-                    </Button>
-                    <span className="w-10 text-center text-lg font-medium" data-testid="text-settings-buy-quantity">{buyQuantity}</span>
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setBuyQuantity(q => Math.min(100, q + 1))}
-                      disabled={buyQuantity >= 100}
-                      data-testid="button-settings-increase-quantity"
-                    >
-                      <span className="text-lg leading-none">+</span>
-                    </Button>
-                  </div>
-                  <span className="text-sm text-muted-foreground">= {buyQuantity} DOGE</span>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs text-muted-foreground">
-                    1. Send {buyQuantity} DOGE to the payment link below
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    2. Submit your purchase request
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    3. Keys will be added after admin confirmation
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <p className="text-xs font-medium text-muted-foreground">Payment Options:</p>
-                  <Button variant="outline" asChild className="w-full gap-2">
-                    <a
-                      href="https://mydoge.com/JonK"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid="link-settings-doge-payment"
-                    >
-                      <ExternalLink className="h-4 w-4" />
-                      Pay via MyDoge at mydoge.com/JonK
-                    </a>
-                  </Button>
-
-                  <CopyWalletAddress testIdPrefix="settings-keys-" />
-
-                  <Button variant="outline" asChild className="w-full gap-2">
-                    <a
-                      href="https://buymeacoffee.com/jkorstad"
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      data-testid="link-settings-bmac-payment"
-                    >
-                      <Coffee className="h-4 w-4" />
-                      Pay via Buy Me a Coffee
-                    </a>
-                  </Button>
-                </div>
-
-                <Button
-                  className="w-full gap-2"
-                  onClick={() => purchaseMutation.mutate(buyQuantity)}
-                  disabled={purchaseMutation.isPending}
-                  data-testid="button-settings-submit-purchase"
-                >
-                  {purchaseMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Key className="h-4 w-4" />
-                  )}
-                  Submit Purchase Request ({buyQuantity} {buyQuantity === 1 ? "key" : "keys"})
-                </Button>
-              </div>
-            </>
-          )}
+        <CardContent className="text-sm text-muted-foreground space-y-2">
+          <p>
+            Platform-hosted core courses stay free to browse and learn. When you generate new content (goal paths, quizzes, replan, posters), Synapse uses your configured compute first, then falls back to the community pool if available.
+          </p>
+          <p>
+            Optional: support the open-source mission below — never required for access.
+          </p>
         </CardContent>
       </Card>
 
@@ -400,39 +172,32 @@ function KeysAndSupportSection() {
             <CardTitle>Support the Builder</CardTitle>
           </div>
           <CardDescription>
-            Synapse is built by a solo developer. If you enjoy the platform, consider supporting development!
+            Optional donations keep SynapseJourney open and improving — thank you.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="p-3 rounded-lg bg-primary/5 border border-primary/10 text-sm text-muted-foreground">
-            Your support helps cover server costs, AI compute, and future feature development. Thank you!
-          </div>
-
+        <CardContent className="space-y-3">
           <Button variant="outline" asChild className="w-full gap-2">
             <a
               href="https://buymeacoffee.com/jkorstad"
               target="_blank"
               rel="noopener noreferrer"
-              data-testid="link-settings-donate-bmac"
+              data-testid="link-settings-bmac-support"
             >
               <Coffee className="h-4 w-4" />
               Buy Me a Coffee
             </a>
           </Button>
-
           <Button variant="outline" asChild className="w-full gap-2">
             <a
               href="https://mydoge.com/JonK"
               target="_blank"
               rel="noopener noreferrer"
-              data-testid="link-settings-donate-doge"
+              data-testid="link-settings-doge-support"
             >
               <ExternalLink className="h-4 w-4" />
-              Donate Dogecoin via MyDoge
+              Support with Dogecoin
             </a>
           </Button>
-
-          <CopyWalletAddress testIdPrefix="settings-donate-" />
         </CardContent>
       </Card>
     </div>
