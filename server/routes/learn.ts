@@ -45,6 +45,19 @@ export function registerLearnRoutes(app: Express) {
     }
   });
 
+  // Library: goals + Hermes-authored + in-progress (no need to have opened a unit)
+  app.get("/api/learn/my-courses", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const limit = Math.min(parseInt(String(req.query.limit || "40"), 10) || 40, 100);
+      const items = await storage.getMyCourses(userId, limit);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching my courses:", error);
+      res.status(500).json({ error: "Failed to fetch my courses" });
+    }
+  });
+
   // ── Global learning prefs (profile) ───────────────────────────────────────
   app.get("/api/learn/prefs", isAuthenticated, async (req: any, res: Response) => {
     try {

@@ -11,7 +11,7 @@ const navItems = [
   { href: "/collection", icon: Image, label: "Collection" },
   { href: "/map", icon: Map, label: "Map" },
   { href: "/open-science", icon: Telescope, label: "Science" },
-  { href: "/saved", icon: BookMarked, label: "Saved" },
+  { href: "/saved", icon: BookMarked, label: "Library" },
 ];
 
 export function BottomNav() {
