@@ -74,6 +74,9 @@ import { registerAdminRoutes } from "./routes/admin";
 // Phase 1: Contributions, BYOK, freshness
 import { registerContributionsRoutes } from "./routes/contributions";
 
+// Phase 9: Adaptive learning (continue, goals, prefs, timeline)
+import { registerLearnRoutes } from "./routes/learn";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -88,6 +91,7 @@ export async function registerRoutes(
   registerSocialRoutes(app);
   registerAdminRoutes(app);
   registerContributionsRoutes(app);
+  registerLearnRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {

@@ -1,0 +1,313 @@
+/**
+ * Phase 9 — Adaptive Learning routes
+ * Continue continuum, goals, prefs, timeline, course plans
+ */
+import type { Express, Response } from "express";
+import { z } from "zod";
+import { storage } from "../storage";
+import { isAuthenticated } from "../replit_integrations/auth";
+import { generateLessonOutline } from "./ai";
+
+const depthModes = ["survey", "standard", "deep", "speed_run", "goal"] as const;
+const tutorModes = ["direct", "socratic", "feynman"] as const;
+const contentViews = ["full", "skim"] as const;
+
+const globalPrefsSchema = z.object({
+  defaultDepthMode: z.enum(["survey", "standard", "deep", "speed_run"]).optional(),
+  preferredTutorMode: z.enum(tutorModes).optional(),
+  defaultContentView: z.enum(contentViews).optional(),
+});
+
+const topicPrefsSchema = z.object({
+  depthMode: z.enum(["survey", "standard", "deep", "speed_run"]).optional(),
+  tutorMode: z.enum(tutorModes).optional(),
+  contentView: z.enum(contentViews).optional(),
+});
+
+const goalSchema = z.object({
+  goalText: z.string().min(5).max(500),
+  topicTitle: z.string().min(2).max(120).optional(),
+  categoryId: z.number().int().positive().optional(),
+});
+
+export function registerLearnRoutes(app: Express) {
+  // ── Continue learning continuum ───────────────────────────────────────────
+  app.get("/api/learn/continue", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const limit = Math.min(parseInt(String(req.query.limit || "8"), 10) || 8, 20);
+      const items = await storage.getContinueLearning(userId, limit);
+      res.json(items);
+    } catch (error) {
+      console.error("Error fetching continue learning:", error);
+      res.status(500).json({ error: "Failed to fetch continue learning" });
+    }
+  });
+
+  // ── Global learning prefs (profile) ───────────────────────────────────────
+  app.get("/api/learn/prefs", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const profile = await storage.getUserProfile(userId);
+      res.json({
+        defaultDepthMode: profile?.defaultDepthMode || "standard",
+        preferredTutorMode: profile?.preferredTutorMode || "direct",
+        defaultContentView: profile?.defaultContentView || "full",
+        allowTestOut: profile?.allowTestOut ?? false,
+        technicalLevel: profile?.technicalLevel || "beginner",
+      });
+    } catch (error) {
+      console.error("Error fetching learning prefs:", error);
+      res.status(500).json({ error: "Failed to fetch learning prefs" });
+    }
+  });
+
+  app.put("/api/learn/prefs", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = globalPrefsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid prefs", details: parsed.error.flatten() });
+      }
+      const profile = await storage.createOrUpdateUserProfile(userId, parsed.data);
+      res.json({
+        defaultDepthMode: profile.defaultDepthMode || "standard",
+        preferredTutorMode: profile.preferredTutorMode || "direct",
+        defaultContentView: profile.defaultContentView || "full",
+      });
+    } catch (error) {
+      console.error("Error updating learning prefs:", error);
+      res.status(500).json({ error: "Failed to update learning prefs" });
+    }
+  });
+
+  // ── Per-topic prefs ───────────────────────────────────────────────────────
+  app.get("/api/learn/topics/:topicId/prefs", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+
+      const profile = await storage.getUserProfile(userId);
+      const topicPrefs = await storage.getTopicLearningPrefs(userId, topicId);
+
+      res.json({
+        depthMode: topicPrefs?.depthMode || profile?.defaultDepthMode || "standard",
+        tutorMode: topicPrefs?.tutorMode || profile?.preferredTutorMode || "direct",
+        contentView: topicPrefs?.contentView || profile?.defaultContentView || "full",
+        isTopicOverride: !!topicPrefs,
+      });
+    } catch (error) {
+      console.error("Error fetching topic prefs:", error);
+      res.status(500).json({ error: "Failed to fetch topic prefs" });
+    }
+  });
+
+  app.put("/api/learn/topics/:topicId/prefs", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+
+      const parsed = topicPrefsSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid prefs", details: parsed.error.flatten() });
+      }
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) return res.status(404).json({ error: "Topic not found" });
+
+      const prefs = await storage.upsertTopicLearningPrefs(userId, topicId, parsed.data);
+      await storage.recordTimelineEvent({
+        userId,
+        topicId,
+        eventType: "mode_changed",
+        metadata: parsed.data,
+      });
+      res.json(prefs);
+    } catch (error) {
+      console.error("Error updating topic prefs:", error);
+      res.status(500).json({ error: "Failed to update topic prefs" });
+    }
+  });
+
+  // ── Course plan + OER ─────────────────────────────────────────────────────
+  app.get("/api/topics/:topicId/course-plan", async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId)) return res.status(400).json({ error: "Invalid topicId" });
+      const plan = await storage.getLatestCoursePlan(topicId);
+      if (!plan) return res.status(404).json({ error: "No course plan found" });
+      res.json(plan);
+    } catch (error) {
+      console.error("Error fetching course plan:", error);
+      res.status(500).json({ error: "Failed to fetch course plan" });
+    }
+  });
+
+  // ── Timeline ──────────────────────────────────────────────────────────────
+  app.get("/api/learn/timeline", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const limit = Math.min(parseInt(String(req.query.limit || "50"), 10) || 50, 200);
+      const events = await storage.getUserTimeline(userId, limit);
+      res.json(events);
+    } catch (error) {
+      console.error("Error fetching timeline:", error);
+      res.status(500).json({ error: "Failed to fetch timeline" });
+    }
+  });
+
+  // ── Goals ─────────────────────────────────────────────────────────────────
+  app.get("/api/learn/goals", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const status = typeof req.query.status === "string" ? req.query.status : undefined;
+      const goals = await storage.getUserLearningGoals(userId, status);
+      res.json(goals);
+    } catch (error) {
+      console.error("Error fetching goals:", error);
+      res.status(500).json({ error: "Failed to fetch goals" });
+    }
+  });
+
+  app.post("/api/learn/goal", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = goalSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid goal", details: parsed.error.flatten() });
+      }
+
+      const { goalText, topicTitle, categoryId } = parsed.data;
+
+      // Derive a short topic title from the goal if not provided
+      const title =
+        topicTitle ||
+        (goalText.length > 80 ? goalText.slice(0, 77) + "…" : goalText).replace(/^I want to /i, "").replace(/^Learn /i, "");
+
+      const description = `Goal-oriented path: ${goalText}`;
+
+      // Prefer an existing topic with similar title when possible
+      let topic = (await storage.getTopics()).find(
+        (t) => t.title.toLowerCase() === title.toLowerCase()
+      );
+
+      if (!topic) {
+        topic = await storage.createTopic({
+          title: title.charAt(0).toUpperCase() + title.slice(1),
+          description,
+          categoryId: categoryId || null,
+          difficulty: "beginner",
+        } as any);
+      }
+
+      // Ensure units exist — generate goal-intent outline if empty
+      let units = await storage.getLessonUnits(topic.id);
+      if (units.length === 0) {
+        units = await generateLessonOutline(topic.id, topic.title, description, {
+          learningIntent: "goal",
+          goalDescription: goalText,
+          createdByUserId: userId,
+        });
+      }
+
+      const plan = await storage.getLatestCoursePlan(topic.id);
+      const milestones = units.slice(0, 8).map((u) => ({
+        title: u.title,
+        unitId: u.id,
+        done: false,
+      }));
+
+      const goal = await storage.createLearningGoal({
+        userId,
+        goalText,
+        topicId: topic.id,
+        status: "active",
+        planJson: plan?.planJson || null,
+        milestones,
+      });
+
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: topic.id,
+        eventType: "goal_set",
+        metadata: { goalId: goal.id, goalText },
+      });
+
+      await storage.upsertTopicLearningPrefs(userId, topic.id, {
+        depthMode: "speed_run",
+        contentView: "skim",
+        tutorMode: "direct",
+      });
+
+      res.status(201).json({
+        goal,
+        topic,
+        units,
+        coursePlan: plan || null,
+        nextUnit: units[0] || null,
+      });
+    } catch (error) {
+      console.error("Error creating learning goal:", error);
+      res.status(500).json({ error: "Failed to create learning goal" });
+    }
+  });
+
+  app.patch("/api/learn/goals/:id", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const id = parseInt(req.params.id, 10);
+      if (Number.isNaN(id)) return res.status(400).json({ error: "Invalid id" });
+
+      const body = z.object({
+        status: z.enum(["active", "completed", "abandoned"]).optional(),
+        milestones: z.any().optional(),
+      }).safeParse(req.body);
+      if (!body.success) return res.status(400).json({ error: "Invalid body" });
+
+      const updates: any = { ...body.data };
+      if (body.data.status === "completed") {
+        updates.completedAt = new Date();
+      }
+
+      const updated = await storage.updateLearningGoal(id, userId, updates);
+      if (!updated) return res.status(404).json({ error: "Goal not found" });
+      res.json(updated);
+    } catch (error) {
+      console.error("Error updating goal:", error);
+      res.status(500).json({ error: "Failed to update goal" });
+    }
+  });
+
+  // ── Resume touch + section mark ───────────────────────────────────────────
+  app.post("/api/learn/resume", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const schema = z.object({
+        topicId: z.number().int().positive(),
+        unitId: z.number().int().positive(),
+        lastSection: z.string().max(64).optional(),
+      });
+      const parsed = schema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid body", details: parsed.error.flatten() });
+      }
+
+      await storage.startLesson(userId, parsed.data.unitId);
+      if (parsed.data.lastSection) {
+        await storage.updateLessonSection(userId, parsed.data.unitId, parsed.data.lastSection);
+      }
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: parsed.data.topicId,
+        eventType: "resumed",
+        metadata: { unitId: parsed.data.unitId, lastSection: parsed.data.lastSection },
+      });
+      res.json({ ok: true });
+    } catch (error) {
+      console.error("Error recording resume:", error);
+      res.status(500).json({ error: "Failed to record resume" });
+    }
+  });
+}

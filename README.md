@@ -67,6 +67,8 @@ See [SYNAPSE-MASTER-REVAMP.md](SYNAPSE-MASTER-REVAMP.md) for full implementation
 | 5 | Polymath Protocol (cross-topic synthesis, research workspace) | 🔲 Not Started |
 | 6 | Open Science Commons (structured hypotheses, agent peer review, citations) | 🔲 Not Started |
 | 7 | Accelerated UX (command palette, podcast mode, adaptive difficulty) | 🔲 Not Started |
+| 8 | Dynamic Course Architecture | 🔄 In progress |
+| 9 | Adaptive Learning UX (depth dial, goals, resume, tutor styles) | 🔄 Foundation sprint |
 
 ### Highlights:
 - **BYOK Content Pipeline** — platform pays nothing for generation; contributors bring their own keys

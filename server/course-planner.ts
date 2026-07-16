@@ -62,8 +62,10 @@ const PLANNER_PROMPT = `You are an expert curriculum architect. Your job is to d
 
 TOPIC: "{topicTitle}"
 DESCRIPTION: "{topicDescription}"
+LEARNING INTENT: "{learningIntent}"
+GOAL (if any): "{goalDescription}"
 
-Your task: Analyze this topic and design the ideal curriculum shape. Consider:
+Your task: Analyze this topic and design the ideal curriculum shape for this LEARNING INTENT. Consider:
 
 1. SCOPE ANALYSIS — How broad or narrow is this topic?
    - "micro" (e.g., "How to solve a Rubik's Cube", "Using the Requests library") → 2-6 units total, 1-2 tiers
@@ -72,35 +74,43 @@ Your task: Analyze this topic and design the ideal curriculum shape. Consider:
    - "broad" (e.g., "Calculus", "Organic Chemistry") → 16-28 units, 4 tiers, possibly with sub-topics
    - "interdisciplinary" (e.g., "Quantum Mechanics", "Machine Learning") → 20-30+ units, 4-5 tiers, likely needs sub-topic decomposition
 
-2. TIER DESIGN — Choose the RIGHT tier structure:
+2. INTENT MODIFIERS (CRITICAL — override scope defaults when they conflict):
+   - survey: prioritize BREADTH over depth. Fewer units (cap ~8-12 even for broad topics), wide conceptual map, light practice. Tier names like "Map of the Field", "Core Ideas", "Where to Go Next".
+   - standard: balanced path — optimal for most learners.
+   - deep: prioritize DEPTH. More units, sub-topic decomposition when useful, rigorous foundations before applications.
+   - speed_run: minimal viable path (3-8 units max). Only high-leverage concepts + check understanding. No filler history units.
+   - goal: reverse-engineer from the GOAL above. Sequence only what is needed to accomplish that outcome. Practical, checkpoint-driven unit titles. Drop pure theory that does not serve the goal unless required for safety/correctness.
+
+3. TIER DESIGN — Choose the RIGHT tier structure:
    - A micro topic might only need "Fundamentals" and "Practice" (2 tiers)
    - A broad topic might need "Foundations → Core Mechanics → Advanced Applications → Frontier" (4 tiers)
    - An interdisciplinary topic might need 5 tiers or sub-topic decomposition
    - Tier NAMES should be descriptive and topic-appropriate, not generic "Beginner/Intermediate/Advanced"
 
-3. UNIT COUNT — How many units per tier? This should reflect the actual depth needed:
+4. UNIT COUNT — How many units per tier? This should reflect the actual depth needed for the INTENT:
    - Don't pad with filler units
-   - Don't compress a topic that genuinely needs depth
-   - Think about what a learner actually needs to master this subject
+   - Don't compress a topic that genuinely needs depth (unless intent is survey/speed_run)
+   - Think about what a learner actually needs to master this subject (or achieve the goal)
 
-4. SUB-TOPIC DECOMPOSITION — For broad/interdisciplinary topics, should this be broken into sub-topics?
+5. SUB-TOPIC DECOMPOSITION — For broad/interdisciplinary topics under deep/standard, should this be broken into sub-topics?
    - E.g., "Physics" → ["Classical Mechanics", "Thermodynamics", "Electromagnetism", "Quantum Mechanics"]
    - Each sub-topic gets its own mini-curriculum
+   - Prefer NOT to decompose for survey/speed_run/goal intents
 
-5. OPEN EDUCATIONAL RESOURCES — Recommend 3-5 OER sources the curriculum should be built around:
+6. OPEN EDUCATIONAL RESOURCES — Recommend 3-5 FREE OER sources the curriculum should be built around:
    - MIT OpenCourseWare (ocw.mit.edu)
    - Khan Academy (khanacademy.org)
    - OpenStax (openstax.org)
    - LibreTexts (libretexts.org)
    - Wikiversity (en.wikiversity.org)
    - arXiv (arxiv.org)
-   - YouTube educational channels (CrashCourse, MIT OCW, Stanford)
-   - Other topic-specific OER
+   - freeCodeCamp, Project Gutenberg, specific free YouTube series (CrashCourse, MIT OCW, 3Blue1Brown)
+   - Prefer concrete course/page URLs when possible, not just homepage links
 
 Respond with ONLY a JSON object in this exact format:
 {
   "scope": "micro|focused|standard|broad|interdisciplinary",
-  "complexityAssessment": "1-2 sentence explanation of why this structure was chosen",
+  "complexityAssessment": "1-2 sentence explanation of why this structure was chosen for the intent",
   "contentType": "code_heavy|formula_heavy|visual_heavy|theory_heavy|balanced",
   "hasSubTopics": true|false,
   "tiers": [
@@ -124,20 +134,28 @@ CRITICAL RULES:
 - For micro topics (2-6 units), don't over-engineer — 1-2 tiers is fine.
 - For broad/interdisciplinary topics with hasSubTopics=true, provide 2-5 sub-topics each with their own units.
 - Unit outlines should be 1-2 sentences describing exactly what material that unit covers.
-- Think like a brilliant professor designing a real university course — what does a student ACTUALLY need to learn this subject?
+- Think like a brilliant professor designing a real university course — what does a student ACTUALLY need?
 - DO NOT include quiz questions in units. Quizzes are generated on-demand when the learner requests them.`;
 
 /**
  * Use AI to plan the optimal curriculum structure for a topic.
  * Falls back to legacy heuristic on failure.
  */
+export type LearningIntent = "survey" | "standard" | "deep" | "speed_run" | "goal";
+
 export async function planCourseWithAI(
   topicTitle: string,
-  topicDescription: string
+  topicDescription: string,
+  options?: { learningIntent?: LearningIntent; goalDescription?: string }
 ): Promise<CoursePlan> {
+  const learningIntent = options?.learningIntent || "standard";
+  const goalDescription = options?.goalDescription || "";
+
   const prompt = PLANNER_PROMPT
     .replace("{topicTitle}", topicTitle)
-    .replace("{topicDescription}", topicDescription || `Learning about ${topicTitle}`);
+    .replace("{topicDescription}", topicDescription || `Learning about ${topicTitle}`)
+    .replace("{learningIntent}", learningIntent)
+    .replace("{goalDescription}", goalDescription || "(none — general mastery of the topic)");
 
   try {
     const content = await generateCourseContent(
@@ -232,7 +250,7 @@ export async function planCourseWithAI(
     };
 
     console.log(
-      `[CoursePlan] AI planned "${topicTitle}": scope=${plan.scope}, ` +
+      `[CoursePlan] AI planned "${topicTitle}" intent=${learningIntent}: scope=${plan.scope}, ` +
       `${plan.tiers.length} tiers, ${totalUnits} units, ` +
       `contentType=${plan.contentType}, hasSubTopics=${plan.hasSubTopics}`
     );
@@ -240,7 +258,7 @@ export async function planCourseWithAI(
     return plan;
   } catch (error) {
     console.warn(`[CoursePlan] AI planning failed for "${topicTitle}", falling back to heuristic:`, error);
-    return legacyHeuristicPlan(topicTitle, topicDescription);
+    return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
   }
 }
 
@@ -252,9 +270,37 @@ import { classifyTopicByKeywords } from "./routes/ai";
  * Fallback: build a CoursePlan from the legacy keyword-based heuristic.
  * Used when AI planning fails or for topics that already have pre-planned syllabi.
  */
-export function legacyHeuristicPlan(topicTitle: string, topicDescription: string): CoursePlan {
+export function legacyHeuristicPlan(
+  topicTitle: string,
+  topicDescription: string,
+  learningIntent: LearningIntent = "standard"
+): CoursePlan {
   const profile = classifyTopicByKeywords(topicTitle, topicDescription);
-  const tiers = profile.unitsPerTier;
+  let tiers = { ...profile.unitsPerTier };
+
+  // Intent-based scaling of heuristic counts
+  if (learningIntent === "survey" || learningIntent === "speed_run") {
+    tiers = {
+      beginner: Math.min(tiers.beginner, learningIntent === "speed_run" ? 2 : 3),
+      intermediate: Math.min(tiers.intermediate, learningIntent === "speed_run" ? 2 : 3),
+      advanced: learningIntent === "speed_run" ? 1 : Math.min(tiers.advanced, 2),
+      nextgen: learningIntent === "speed_run" ? 0 : Math.min(tiers.nextgen, 1),
+    };
+  } else if (learningIntent === "deep") {
+    tiers = {
+      beginner: tiers.beginner + 1,
+      intermediate: tiers.intermediate + 1,
+      advanced: tiers.advanced + 1,
+      nextgen: Math.max(tiers.nextgen, 3),
+    };
+  } else if (learningIntent === "goal") {
+    tiers = {
+      beginner: Math.min(tiers.beginner, 3),
+      intermediate: Math.min(tiers.intermediate, 3),
+      advanced: Math.min(tiers.advanced, 2),
+      nextgen: 0,
+    };
+  }
 
   const tierDefs = [
     { name: "Foundations", description: "Core concepts and intuition", unitCount: tiers.beginner },
@@ -281,7 +327,7 @@ export function legacyHeuristicPlan(topicTitle: string, topicDescription: string
 
   return {
     scope: profile.category === "narrow_tool" ? "micro" : profile.category === "focused" ? "focused" : profile.category === "deep_science" ? "interdisciplinary" : profile.category === "broad" ? "broad" : "standard",
-    complexityAssessment: `Heuristic classification: ${profile.category} (${profile.contentType})`,
+    complexityAssessment: `Heuristic classification: ${profile.category} (${profile.contentType}), intent=${learningIntent}`,
     contentType: profile.contentType,
     hasSubTopics: false,
     tiers: tierDefs,

@@ -323,6 +323,23 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => { refTextRef.current = refText; }, [refText]);
   useEffect(() => { kokoroIncompatibleRef.current = kokoroIncompatible; }, [kokoroIncompatible]);
 
+  // Prefer instant Browser TTS on first visit; only auto-upgrade to Kokoro once the model is ready
+  // and the user has not explicitly chosen another engine.
+  useEffect(() => {
+    if (kokoroReady && serverVoicePreset === "browser") {
+      const userPinned = (() => {
+        try {
+          return localStorage.getItem("tts_engine_pinned") === "1";
+        } catch {
+          return false;
+        }
+      })();
+      // Soft upgrade path disabled by default to avoid clunky first-play stalls.
+      // Users opt into Kokoro via the settings popover.
+      if (userPinned) return;
+    }
+  }, [kokoroReady, serverVoicePreset]);
+
   // Auto-switch to Browser TTS when Kokoro is detected incompatible and user still has it selected.
   useEffect(() => {
     if (kokoroIncompatible && serverVoicePreset === "kokoro" && !autoSwitchedToBrowserRef.current) {
@@ -1043,7 +1060,8 @@ function useTTSImpl(): UseTTSReturn {
 
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
+      // Skip Kokoro until the model is ready so first-click listen stays instant.
+      if (voiceTier === "local" && !kokoroIncompatibleRef.current && kokoroReady) {
         let kokoroDone = false;
         try {
           const sentences = splitIntoSentences(text);
@@ -1072,6 +1090,9 @@ function useTTSImpl(): UseTTSReturn {
         }
 
         // Fallback: fall through to browser TTS (free and instant)
+      } else if (voiceTier === "local" && !kokoroReady) {
+        // Warm Kokoro in background; speak immediately via browser
+        console.debug("[TTS] Kokoro not ready — speaking with browser now");
       }
 
       // ── Tier 2: Server Qwen TTS (qwen / custom presets) ────────────────────
@@ -1120,7 +1141,7 @@ function useTTSImpl(): UseTTSReturn {
       console.error("TTS error:", error);
       setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig, kokoroReady]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
   // Pre-fetches the next section's audio while the current section plays to minimize gaps.
@@ -1191,7 +1212,7 @@ function useTTSImpl(): UseTTSReturn {
         const sectionText = sections[i].text;
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
+        if (voiceTier === "local" && !kokoroIncompatibleRef.current && kokoroReady) {
           let kokoroDone = false;
           try {
             const sentences = splitIntoSentences(sectionText);
@@ -1339,7 +1360,7 @@ function useTTSImpl(): UseTTSReturn {
         totalSections: 0,
       }));
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig]);
+  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig, kokoroReady]);
 
   const stop = useCallback(() => {
     cancelledRef.current = true;
@@ -1417,6 +1438,9 @@ function useTTSImpl(): UseTTSReturn {
     // even if called before the React re-render completes.
     serverVoicePresetRef.current = preset;
     setServerVoicePresetState(preset);
+    try {
+      localStorage.setItem("tts_engine_pinned", "1");
+    } catch { /* ignore */ }
     try {
       await fetch("/api/tts/settings", {
         method: "PUT",

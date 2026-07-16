@@ -111,7 +111,22 @@ interface RabbitHoleProps {
   topic: Topic;
   category?: Category;
   onBack: () => void;
+  /** Jump into a specific unit when resuming continuum */
+  resumeUnitId?: number;
 }
+
+const DEPTH_MODES = [
+  { id: "survey", label: "Survey", hint: "Breadth first" },
+  { id: "standard", label: "Standard", hint: "Balanced path" },
+  { id: "deep", label: "Deep", hint: "Mastery" },
+  { id: "speed_run", label: "Speed", hint: "Essentials only" },
+] as const;
+
+const TUTOR_MODES = [
+  { id: "direct", label: "Direct" },
+  { id: "socratic", label: "Socratic" },
+  { id: "feynman", label: "Feynman" },
+] as const;
 
 const difficultyColors: Record<string, string> = {
   beginner: "border-green-500/50 text-green-600 dark:text-green-400 bg-green-500/10",
@@ -223,7 +238,7 @@ function AdminPurchaseApprovals() {
   );
 }
 
-export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
+export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHoleProps) {
   const [showChat, setShowChat] = useState(false);
   const [selectedUnit, setSelectedUnit] = useState<LessonUnit | null>(null);
   const [activeTab, setActiveTab] = useState("beginner");
@@ -237,6 +252,10 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const [justSubmittedIdea, setJustSubmittedIdea] = useState(false);
   const [showBulkRegenConfirm, setShowBulkRegenConfirm] = useState(false);
   const [isBulkRegenPolling, setIsBulkRegenPolling] = useState(false);
+  const [depthMode, setDepthMode] = useState<string>("standard");
+  const [tutorMode, setTutorMode] = useState<string>("direct");
+  const [contentView, setContentView] = useState<"full" | "skim">("full");
+  const [resumeApplied, setResumeApplied] = useState(false);
   const [bulkRegenStatus, setBulkRegenStatus] = useState<{
     isRunning: boolean;
     completed: number;
@@ -286,6 +305,44 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
   const { data: lessonData, isLoading } = useQuery<LessonOutlineResponse>({
     queryKey: ["/api/lessons", topic.id, "outline"],
   });
+
+  // Phase 9: per-topic learning prefs + course plan OER
+  const { data: topicPrefs } = useQuery<{
+    depthMode: string;
+    tutorMode: string;
+    contentView: string;
+  }>({
+    queryKey: ["/api/learn/topics", topic.id, "prefs"],
+  });
+
+  const { data: coursePlan } = useQuery<{
+    planJson?: {
+      recommendedOER?: { name: string; url: string; reason: string }[];
+      complexityAssessment?: string;
+      scope?: string;
+    };
+    learningIntent?: string;
+  }>({
+    queryKey: ["/api/topics", topic.id, "course-plan"],
+    retry: false,
+  });
+
+  useEffect(() => {
+    if (!topicPrefs) return;
+    setDepthMode(topicPrefs.depthMode || "standard");
+    setTutorMode(topicPrefs.tutorMode || "direct");
+    setContentView((topicPrefs.contentView as "full" | "skim") || "full");
+  }, [topicPrefs?.depthMode, topicPrefs?.tutorMode, topicPrefs?.contentView]);
+
+  const saveTopicPrefs = async (patch: { depthMode?: string; tutorMode?: string; contentView?: string }) => {
+    try {
+      await apiRequest("PUT", `/api/learn/topics/${topic.id}/prefs`, patch);
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
+    } catch {
+      // non-blocking
+    }
+  };
 
   // Fetch lesson content when a unit is selected
   const { data: unitContent, isLoading: isLoadingContent } = useQuery<{
@@ -565,6 +622,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       });
       queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
       queryClient.invalidateQueries({ queryKey: ["/api/user/xp"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
       
       // Close content view and reset quiz state
       setSelectedUnit(null);
@@ -581,6 +639,21 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       setShowResources(false);
     }
   }, [selectedUnit?.id]);
+
+  // Auto-resume continuum into last unit once outline loads
+  useEffect(() => {
+    if (resumeApplied || !resumeUnitId || !lessonData?.units?.length) return;
+    const unit = lessonData.units.find((u) => u.id === resumeUnitId);
+    if (unit && !unit.locked) {
+      setSelectedUnit(unit);
+      setActiveTab(unit.difficulty);
+      startLessonMutation.mutate(unit.id);
+      setResumeApplied(true);
+    } else if (unit?.locked) {
+      setActiveTab(unit.difficulty);
+      setResumeApplied(true);
+    }
+  }, [resumeUnitId, lessonData?.units, resumeApplied]);
 
   const handleStartUnit = (unit: LessonUnit) => {
     if (unit.locked) {
@@ -1215,7 +1288,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 })()}
 
                 {/* Concept Section */}
-                {(() => {
+                {contentView === "full" && (() => {
                   const cIdx = sectionIndexMap["Concept"] ?? -1;
                   const cActive = cIdx >= 0 && currentSectionIndex === cIdx;
                   return (
@@ -1261,7 +1334,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 )}
 
                 {/* Analogy Section */}
-                {(() => {
+                {contentView === "full" && (() => {
                   const aIdx = sectionIndexMap["Analogy"] ?? -1;
                   const aActive = aIdx >= 0 && currentSectionIndex === aIdx;
                   return (
@@ -1292,7 +1365,7 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
                 })()}
 
                 {/* Example Section */}
-                {(() => {
+                {contentView === "full" && (() => {
                   const exLabel = lessonContent.example.title || "Example";
                   const exIdx = sectionIndexMap[exLabel] ?? -1;
                   const exActive = exIdx >= 0 && currentSectionIndex === exIdx;
@@ -1508,7 +1581,13 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
         </div>
 
         <AnimatePresence>
-          {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
+          {showChat && (
+          <AiChat
+            topic={topic}
+            onClose={() => setShowChat(false)}
+            initialTutorMode={tutorMode === "socratic" || tutorMode === "feynman" ? tutorMode : "direct"}
+          />
+        )}
         </AnimatePresence>
       </motion.div>
     );
@@ -1594,6 +1673,102 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
 
       <main className="px-4 py-6 md:px-8 md:py-8">
         <div className="max-w-3xl mx-auto">
+          {/* Phase 9 adaptive learning chrome */}
+          <div className="mb-6 space-y-3" data-testid="adaptive-learning-chrome">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mr-1">Depth</span>
+              {DEPTH_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  title={m.hint}
+                  onClick={() => {
+                    setDepthMode(m.id);
+                    if (m.id === "survey" || m.id === "speed_run") {
+                      setContentView("skim");
+                      saveTopicPrefs({ depthMode: m.id, contentView: "skim" });
+                    } else {
+                      saveTopicPrefs({ depthMode: m.id });
+                    }
+                  }}
+                  className={cn(
+                    "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                    depthMode === m.id
+                      ? "bg-primary text-primary-foreground border-primary"
+                      : "border-border text-muted-foreground hover:border-primary/40 hover:text-foreground"
+                  )}
+                  data-testid={`chip-depth-${m.id}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+              <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold ml-2 mr-1">Tutor</span>
+              {TUTOR_MODES.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => {
+                    setTutorMode(m.id);
+                    saveTopicPrefs({ tutorMode: m.id });
+                    if (m.id !== "direct") setShowChat(true);
+                  }}
+                  className={cn(
+                    "text-xs px-2.5 py-1 rounded-full border transition-colors",
+                    tutorMode === m.id
+                      ? "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/40"
+                      : "border-border text-muted-foreground hover:border-amber-500/40 hover:text-foreground"
+                  )}
+                  data-testid={`chip-tutor-${m.id}`}
+                >
+                  {m.label}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => {
+                  const next = contentView === "full" ? "skim" : "full";
+                  setContentView(next);
+                  saveTopicPrefs({ contentView: next });
+                }}
+                className={cn(
+                  "text-xs px-2.5 py-1 rounded-full border transition-colors ml-auto",
+                  contentView === "skim"
+                    ? "bg-secondary text-foreground border-primary/30"
+                    : "border-border text-muted-foreground"
+                )}
+                data-testid="chip-content-view"
+              >
+                {contentView === "skim" ? "Skim view" : "Full view"}
+              </button>
+            </div>
+            {coursePlan?.planJson?.recommendedOER && coursePlan.planJson.recommendedOER.length > 0 && (
+              <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2" data-testid="section-oer-links">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <GraduationCap className="h-4 w-4 text-primary" />
+                  Open resources
+                  {coursePlan.planJson.scope && (
+                    <Badge variant="outline" className="text-[10px] capitalize">{coursePlan.planJson.scope}</Badge>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {coursePlan.planJson.recommendedOER.slice(0, 5).map((oer, i) => (
+                    <a
+                      key={`${oer.url}-${i}`}
+                      href={oer.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={oer.reason}
+                      className="text-xs inline-flex items-center gap-1 px-2 py-1 rounded-md border border-border/70 hover:border-primary/40 hover:bg-primary/5 transition-colors"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                      {oer.name}
+                    </a>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
@@ -2071,7 +2246,13 @@ export function RabbitHole({ topic, category, onBack }: RabbitHoleProps) {
       </AnimatePresence>
 
       <AnimatePresence>
-        {showChat && <AiChat topic={topic} onClose={() => setShowChat(false)} />}
+        {showChat && (
+          <AiChat
+            topic={topic}
+            onClose={() => setShowChat(false)}
+            initialTutorMode={tutorMode === "socratic" || tutorMode === "feynman" ? tutorMode : "direct"}
+          />
+        )}
       </AnimatePresence>
     </motion.div>
   );

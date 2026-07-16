@@ -11,6 +11,7 @@ import {
   ttsAudioCache, flashcards, flashcardReviews,
   openScienceIdeas, openScienceComments,
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
+  coursePlans, learningGoals, learningTimeline, topicLearningPrefs,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -68,6 +69,14 @@ import {
   type InsertContentReview,
   type UserApiKey,
   type InsertUserApiKey,
+  type CoursePlanRecord,
+  type InsertCoursePlan,
+  type LearningGoal,
+  type InsertLearningGoal,
+  type LearningTimelineEvent,
+  type InsertLearningTimelineEvent,
+  type TopicLearningPrefs,
+  type InsertTopicLearningPrefs,
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
@@ -353,6 +362,30 @@ export interface IStorage {
   getPoolUsageToday(): Promise<{ unitsGenerated: number; remainingBudgetCents: number }>;
   isPoolAvailable(): Promise<boolean>;
   incrementPoolUsage(costCents: number): Promise<{ unitsGenerated: number; costCents: number }>;
+
+  // ── Phase 9: Adaptive Learning ────────────────────────────────────────────
+  saveCoursePlan(data: InsertCoursePlan): Promise<CoursePlanRecord>;
+  getLatestCoursePlan(topicId: number): Promise<CoursePlanRecord | undefined>;
+  createLearningGoal(data: InsertLearningGoal): Promise<LearningGoal>;
+  getUserLearningGoals(userId: string, status?: string): Promise<LearningGoal[]>;
+  updateLearningGoal(id: number, userId: string, updates: Partial<LearningGoal>): Promise<LearningGoal | undefined>;
+  recordTimelineEvent(data: InsertLearningTimelineEvent): Promise<LearningTimelineEvent>;
+  getUserTimeline(userId: string, limit?: number): Promise<LearningTimelineEvent[]>;
+  getTopicLearningPrefs(userId: string, topicId: number): Promise<TopicLearningPrefs | undefined>;
+  upsertTopicLearningPrefs(userId: string, topicId: number, prefs: Partial<InsertTopicLearningPrefs>): Promise<TopicLearningPrefs>;
+  touchUserProgressResume(userId: string, topicId: number, unitId: number): Promise<void>;
+  getContinueLearning(userId: string, limit?: number): Promise<{
+    topic: Topic;
+    category?: Category;
+    lastUnitId: number | null;
+    nextUnit: LessonUnit | null;
+    completedUnits: number;
+    totalUnits: number;
+    progressPercent: number;
+    lastAccessedAt: Date | null;
+    depthMode: string | null;
+  }[]>;
+  updateLessonSection(userId: string, unitId: number, lastSection: string): Promise<void>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -875,9 +908,16 @@ export class DatabaseStorage implements IStorage {
 
   async startLesson(userId: string, unitId: number): Promise<LessonProgress> {
     const existing = await this.getLessonProgress(userId, unitId);
+    const unit = await this.getLessonUnit(unitId);
+    if (unit) {
+      await this.touchUserProgressResume(userId, unit.topicId, unitId);
+    }
     if (existing) {
       const [updated] = await db.update(lessonProgress)
-        .set({ status: "in_progress", lastAccessedAt: sql`CURRENT_TIMESTAMP` })
+        .set({
+          status: existing.status === "completed" ? "completed" : "in_progress",
+          lastAccessedAt: sql`CURRENT_TIMESTAMP`,
+        })
         .where(eq(lessonProgress.id, existing.id))
         .returning();
       return updated;
@@ -2390,6 +2430,211 @@ export class DatabaseStorage implements IStorage {
     }
     const [created] = await db.insert(communityPoolUsage).values({ date: today, unitsGenerated: 1, costCents }).returning();
     return { unitsGenerated: created.unitsGenerated, costCents: created.costCents };
+  }
+
+  // ── Phase 9: Adaptive Learning ────────────────────────────────────────────
+
+  async saveCoursePlan(data: InsertCoursePlan): Promise<CoursePlanRecord> {
+    const existing = await this.getLatestCoursePlan(data.topicId);
+    const version = existing ? (existing.version || 1) + 1 : 1;
+    const [created] = await db.insert(coursePlans).values({
+      ...data,
+      version,
+    }).returning();
+    return created;
+  }
+
+  async getLatestCoursePlan(topicId: number): Promise<CoursePlanRecord | undefined> {
+    const [plan] = await db.select().from(coursePlans)
+      .where(eq(coursePlans.topicId, topicId))
+      .orderBy(desc(coursePlans.version), desc(coursePlans.createdAt))
+      .limit(1);
+    return plan;
+  }
+
+  async createLearningGoal(data: InsertLearningGoal): Promise<LearningGoal> {
+    const [created] = await db.insert(learningGoals).values(data).returning();
+    return created;
+  }
+
+  async getUserLearningGoals(userId: string, status?: string): Promise<LearningGoal[]> {
+    if (status) {
+      return db.select().from(learningGoals)
+        .where(and(eq(learningGoals.userId, userId), eq(learningGoals.status, status)))
+        .orderBy(desc(learningGoals.createdAt));
+    }
+    return db.select().from(learningGoals)
+      .where(eq(learningGoals.userId, userId))
+      .orderBy(desc(learningGoals.createdAt));
+  }
+
+  async updateLearningGoal(id: number, userId: string, updates: Partial<LearningGoal>): Promise<LearningGoal | undefined> {
+    const [updated] = await db.update(learningGoals)
+      .set(updates)
+      .where(and(eq(learningGoals.id, id), eq(learningGoals.userId, userId)))
+      .returning();
+    return updated;
+  }
+
+  async recordTimelineEvent(data: InsertLearningTimelineEvent): Promise<LearningTimelineEvent> {
+    const [created] = await db.insert(learningTimeline).values(data).returning();
+    return created;
+  }
+
+  async getUserTimeline(userId: string, limit = 50): Promise<LearningTimelineEvent[]> {
+    return db.select().from(learningTimeline)
+      .where(eq(learningTimeline.userId, userId))
+      .orderBy(desc(learningTimeline.createdAt))
+      .limit(limit);
+  }
+
+  async getTopicLearningPrefs(userId: string, topicId: number): Promise<TopicLearningPrefs | undefined> {
+    const [prefs] = await db.select().from(topicLearningPrefs)
+      .where(and(eq(topicLearningPrefs.userId, userId), eq(topicLearningPrefs.topicId, topicId)));
+    return prefs;
+  }
+
+  async upsertTopicLearningPrefs(
+    userId: string,
+    topicId: number,
+    prefs: Partial<InsertTopicLearningPrefs>
+  ): Promise<TopicLearningPrefs> {
+    const existing = await this.getTopicLearningPrefs(userId, topicId);
+    if (existing) {
+      const [updated] = await db.update(topicLearningPrefs)
+        .set({
+          depthMode: prefs.depthMode ?? existing.depthMode,
+          tutorMode: prefs.tutorMode ?? existing.tutorMode,
+          contentView: prefs.contentView ?? existing.contentView,
+          updatedAt: new Date(),
+        })
+        .where(eq(topicLearningPrefs.id, existing.id))
+        .returning();
+      return updated;
+    }
+    const [created] = await db.insert(topicLearningPrefs).values({
+      userId,
+      topicId,
+      depthMode: prefs.depthMode || "standard",
+      tutorMode: prefs.tutorMode || "direct",
+      contentView: prefs.contentView || "full",
+    }).returning();
+    return created;
+  }
+
+  async touchUserProgressResume(userId: string, topicId: number, unitId: number): Promise<void> {
+    const existing = await this.getProgressForTopic(userId, topicId);
+    if (existing) {
+      await db.update(userProgress)
+        .set({
+          lastUnitId: unitId,
+          lastAccessedAt: new Date(),
+          status: existing.status === "discovered" || existing.status === "unexplored" ? "learning" : existing.status,
+        })
+        .where(eq(userProgress.id, existing.id));
+    } else {
+      await db.insert(userProgress).values({
+        userId,
+        topicId,
+        status: "learning",
+        lastUnitId: unitId,
+      });
+    }
+  }
+
+  async updateLessonSection(userId: string, unitId: number, lastSection: string): Promise<void> {
+    const existing = await this.getLessonProgress(userId, unitId);
+    if (existing) {
+      await db.update(lessonProgress)
+        .set({ lastSection, lastAccessedAt: sql`CURRENT_TIMESTAMP` })
+        .where(eq(lessonProgress.id, existing.id));
+    } else {
+      await db.insert(lessonProgress).values({
+        userId,
+        unitId,
+        status: "in_progress",
+        lastSection,
+      });
+    }
+  }
+
+  async getContinueLearning(userId: string, limit = 8): Promise<{
+    topic: Topic;
+    category?: Category;
+    lastUnitId: number | null;
+    nextUnit: LessonUnit | null;
+    completedUnits: number;
+    totalUnits: number;
+    progressPercent: number;
+    lastAccessedAt: Date | null;
+    depthMode: string | null;
+  }[]> {
+    const progressRows = await db.select().from(userProgress)
+      .where(eq(userProgress.userId, userId))
+      .orderBy(desc(userProgress.lastAccessedAt))
+      .limit(40);
+
+    const results: {
+      topic: Topic;
+      category?: Category;
+      lastUnitId: number | null;
+      nextUnit: LessonUnit | null;
+      completedUnits: number;
+      totalUnits: number;
+      progressPercent: number;
+      lastAccessedAt: Date | null;
+      depthMode: string | null;
+    }[] = [];
+
+    for (const p of progressRows) {
+      if (results.length >= limit) break;
+      const topic = await this.getTopicById(p.topicId);
+      if (!topic) continue;
+      const units = await this.getLessonUnits(topic.id);
+      if (units.length === 0) continue;
+
+      let completedUnits = 0;
+      let nextUnit: LessonUnit | null = null;
+      for (const u of units) {
+        const lp = await this.getLessonProgress(userId, u.id);
+        if (lp?.status === "completed") {
+          completedUnits++;
+        } else if (!nextUnit) {
+          nextUnit = u;
+        }
+      }
+
+      // Prefer explicit last unit if still incomplete
+      if (p.lastUnitId) {
+        const last = units.find(u => u.id === p.lastUnitId);
+        if (last) {
+          const lp = await this.getLessonProgress(userId, last.id);
+          if (!lp || lp.status !== "completed") {
+            nextUnit = last;
+          }
+        }
+      }
+
+      // Skip fully completed courses unless they were recently accessed (still useful)
+      if (completedUnits >= units.length && !p.lastUnitId) continue;
+
+      const category = topic.categoryId ? await this.getCategoryById(topic.categoryId) : undefined;
+      const prefs = await this.getTopicLearningPrefs(userId, topic.id);
+
+      results.push({
+        topic,
+        category,
+        lastUnitId: p.lastUnitId ?? null,
+        nextUnit: nextUnit || units[units.length - 1] || null,
+        completedUnits,
+        totalUnits: units.length,
+        progressPercent: units.length ? Math.round((completedUnits / units.length) * 100) : 0,
+        lastAccessedAt: p.lastAccessedAt ?? null,
+        depthMode: prefs?.depthMode ?? null,
+      });
+    }
+
+    return results;
   }
 }
 
