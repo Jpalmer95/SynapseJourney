@@ -258,7 +258,7 @@ Synapse is the learning platform humans AND AI agents wish they had:
 
 ### Environment
 - **Repo:** github.com/Jpalmer95/SynapseJourney
-- **Live:** synapse.167.99.125.127.sslip.io (Coolify on DigitalOcean droplet)
+- **Live:** https://synapsejourney.org (primary) · https://www.synapsejourney.org · legacy: synapse.167.99.125.127.sslip.io (Coolify Traefik on DigitalOcean droplet)
 - **DB:** PostgreSQL (neon.tech or self-hosted — verify)
 - **Deploy:** GitHub push → Coolify auto-redeploy
 - **Branch:** `main` only (no branch protection currently)

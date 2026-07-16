@@ -1,4 +1,4 @@
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-synapse.167.99.125.127.sslip.io-purple?style=flat-square)](https://synapse.167.99.125.127.sslip.io)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-synapsejourney.org-purple?style=flat-square)](https://synapsejourney.org)
 [![Vite](https://img.shields.io/badge/Vite-5-646CFF?style=flat-square&logo=vite)](https://vitejs.dev)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)](https://react.dev)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0-blue?style=flat-square&logo=typescript)](https://www.typescriptlang.org)
