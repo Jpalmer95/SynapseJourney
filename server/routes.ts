@@ -790,8 +790,18 @@ Make the progression natural from fundamentals to advanced concepts.`,
         });
       }
 
+      // Cache quiz into content_json so re-open is free (no re-token spend)
+      try {
+        const existing = unit.contentJson as any;
+        if (existing && typeof existing === "object" && !Array.isArray(existing)) {
+          await storage.updateLessonContent(unitId, { ...existing, quiz });
+        }
+      } catch (cacheErr) {
+        console.warn("[OnDemandQuiz] Failed to cache quiz into content:", cacheErr);
+      }
+
       console.log(`[OnDemandQuiz] Generated ${quiz.length} questions for unit ${unitId}`);
-      return res.json({ quiz, unitId });
+      return res.json({ quiz, unitId, cached: true });
     } catch (error) {
       console.error("[OnDemandQuiz] Error:", error);
       res.status(500).json({ error: "Failed to generate quiz" });
@@ -1005,7 +1015,25 @@ Respond with JSON:
         tiersCompleted: 4,
       };
 
-      return res.json({ poster: posterData, topicId, topicTitle: topic.title });
+      // Persist poster for re-view / gallery
+      let saved = null;
+      try {
+        saved = await storage.saveCoursePoster({
+          userId,
+          topicId,
+          posterData,
+        });
+        await storage.recordTimelineEvent({
+          userId,
+          topicId,
+          eventType: "poster_earned",
+          metadata: { posterId: saved.id },
+        });
+      } catch (persistErr) {
+        console.warn("[Poster] Failed to persist poster:", persistErr);
+      }
+
+      return res.json({ poster: posterData, topicId, topicTitle: topic.title, saved });
     } catch (error) {
       console.error("Error generating course poster:", error);
       res.status(500).json({ error: "Failed to generate course poster" });

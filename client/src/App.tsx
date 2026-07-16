@@ -24,6 +24,7 @@ import PracticeTestResultsPage from "@/pages/practice-test-results";
 import { OpenSciencePage } from "@/pages/open-science";
 import { Loader2 } from "lucide-react";
 import { TTSProvider } from "@/hooks/use-tts";
+import { TTSMiniPlayer } from "@/components/tts-mini-player";
 import { HelmetProvider, Helmet } from "react-helmet-async";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
@@ -96,6 +97,7 @@ function App() {
               <ErrorBoundary>
                 <AppContent />
               </ErrorBoundary>
+              <TTSMiniPlayer />
             </TTSProvider>
           </TooltipProvider>
         </ThemeProvider>
