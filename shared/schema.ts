@@ -58,6 +58,7 @@ export const userProgress = pgTable("user_progress", {
   timeSpent: integer("time_spent").default(0),
   xp: integer("xp").default(0),
   currentLevel: integer("current_level").default(0),
+  lastUnitId: integer("last_unit_id"), // resume continuum — last unit opened
   lastAccessedAt: timestamp("last_accessed_at").default(sql`CURRENT_TIMESTAMP`),
   startedAt: timestamp("started_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -118,6 +119,7 @@ export const lessonProgress = pgTable("lesson_progress", {
   unitId: integer("unit_id").references(() => lessonUnits.id).notNull(),
   status: text("status").notNull().default("not_started"), // not_started, in_progress, completed
   quizScore: integer("quiz_score"), // null if not attempted, 0-100
+  lastSection: text("last_section"), // optional resume anchor within unit (e.g. "concept", "example")
   completedAt: timestamp("completed_at"),
   lastAccessedAt: timestamp("last_accessed_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -219,6 +221,10 @@ export const userProfiles = pgTable("user_profiles", {
   ttsQwenStyleInstruction: text("tts_qwen_style_instruction"), // optional style guidance for custom_voice mode
   ttsQwenVoiceDescription: text("tts_qwen_voice_description"), // natural language voice description for voice_design mode
   ttsRefText: text("tts_ref_text"), // transcript of reference audio for voice_clone mode
+  // Phase 9 adaptive learning defaults
+  defaultDepthMode: text("default_depth_mode").default("standard"), // survey | standard | deep | speed_run
+  preferredTutorMode: text("preferred_tutor_mode").default("direct"), // direct | socratic | feynman
+  defaultContentView: text("default_content_view").default("full"), // full | skim
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
@@ -617,6 +623,52 @@ export const coursePosters = pgTable("course_posters", {
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
+// AI-generated course plans (Phase 8.1 / 9.1) — versioned curriculum blueprints
+export const coursePlans = pgTable("course_plans", {
+  id: serial("id").primaryKey(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  learningIntent: text("learning_intent").default("standard").notNull(), // survey | standard | deep | speed_run | goal
+  goalDescription: text("goal_description"), // set when learningIntent = goal
+  planJson: jsonb("plan_json").notNull(), // CoursePlan shape from course-planner.ts
+  version: integer("version").default(1).notNull(),
+  createdByUserId: varchar("created_by_user_id"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Goal-oriented learning (Phase 9.3)
+export const learningGoals = pgTable("learning_goals", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  goalText: text("goal_text").notNull(),
+  topicId: integer("topic_id").references(() => topics.id),
+  status: text("status").default("active").notNull(), // active | completed | abandoned
+  planJson: jsonb("plan_json"), // optional snapshot of generated plan
+  milestones: jsonb("milestones"), // [{ title, unitId?, done }]
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  completedAt: timestamp("completed_at"),
+});
+
+// Learning journey timeline (Phase 8.5 / 9.2)
+export const learningTimeline = pgTable("learning_timeline", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id),
+  eventType: text("event_type").notNull(), // started | completed | mastered | quiz_passed | poster_earned | mode_changed | goal_set | resumed
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Per-topic learning preferences (depth / tutor / view override global profile defaults)
+export const topicLearningPrefs = pgTable("topic_learning_prefs", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id).notNull(),
+  depthMode: text("depth_mode").default("standard").notNull(), // survey | standard | deep | speed_run
+  tutorMode: text("tutor_mode").default("direct").notNull(), // direct | socratic | feynman
+  contentView: text("content_view").default("full").notNull(), // full | skim
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
 // Relations
 export const categoriesRelations = relations(categories, ({ many }) => ({
   topics: many(topics),
@@ -710,6 +762,10 @@ export const insertAgentProfileSchema = createInsertSchema(agentProfiles).omit({
 export const insertCommunityPoolUsageSchema = createInsertSchema(communityPoolUsage).omit({ id: true, updatedAt: true });
 export const insertCommunityPoolQueueSchema = createInsertSchema(communityPoolQueue).omit({ id: true, createdAt: true, processedAt: true });
 export const insertCoursePosterSchema = createInsertSchema(coursePosters).omit({ id: true, generatedAt: true });
+export const insertCoursePlanSchema = createInsertSchema(coursePlans).omit({ id: true, createdAt: true });
+export const insertLearningGoalSchema = createInsertSchema(learningGoals).omit({ id: true, createdAt: true, completedAt: true });
+export const insertLearningTimelineSchema = createInsertSchema(learningTimeline).omit({ id: true, createdAt: true });
+export const insertTopicLearningPrefsSchema = createInsertSchema(topicLearningPrefs).omit({ id: true, updatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -819,6 +875,14 @@ export type CommunityPoolQueue = typeof communityPoolQueue.$inferSelect;
 export type InsertCommunityPoolQueue = z.infer<typeof insertCommunityPoolQueueSchema>;
 export type CoursePoster = typeof coursePosters.$inferSelect;
 export type InsertCoursePoster = z.infer<typeof insertCoursePosterSchema>;
+export type CoursePlanRecord = typeof coursePlans.$inferSelect;
+export type InsertCoursePlan = z.infer<typeof insertCoursePlanSchema>;
+export type LearningGoal = typeof learningGoals.$inferSelect;
+export type InsertLearningGoal = z.infer<typeof insertLearningGoalSchema>;
+export type LearningTimelineEvent = typeof learningTimeline.$inferSelect;
+export type InsertLearningTimelineEvent = z.infer<typeof insertLearningTimelineSchema>;
+export type TopicLearningPrefs = typeof topicLearningPrefs.$inferSelect;
+export type InsertTopicLearningPrefs = z.infer<typeof insertTopicLearningPrefsSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

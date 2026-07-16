@@ -21,6 +21,8 @@ interface AiChatProps {
   topic?: Topic;
   synthesisTopics?: string;
   onClose: () => void;
+  /** Initial tutor style from lesson chrome */
+  initialTutorMode?: "direct" | "socratic" | "feynman";
 }
 
 const suggestions = [
@@ -30,7 +32,7 @@ const suggestions = [
   "What should I learn next?",
 ];
 
-export function AiChat({ topic, synthesisTopics, onClose }: AiChatProps) {
+export function AiChat({ topic, synthesisTopics, onClose, initialTutorMode = "direct" }: AiChatProps) {
   const [, setLocation] = useLocation();
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -39,15 +41,19 @@ export function AiChat({ topic, synthesisTopics, onClose }: AiChatProps) {
       content: synthesisTopics
         ? `I see you have mastered **${synthesisTopics}**... Let us see what you are truly capable of. I have constructed a Synthesis Quest to test your multidisciplinary understanding. Are you ready?`
         : topic
-        ? `Hello! I'm your AI learning companion. I see you're exploring "${topic.title}". What would you like to know? I'm here to help you understand this topic better.`
+        ? initialTutorMode === "socratic"
+          ? `I'll guide you through **${topic.title}** with questions. What feels unclear or most interesting right now?`
+          : initialTutorMode === "feynman"
+          ? `Teach me **${topic.title}** like I'm new to it. Start with the core idea in plain words.`
+          : `Hello! I'm your AI learning companion. I see you're exploring "${topic.title}". What would you like to know? I'm here to help you understand this topic better.`
         : "Hello! I'm your AI learning companion. I'm here to help you explore knowledge, answer questions, and guide your learning journey. What would you like to learn about today?",
       timestamp: new Date(),
     },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [socraticMode, setSocraticMode] = useState(false);
-  const [feynmanMode, setFeynmanMode] = useState(false);
+  const [socraticMode, setSocraticMode] = useState(initialTutorMode === "socratic");
+  const [feynmanMode, setFeynmanMode] = useState(initialTutorMode === "feynman");
   const [feynmanGraded, setFeynmanGraded] = useState(false);
   const [showProviderSetup, setShowProviderSetup] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);

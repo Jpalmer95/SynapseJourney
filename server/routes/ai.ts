@@ -908,7 +908,16 @@ export function classifyTopicByKeywords(title: string, description: string): Top
   }
 }
 
-export async function generateLessonOutline(topicId: number, topicTitle: string, topicDescription: string): Promise<any[]> {
+export async function generateLessonOutline(
+  topicId: number,
+  topicTitle: string,
+  topicDescription: string,
+  options?: {
+    learningIntent?: "survey" | "standard" | "deep" | "speed_run" | "goal";
+    goalDescription?: string;
+    createdByUserId?: string;
+  }
+): Promise<any[]> {
   // ── Use pre-planned syllabus if available ───────────────────────────────────
   const plannedSyllabus = SYLLABI_MAP.get(topicId);
   if (plannedSyllabus) {
@@ -928,6 +937,68 @@ export async function generateLessonOutline(topicId: number, topicTitle: string,
     return createdUnits;
   }
 
+  // ── AI-first dynamic course planner (Phase 8.1 / 9.1) ───────────────────────
+  const learningIntent = options?.learningIntent || "standard";
+  const { planCourseWithAI } = await import("../course-planner");
+  const { storage } = await import("../storage");
+
+  try {
+    const plan = await planCourseWithAI(topicTitle, topicDescription, {
+      learningIntent,
+      goalDescription: options?.goalDescription,
+    });
+
+    // Persist plan for OER surface + versioning
+    try {
+      await storage.saveCoursePlan({
+        topicId,
+        learningIntent,
+        goalDescription: options?.goalDescription || null,
+        planJson: plan as any,
+        createdByUserId: options?.createdByUserId || null,
+        version: 1,
+      });
+    } catch (e) {
+      console.warn(`[Outline] Failed to persist course plan for topic ${topicId}:`, e);
+    }
+
+    // Group units by difficulty and assign sequential unitIndex within each tier
+    const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"] as const;
+    const unitsByDiff: Record<string, typeof plan.units> = {
+      beginner: [], intermediate: [], advanced: [], nextgen: [],
+    };
+    for (const u of plan.units) {
+      (unitsByDiff[u.difficulty] ||= []).push(u);
+    }
+
+    const createdUnits = [];
+    for (const diff of DIFFICULTIES) {
+      const list = unitsByDiff[diff] || [];
+      for (let i = 0; i < list.length; i++) {
+        const u = list[i];
+        const created = await storage.createLessonUnit({
+          topicId,
+          difficulty: u.difficulty,
+          contentType: plan.contentType,
+          unitIndex: i,
+          title: u.title,
+          outline: u.outline + (u.tierName ? ` [${u.tierName}]` : ""),
+        });
+        createdUnits.push(created);
+      }
+    }
+
+    console.log(
+      `[Outline] AI plan created ${createdUnits.length} units for "${topicTitle}" ` +
+      `(intent=${learningIntent}, scope=${plan.scope}, oer=${plan.recommendedOER?.length || 0})`
+    );
+    return createdUnits;
+  } catch (error) {
+    console.error("Error generating lesson outline via course planner:", error);
+    // Fall through to legacy path below
+  }
+
+  // ── Legacy heuristic fallback (if planner path fully fails) ─────────────────
   const profile = classifyTopicByKeywords(topicTitle, topicDescription);
   const tierInfo = profile.unitsPerTier;
 
@@ -1046,7 +1117,6 @@ CRITICAL RULES:
       ` (${normalizedUnits.length} total)`);
 
     // Save units to database
-    const { storage } = await import("../storage");
     const createdUnits = await Promise.all(
       normalizedUnits.map((u: any) => storage.createLessonUnit({
         topicId,

@@ -661,7 +661,43 @@ The open science feed evolves into a true decentralized community board where an
 
 ---
 
-## Future Roadmap (Post-Phase 8 — Do NOT Execute)
+## Phase 9: Adaptive Learning UX
+
+**Core concept:** Depth, tutor style, and goals are dials the learner can change anytime — while progress remains durable across topics.
+
+See [PHASE9-ADAPTIVE-LEARNING.md](PHASE9-ADAPTIVE-LEARNING.md) for full plan.
+
+### 9.1 — Intent-aware course plans
+- [x] Extend `planCourseWithAI` with learningIntent (survey/standard/deep/speed_run/goal)
+- [x] Wire planner into `generateLessonOutline` for non-seeded topics
+- [x] Persist plans in `course_plans` (+ OER list surface)
+- [ ] Intent-aware re-plan without wiping progress
+
+### 9.2 — Resume continuum
+- [x] `GET /api/learn/continue` + home Continue strip
+- [x] `last_unit_id` / `last_section` schema fields
+- [x] Auto-resume into unit from Continue cards
+- [x] Timeline event recording (mode_changed, goal_set, resumed)
+
+### 9.3 — Goal-oriented learning
+- [x] `POST /api/learn/goal` + Goal Start card on home
+- [x] `learning_goals` table + milestones snapshot
+- [ ] Milestone check-off UI + goal completion poster
+
+### 9.4 — In-lesson adaptive chrome
+- [x] Depth / Tutor / Skim chips in RabbitHole
+- [x] Socratic/Feynman open from chips with initial mode
+- [x] Skim hides concept/analogy/example; keeps takeaways + resources
+- [ ] Speed-run quiz-first flow
+
+### 9.5 — TTS de-clunk
+- [x] Default Browser TTS for instant first play
+- [x] Skip Kokoro path until model ready
+- [ ] Sticky mini-player across navigation (Phase 7.2 overlap)
+
+---
+
+## Future Roadmap (Post-Phase 9 — Do NOT Execute)
 
 - **XR/VR Learning Sandboxes** — physics-bound 3D environments for experimentation
 - **Micro-credentialing** — verifiable blockchain credentials for mastery
