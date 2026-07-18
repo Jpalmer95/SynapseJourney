@@ -189,7 +189,9 @@ class HuggingFaceProvider implements AIProvider {
 
   async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
     const model = options?.model || this.model;
-    const url = `https://api-inference.huggingface.co/models/${model}/v1/chat/completions`;
+    // HF retired api-inference.huggingface.co (DNS dead) — router.huggingface.co
+    // is the OpenAI-compatible successor endpoint.
+    const url = `https://router.huggingface.co/v1/chat/completions`;
 
     const response = await fetch(url, {
       method: "POST",
