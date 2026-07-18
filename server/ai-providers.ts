@@ -283,7 +283,9 @@ class OpenRouterProvider implements AIProvider {
         model: options?.model || this.model,
         messages: messages,
         temperature: options?.temperature ?? 0.7,
-        max_tokens: options?.maxTokens,
+        // Cap default spend: OpenRouter defaults max_tokens to 65536 when omitted,
+        // which exceeds many users' key credit caps (402 "requires more credits").
+        max_tokens: options?.maxTokens ?? 4096,
       }),
     });
 
