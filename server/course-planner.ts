@@ -55,6 +55,21 @@ export interface CoursePlan {
   subTopics?: CoursePlanSubTopic[];
   /** Open educational resources the curriculum should be built around */
   recommendedOER: { name: string; url: string; reason: string }[];
+  /** Present when the goal is technical — a copyable brief for the learner's AI agent */
+  agentContext?: AgentContext;
+}
+
+export interface AgentContext {
+  /** One-paragraph summary of what the agent should accomplish */
+  objective: string;
+  /** Markdown block the user can paste into their agent (Hermes, Claude Code, etc.) */
+  copyableBrief: string;
+  /** Concrete definition-of-done checks */
+  successCriteria: string[];
+  /** Skills/tools the agent should load or install */
+  suggestedSkills: string[];
+  /** Common failure modes and how to avoid them */
+  pitfalls: string[];
 }
 
 // ── AI-Driven Planning ────────────────────────────────────────────────────
@@ -65,6 +80,9 @@ TOPIC: "{topicTitle}"
 DESCRIPTION: "{topicDescription}"
 LEARNING INTENT: "{learningIntent}"
 GOAL (if any): "{goalDescription}"
+TARGET COURSE LENGTH: "{targetLength}" ({targetUnitRange} units — respect this unless the topic genuinely cannot fit)
+LEARNER TECHNICAL LEVEL: "{technicalLevel}"
+INCLUDE AGENT CONTEXT: "{includeAgentContext}"
 
 Your task: Analyze this topic and design the ideal curriculum shape for this LEARNING INTENT. Consider:
 
@@ -125,17 +143,27 @@ Respond with ONLY a JSON object in this exact format:
   ],
   "recommendedOER": [
     { "name": "Resource name", "url": "https://...", "reason": "Why this is ideal for this course" }
-  ]
+  ],
+  "agentContext": {
+    "objective": "One-paragraph statement of what the learner's AI agent should accomplish",
+    "copyableBrief": "A self-contained markdown instruction block the learner can paste into their agent (Hermes Agent, Claude Code, Codex, etc.). Include: the goal, constraints, tech stack, exact deliverable, success checks, and 2-4 suggested tools/skills to load. Write it as a direct imperative prompt addressed to the agent.",
+    "successCriteria": ["Concrete check 1", "Concrete check 2"],
+    "suggestedSkills": ["skill-or-tool-1", "skill-or-tool-2"],
+    "pitfalls": ["Common failure mode + how to avoid it"]
+  }
 }
 
 CRITICAL RULES:
 - Total units should match the sum of tier unitCounts.
+- TARGET COURSE LENGTH is a hard requirement: quick=3-5 total units, standard=8-12, deep=16-24. Adjust tier counts so the total lands inside that range.
 - Every unit must have a UNIQUE title covering DISTINCT material.
 - Tier names in units must match tier names in the tiers array.
+- Calibrate difficulty to LEARNER TECHNICAL LEVEL: beginner=assume no background, define every term; intermediate=assume core concepts, move fast; advanced=assume working knowledge, focus on nuance/edge cases; expert=frontier depth only, no intro material.
 - For micro topics (2-6 units), don't over-engineer — 1-2 tiers is fine.
 - For broad/interdisciplinary topics with hasSubTopics=true, provide 2-5 sub-topics each with their own units.
 - Unit outlines should be 1-2 sentences describing exactly what material that unit covers.
 - Think like a brilliant professor designing a real university course — what does a student ACTUALLY need?
+- ONLY include "agentContext" when INCLUDE AGENT CONTEXT is "yes". Omit the key entirely otherwise. The copyableBrief must be immediately usable — no placeholders like {stack}; fill in real values inferred from the goal.
 - DO NOT include quiz questions in units. Quizzes are generated on-demand when the learner requests them.`;
 
 /**
@@ -143,6 +171,31 @@ CRITICAL RULES:
  * Falls back to legacy heuristic on failure.
  */
 export type LearningIntent = "survey" | "standard" | "deep" | "speed_run" | "goal";
+export type CourseLength = "quick" | "standard" | "deep";
+export type TechnicalLevel = "beginner" | "intermediate" | "advanced" | "expert";
+
+export const COURSE_LENGTH_RANGES: Record<CourseLength, { min: number; max: number }> = {
+  quick: { min: 3, max: 5 },
+  standard: { min: 8, max: 12 },
+  deep: { min: 16, max: 24 },
+};
+
+/**
+ * Heuristic: does this goal/topic describe a technical, agent-delegable task?
+ * Used to decide whether to ask the planner for an Agent Playbook section.
+ */
+export function isTechnicalGoal(text: string): boolean {
+  const t = text.toLowerCase();
+  const keywords = [
+    "deploy", "ship", "build", "code", "app", "api", "server", "website", "web app",
+    "next.js", "nextjs", "react", "vue", "svelte", "node", "python", "rust", "go ",
+    "typescript", "javascript", "sql", "database", "docker", "kubernetes", "ci/cd",
+    "github", "git ", "ml", "ai ", "llm", "fine-tune", "model", "gradio", "hugging face",
+    "pipeline", "automation", "script", "cli", "plugin", "extension", "bot",
+    "vps", "cloud", "aws", "gcp", "azure", "vercel", "nginx", "linux",
+  ];
+  return keywords.some((k) => t.includes(k));
+}
 
 export async function planCourseWithAI(
   topicTitle: string,
@@ -150,18 +203,29 @@ export async function planCourseWithAI(
   options?: {
     learningIntent?: LearningIntent;
     goalDescription?: string;
+    courseLength?: CourseLength;
+    technicalLevel?: TechnicalLevel;
+    includeAgentContext?: boolean;
     /** BYOC: use learner's keys first, then platform pool */
     userConfig?: ProviderConfig;
   }
 ): Promise<CoursePlan> {
   const learningIntent = options?.learningIntent || "standard";
   const goalDescription = options?.goalDescription || "";
+  const courseLength: CourseLength = options?.courseLength || "standard";
+  const technicalLevel: TechnicalLevel = options?.technicalLevel || "intermediate";
+  const includeAgentContext = options?.includeAgentContext === true;
+  const range = COURSE_LENGTH_RANGES[courseLength];
 
   const prompt = PLANNER_PROMPT
     .replace("{topicTitle}", topicTitle)
     .replace("{topicDescription}", topicDescription || `Learning about ${topicTitle}`)
     .replace("{learningIntent}", learningIntent)
-    .replace("{goalDescription}", goalDescription || "(none — general mastery of the topic)");
+    .replace("{goalDescription}", goalDescription || "(none — general mastery of the topic)")
+    .replace("{targetLength}", courseLength)
+    .replace("{targetUnitRange}", `${range.min}–${range.max}`)
+    .replace("{technicalLevel}", technicalLevel)
+    .replace("{includeAgentContext}", includeAgentContext ? "yes" : "no");
 
   try {
     let content: string;
@@ -212,7 +276,7 @@ export async function planCourseWithAI(
     };
 
     // Tag each unit with tierIndex and map to legacy difficulty
-    const units: CoursePlanUnit[] = parsed.units.map((u: any) => {
+    let units: CoursePlanUnit[] = parsed.units.map((u: any) => {
       const tierInfo = tierMap.get(u.tierName);
       const tierIndex = tierInfo?.index ?? 0;
       return {
@@ -223,6 +287,14 @@ export async function planCourseWithAI(
         difficulty: tierToDifficulty(tierIndex),
       };
     });
+
+    // Enforce the requested course length: trim overflow units from the end of
+    // the last tiers (preserves foundations; the planner was told the range but
+    // may still overshoot).
+    if (units.length > range.max) {
+      console.log(`[CoursePlan] Trimming ${units.length} → ${range.max} units to fit "${courseLength}" length`);
+      units = units.slice(0, range.max);
+    }
 
     const totalUnits = units.length;
 
@@ -265,6 +337,18 @@ export async function planCourseWithAI(
         reason: o.reason,
       })),
     };
+
+    // Agent Playbook — only when requested AND the AI returned one
+    if (includeAgentContext && parsed.agentContext && typeof parsed.agentContext === "object") {
+      const ac = parsed.agentContext;
+      plan.agentContext = {
+        objective: typeof ac.objective === "string" ? ac.objective : "",
+        copyableBrief: typeof ac.copyableBrief === "string" ? ac.copyableBrief : "",
+        successCriteria: Array.isArray(ac.successCriteria) ? ac.successCriteria.filter((x: any) => typeof x === "string") : [],
+        suggestedSkills: Array.isArray(ac.suggestedSkills) ? ac.suggestedSkills.filter((x: any) => typeof x === "string") : [],
+        pitfalls: Array.isArray(ac.pitfalls) ? ac.pitfalls.filter((x: any) => typeof x === "string") : [],
+      };
+    }
 
     console.log(
       `[CoursePlan] AI planned "${topicTitle}" intent=${learningIntent}: scope=${plan.scope}, ` +

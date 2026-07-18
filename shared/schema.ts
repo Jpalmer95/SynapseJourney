@@ -208,11 +208,14 @@ export const userProfiles = pgTable("user_profiles", {
   allowTestOut: boolean("allow_test_out").default(false).notNull(),
   huggingFaceToken: text("hugging_face_token"), // Optional HF token for free models
   ollamaUrl: text("ollama_url"), // Optional local Ollama URL (e.g., http://localhost:11434)
+  lmStudioUrl: text("lm_studio_url"), // Optional LM Studio server URL (e.g., http://localhost:1234/v1)
+  customOpenaiUrl: text("custom_openai_url"), // Optional generic OpenAI-compatible endpoint (llama.cpp, vLLM, text-gen-webui)
+  customOpenaiKey: text("custom_openai_key"), // Optional key for the custom endpoint (many local servers accept any value)
   openRouterKey: text("open_router_key"), // Optional OpenRouter API key for paid models
   xaiKey: text("xai_key"), // xAI / Grok API key
   anthropicKey: text("anthropic_key"), // Anthropic / Claude API key
   geminiKey: text("gemini_key"), // Google Gemini API key
-  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "openrouter"
+  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "lmstudio", "custom_openai", "openrouter"
   preferredModel: text("preferred_model"), // Specific model name for the provider
   ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS engine: "browser", "kokoro", "qwen", or "custom"
   ttsReferenceAudio: text("tts_reference_audio"), // base64-encoded reference audio for voice cloning

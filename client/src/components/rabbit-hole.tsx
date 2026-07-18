@@ -73,6 +73,7 @@ import { useTTS, type TTSSection } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { AgentPlaybookView } from "@/components/agent-playbook";
 import type { Topic, Category, LessonContent, NextGenContent } from "@shared/schema";
 
 interface LessonUnit {
@@ -1345,6 +1346,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </Button>
                 </div>
               </div>
+            ) : lessonContent && (lessonContent as any).sections && Array.isArray((lessonContent as any).sections) ? (
+              /* Agent Playbook view — copyable brief for the learner's AI agent */
+              <AgentPlaybookView content={lessonContent as any} unitTitle={selectedUnit.title} />
             ) : lessonContent ? (
               /* Standard Lesson Content View */
               <div className="space-y-8 w-full min-w-0 max-w-full flex flex-col">

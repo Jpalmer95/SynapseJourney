@@ -921,6 +921,9 @@ export async function generateLessonOutline(
   options?: {
     learningIntent?: "survey" | "standard" | "deep" | "speed_run" | "goal";
     goalDescription?: string;
+    courseLength?: "quick" | "standard" | "deep";
+    technicalLevel?: "beginner" | "intermediate" | "advanced" | "expert";
+    includeAgentContext?: boolean;
     createdByUserId?: string;
     userConfig?: import("../ai-providers").ProviderConfig;
   }
@@ -953,6 +956,9 @@ export async function generateLessonOutline(
     const plan = await planCourseWithAI(topicTitle, topicDescription, {
       learningIntent,
       goalDescription: options?.goalDescription,
+      courseLength: options?.courseLength,
+      technicalLevel: options?.technicalLevel,
+      includeAgentContext: options?.includeAgentContext,
       userConfig: options?.userConfig,
     });
 
@@ -994,6 +1000,50 @@ export async function generateLessonOutline(
         });
         createdUnits.push(created);
       }
+    }
+
+    // Agent Playbook unit — appended last when the planner produced agentContext.
+    // contentJson is pre-populated so the lesson renders immediately (no generation
+    // wait) with a copyable brief for the learner's agent.
+    if (plan.agentContext && plan.agentContext.copyableBrief) {
+      const ac = plan.agentContext;
+      const agentUnit = await storage.createLessonUnit({
+        topicId,
+        difficulty: "beginner", // always unlocked — it is a helper, not course content
+        contentType: "balanced",
+        unitIndex: createdUnits.length,
+        title: "Agent Playbook: delegate this to your AI agent",
+        outline: "Copyable brief + success criteria so your agent can execute this goal alongside you.",
+        contentJson: {
+          sections: [
+            {
+              heading: "Why this section exists",
+              paragraphs: [
+                "You are learning this material so you understand what your agent is doing — that understanding is what lets you maintain, extend, and invent beyond the delegated task. But you do not have to wait: paste the brief below into your AI agent (Hermes Agent, Claude Code, Codex, or similar) and let it execute while you learn.",
+              ],
+            },
+            {
+              heading: "Objective",
+              paragraphs: [ac.objective || "See the brief below."],
+            },
+            {
+              heading: "Copy-paste brief for your agent",
+              agentBrief: ac.copyableBrief,
+            },
+            ...(ac.successCriteria.length > 0
+              ? [{ heading: "Definition of done", list: ac.successCriteria }]
+              : []),
+            ...(ac.suggestedSkills.length > 0
+              ? [{ heading: "Skills / tools your agent should load", list: ac.suggestedSkills }]
+              : []),
+            ...(ac.pitfalls.length > 0
+              ? [{ heading: "Watch out for", list: ac.pitfalls }]
+              : []),
+          ],
+        } as any,
+      });
+      createdUnits.push(agentUnit);
+      console.log(`[Outline] Added Agent Playbook unit for "${topicTitle}"`);
     }
 
     console.log(

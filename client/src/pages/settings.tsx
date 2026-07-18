@@ -34,6 +34,9 @@ interface UserProfile {
   allowTestOut?: boolean;
   huggingFaceToken?: string;
   ollamaUrl?: string;
+  lmStudioUrl?: string;
+  customOpenaiUrl?: string;
+  customOpenaiKey?: string;
   openRouterKey?: string;
   preferredAiProvider?: string;
   preferredModel?: string;
@@ -1042,6 +1045,32 @@ export default function SettingsPage() {
                       <span className="text-xs opacity-70">Local/Free</span>
                     </Button>
                     <Button
+                      variant={localProfile.preferredAiProvider === "lmstudio" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "lmstudio" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "lmstudio" });
+                      }}
+                      data-testid="btn-provider-lmstudio"
+                    >
+                      <Server className="h-4 w-4 mb-1" />
+                      <span className="font-medium">LM Studio</span>
+                      <span className="text-xs opacity-70">Local GUI</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "custom_openai" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "custom_openai" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "custom_openai" });
+                      }}
+                      data-testid="btn-provider-custom-openai"
+                    >
+                      <Server className="h-4 w-4 mb-1" />
+                      <span className="font-medium">OpenAI-Compat</span>
+                      <span className="text-xs opacity-70">llama.cpp / vLLM</span>
+                    </Button>
+                    <Button
                       variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
                       className="h-auto py-3 flex-col"
                       onClick={() => {
@@ -1144,6 +1173,102 @@ export default function SettingsPage() {
                         size="sm"
                         className="mt-2"
                         data-testid="btn-save-ollama"
+                      >
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* LM Studio Configuration */}
+                {localProfile.preferredAiProvider === "lmstudio" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="lmstudio-url" className="flex items-center gap-2">
+                      <Server className="h-4 w-4" />
+                      LM Studio Server URL
+                    </Label>
+                    <Input
+                      id="lmstudio-url"
+                      placeholder="http://localhost:1234/v1"
+                      value={localProfile.lmStudioUrl || ""}
+                      onChange={(e) => updateLocalProfile({ lmStudioUrl: e.target.value })}
+                      data-testid="input-lmstudio-url"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      In LM Studio: load a model, open the <strong>Developer / Local Server</strong> tab, click <strong>Start Server</strong>, then paste the URL here (default http://localhost:1234/v1). Fully offline — your keys never leave your machine.
+                    </p>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="lmstudio-model">Model identifier (optional)</Label>
+                      <Input
+                        id="lmstudio-model"
+                        placeholder="leave blank to use the loaded model"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                        data-testid="input-lmstudio-model"
+                      />
+                      <p className="text-xs text-muted-foreground">
+                        Usually leave blank — LM Studio serves whichever model is loaded. If you run multiple models, copy the identifier from the server tab (e.g. qwen2.5-14b-instruct).
+                      </p>
+                    </div>
+                    {hasChanges && (
+                      <Button
+                        onClick={saveProfile}
+                        disabled={profileMutation.isPending}
+                        size="sm"
+                        className="mt-2"
+                        data-testid="btn-save-lmstudio"
+                      >
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Generic OpenAI-compatible endpoint (llama.cpp, vLLM, text-generation-webui) */}
+                {localProfile.preferredAiProvider === "custom_openai" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="custom-openai-url" className="flex items-center gap-2">
+                      <Server className="h-4 w-4" />
+                      OpenAI-compatible Endpoint URL
+                    </Label>
+                    <Input
+                      id="custom-openai-url"
+                      placeholder="http://localhost:8080/v1"
+                      value={localProfile.customOpenaiUrl || ""}
+                      onChange={(e) => updateLocalProfile({ customOpenaiUrl: e.target.value })}
+                      data-testid="input-custom-openai-url"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Any server exposing <code>/chat/completions</code>: llama.cpp server (default :8080/v1), vLLM (:8000/v1), text-generation-webui (:5000/v1), LocalAI, or a remote OpenAI-compatible proxy.
+                    </p>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="custom-openai-key">API key (optional)</Label>
+                      <Input
+                        id="custom-openai-key"
+                        type="password"
+                        placeholder="most local servers ignore this"
+                        value={localProfile.customOpenaiKey || ""}
+                        onChange={(e) => updateLocalProfile({ customOpenaiKey: e.target.value })}
+                        data-testid="input-custom-openai-key"
+                      />
+                    </div>
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="custom-openai-model">Model name (optional)</Label>
+                      <Input
+                        id="custom-openai-model"
+                        placeholder="e.g. llama-3.1-8b or whatever your server expects"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                        data-testid="input-custom-openai-model"
+                      />
+                    </div>
+                    {hasChanges && (
+                      <Button
+                        onClick={saveProfile}
+                        disabled={profileMutation.isPending}
+                        size="sm"
+                        className="mt-2"
+                        data-testid="btn-save-custom-openai"
                       >
                         Save Settings
                       </Button>
