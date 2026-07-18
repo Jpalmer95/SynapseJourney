@@ -180,6 +180,13 @@ export const COURSE_LENGTH_RANGES: Record<CourseLength, { min: number; max: numb
   deep: { min: 16, max: 24 },
 };
 
+/** Strip markdown code fences (```json ... ```) that many models wrap around JSON output. */
+function stripCodeFences(text: string): string {
+  const m = text.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (m) return m[1].trim();
+  return text.trim();
+}
+
 /**
  * Heuristic: does this goal/topic describe a technical, agent-delegable task?
  * Used to decide whether to ask the planner for an Agent Playbook section.
@@ -244,7 +251,7 @@ export async function planCourseWithAI(
       return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
     }
 
-    const parsed = JSON.parse(content);
+    const parsed = JSON.parse(stripCodeFences(content));
 
     // Validate the response has the required fields
     if (!parsed.tiers || !Array.isArray(parsed.tiers) || parsed.tiers.length === 0) {

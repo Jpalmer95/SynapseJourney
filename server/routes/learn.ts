@@ -905,7 +905,9 @@ Respond with ONLY a JSON array of 10 objects:
           userConfig,
           { responseFormat: "json", temperature: 0.9, maxTokens: 2048 }
         );
-        const parsed = JSON.parse(result.content || "[]");
+        const raw = result.content || "[]";
+        const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+        const parsed = JSON.parse(fenceMatch ? fenceMatch[1].trim() : raw.trim());
         if (Array.isArray(parsed)) {
           suggestions = parsed
             .filter((s: any) => s && typeof s.title === "string")
