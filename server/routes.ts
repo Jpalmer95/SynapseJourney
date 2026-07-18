@@ -1299,14 +1299,20 @@ Return a JSON object in this exact format:
   // Update user profile
   app.post("/api/user/profile", isAuthenticated, async (req: any, res: Response) => {
     try {
-      const { 
-        ageRange, 
-        technicalLevel, 
-        priorExperience, 
-        allowTestOut, 
-        huggingFaceToken, 
+      const {
+        ageRange,
+        technicalLevel,
+        priorExperience,
+        allowTestOut,
+        huggingFaceToken,
         ollamaUrl,
+        lmStudioUrl,
+        customOpenaiUrl,
+        customOpenaiKey,
         openRouterKey,
+        xaiKey,
+        anthropicKey,
+        geminiKey,
         preferredAiProvider,
         preferredModel
       } = req.body;
@@ -1317,7 +1323,13 @@ Return a JSON object in this exact format:
         allowTestOut,
         huggingFaceToken,
         ollamaUrl,
+        lmStudioUrl,
+        customOpenaiUrl,
+        customOpenaiKey,
         openRouterKey,
+        xaiKey,
+        anthropicKey,
+        geminiKey,
         preferredAiProvider,
         preferredModel,
       });

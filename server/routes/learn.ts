@@ -29,6 +29,10 @@ const goalSchema = z.object({
   goalText: z.string().min(5).max(500),
   topicTitle: z.string().min(2).max(120).optional(),
   categoryId: z.number().int().positive().optional(),
+  courseLength: z.enum(["quick", "standard", "deep"]).optional(),
+  technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).optional(),
+  /** Force the agent-context section on/off; defaults to the isTechnicalGoal heuristic */
+  includeAgentContext: z.boolean().optional(),
 });
 
 export function registerLearnRoutes(app: Express) {
@@ -193,7 +197,7 @@ export function registerLearnRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid goal", details: parsed.error.flatten() });
       }
 
-      const { goalText, topicTitle, categoryId } = parsed.data;
+      const { goalText, topicTitle, categoryId, courseLength, technicalLevel, includeAgentContext } = parsed.data;
 
       // Derive a short topic title from the goal if not provided
       const title =
@@ -216,9 +220,13 @@ export function registerLearnRoutes(app: Express) {
         } as any);
       }
 
-      // BYOC: learner's Settings keys first (xAI / Gemini / OpenRouter / HF / Ollama), then platform pool
+      // BYOC: learner's Settings keys first (xAI / Gemini / OpenRouter / HF / Ollama / LM Studio), then platform pool
       const profile = await storage.getUserProfile(userId);
       const userConfig = providerConfigFromProfile(profile);
+
+      // Agent Playbook: on when explicitly requested, or when the goal looks technical
+      const { isTechnicalGoal } = await import("../course-planner");
+      const wantAgentContext = includeAgentContext ?? isTechnicalGoal(goalText);
 
       // Ensure units exist — generate goal-intent outline if empty
       let units = await storage.getLessonUnits(topic.id);
@@ -227,6 +235,9 @@ export function registerLearnRoutes(app: Express) {
           units = await generateLessonOutline(topic.id, topic.title, description, {
             learningIntent: "goal",
             goalDescription: goalText,
+            courseLength: courseLength || "quick", // goals default to tight paths
+            technicalLevel: technicalLevel || (profile?.technicalLevel as any) || "intermediate",
+            includeAgentContext: wantAgentContext,
             createdByUserId: userId,
             userConfig,
           });
@@ -774,6 +785,170 @@ export function registerLearnRoutes(app: Express) {
     } catch (error: any) {
       console.error("Error ingesting course:", error);
       res.status(500).json({ error: "Failed to ingest course", message: error?.message || String(error) });
+    }
+  });
+
+  // ── Custom course: any subject, chosen length + level ───────────────────
+  const customCourseSchema = z.object({
+    subject: z.string().min(3).max(200),
+    courseLength: z.enum(["quick", "standard", "deep"]).default("standard"),
+    technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).default("intermediate"),
+    learningIntent: z.enum(["survey", "standard", "deep", "speed_run"]).default("standard"),
+    categoryId: z.number().int().positive().optional(),
+  });
+
+  app.post("/api/learn/custom-course", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = customCourseSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
+      }
+      const { subject, courseLength, technicalLevel, learningIntent, categoryId } = parsed.data;
+
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
+      // Reuse an existing topic with the same title if present
+      let topic = (await storage.getTopics()).find(
+        (t) => t.title.toLowerCase() === subject.trim().toLowerCase()
+      );
+      if (!topic) {
+        topic = await storage.createTopic({
+          title: subject.trim(),
+          description: `Custom course on ${subject.trim()} (${courseLength}, ${technicalLevel})`,
+          categoryId: categoryId || null,
+          difficulty: "beginner",
+        } as any);
+      }
+
+      let units = await storage.getLessonUnits(topic.id);
+      if (units.length === 0) {
+        try {
+          units = await generateLessonOutline(topic.id, topic.title, topic.description || "", {
+            learningIntent,
+            courseLength,
+            technicalLevel,
+            createdByUserId: userId,
+            userConfig,
+          });
+        } catch (genErr: any) {
+          const msg = genErr?.message || String(genErr);
+          if (msg.includes("BYOC_REQUIRED")) {
+            return res.status(402).json({
+              error: "BYOC_REQUIRED",
+              message:
+                "Platform free AI is disabled. Add API keys in Settings, or author this course with Hermes Agent and upload via Personal Access Token.",
+            });
+          }
+          throw genErr;
+        }
+      }
+
+      await storage.upsertTopicLearningPrefs(userId, topic.id, {
+        depthMode: learningIntent === "speed_run" ? "speed_run" : learningIntent,
+        contentView: "full",
+      });
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: topic.id,
+        eventType: "started",
+        metadata: { source: "custom-course", courseLength, technicalLevel },
+      });
+
+      const plan = await storage.getLatestCoursePlan(topic.id);
+      res.status(201).json({ topic, units, coursePlan: plan || null, nextUnit: units[0] || null });
+    } catch (error: any) {
+      console.error("Error creating custom course:", error);
+      res.status(500).json({ error: "Failed to create custom course", message: error?.message || String(error) });
+    }
+  });
+
+  // ── Explore: 10 personalized subject suggestions ────────────────────────
+  app.post("/api/learn/explore", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
+      // Gather context for personalization
+      const goals = await storage.getUserLearningGoals(userId);
+      const enabledCatIds = await storage.getEnabledCategories(userId).catch(() => [] as number[]);
+      const allCats = await storage.getCategories().catch(() => [] as any[]);
+      const goalTitles = goals.slice(0, 5).map((g: any) => g.goalText);
+      const catNames = allCats
+        .filter((c: any) => enabledCatIds.includes(c.id))
+        .map((c: any) => c.name)
+        .filter(Boolean)
+        .slice(0, 10);
+      const techLevel = profile?.technicalLevel || "intermediate";
+
+      const prompt = `You are a learning curator for an AI-enhanced learning platform.
+
+Learner context:
+- Technical level: ${techLevel}
+- Active goals: ${goalTitles.length > 0 ? goalTitles.join("; ") : "(none yet)"}
+- Favorite categories: ${catNames.length > 0 ? catNames.join(", ") : "(no preference set — mix broadly)"}
+
+Suggest exactly 10 subjects this learner is likely to find fascinating and useful RIGHT NOW.
+Mix: 3 adjacent to their stated goals/categories, 3 cross-disciplinary bridges (connect two of their interests in an unexpected way), 2 practical skills with immediate payoff, 2 wild-card topics outside their bubble that genuinely expand perspective.
+Calibrate to their technical level — not too basic, not overwhelming.
+
+Respond with ONLY a JSON array of 10 objects:
+[{"title": "Subject name (concise)", "hook": "One sentence: why this is worth their time", "category": "Broad area", "difficulty": "beginner|intermediate|advanced"}]`;
+
+      let suggestions: { title: string; hook: string; category: string; difficulty: string }[] = [];
+      try {
+        const { generateByokOrPool } = await import("../ai-providers");
+        const result = await generateByokOrPool(
+          [{ role: "user", content: prompt }],
+          userConfig,
+          { responseFormat: "json", temperature: 0.9 }
+        );
+        const parsed = JSON.parse(result.content || "[]");
+        if (Array.isArray(parsed)) {
+          suggestions = parsed
+            .filter((s: any) => s && typeof s.title === "string")
+            .slice(0, 10)
+            .map((s: any) => ({
+              title: String(s.title).slice(0, 120),
+              hook: String(s.hook || "").slice(0, 200),
+              category: String(s.category || "General").slice(0, 60),
+              difficulty: ["beginner", "intermediate", "advanced"].includes(s.difficulty) ? s.difficulty : "intermediate",
+            }));
+        }
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (msg.includes("BYOC_REQUIRED")) {
+          return res.status(402).json({
+            error: "BYOC_REQUIRED",
+            message: "Add an AI key in Settings (or LM Studio URL) to get personalized subject suggestions.",
+          });
+        }
+        console.warn("[Explore] AI suggestions failed, using fallback:", msg);
+      }
+
+      // Fallback when AI unavailable/failed: category-derived generic suggestions
+      if (suggestions.length === 0) {
+        const fallback = [
+          { title: "How large language models actually work", hook: "Demystify the tools you use every day.", category: "AI", difficulty: "intermediate" },
+          { title: "Systems thinking for complex problems", hook: "A mental toolkit that transfers to every field.", category: "Thinking", difficulty: "beginner" },
+          { title: "The science of learning itself", hook: "Learn faster forever — spaced repetition, retrieval, interleaving.", category: "Meta-learning", difficulty: "beginner" },
+          { title: "Personal knowledge management", hook: "Build a second brain that compounds.", category: "Productivity", difficulty: "beginner" },
+          { title: "Statistics intuition", hook: "Spot bad arguments and make better bets.", category: "Math", difficulty: "intermediate" },
+          { title: "Design fundamentals for non-designers", hook: "Make everything you ship look intentional.", category: "Design", difficulty: "beginner" },
+          { title: "The economics of attention", hook: "Understand the market you're living in.", category: "Economics", difficulty: "intermediate" },
+          { title: "Energy systems and the grid", hook: "The invisible infrastructure behind modern life.", category: "Engineering", difficulty: "intermediate" },
+          { title: "Writing clearly", hook: "The highest-leverage professional skill.", category: "Communication", difficulty: "beginner" },
+          { title: "Astrobiology: life in the universe", hook: "The biggest open question there is.", category: "Science", difficulty: "beginner" },
+        ];
+        suggestions = fallback;
+      }
+
+      res.json({ suggestions, personalized: catNames.length > 0 || goalTitles.length > 0 });
+    } catch (error: any) {
+      console.error("Error generating explore suggestions:", error);
+      res.status(500).json({ error: "Failed to generate suggestions", message: error?.message || String(error) });
     }
   });
 }

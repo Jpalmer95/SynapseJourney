@@ -15,9 +15,12 @@ export interface ChatOptions {
 }
 
 export interface ProviderConfig {
-  provider: "openai" | "huggingface" | "ollama" | "openrouter" | "gemini" | "xai" | "anthropic";
+  provider: "openai" | "huggingface" | "ollama" | "lmstudio" | "custom_openai" | "openrouter" | "gemini" | "xai" | "anthropic";
   huggingFaceToken?: string;
   ollamaUrl?: string;
+  lmStudioUrl?: string;
+  customOpenaiUrl?: string;
+  customOpenaiKey?: string;
   openRouterKey?: string;
   preferredModel?: string;
   // BYOK: user's own keys for paid providers
@@ -55,6 +58,8 @@ const DEFAULT_MODELS: Record<string, string> = {
   gemini: GEMINI_COURSE_MODEL,
   huggingface: "meta-llama/Llama-3.3-70B-Instruct",
   ollama: "llama3.2",
+  lmstudio: "local-model", // LM Studio serves whatever model is loaded; user overrides in Settings
+  custom_openai: "default",
   openrouter: "anthropic/claude-3.5-sonnet",
 };
 
@@ -292,6 +297,55 @@ class OpenRouterProvider implements AIProvider {
   }
 }
 
+// ── OpenAI-compatible local servers: LM Studio, llama.cpp, vLLM, text-gen-webui ─
+// All expose POST {baseUrl}/chat/completions with the OpenAI schema. LM Studio's
+// default is http://localhost:1234/v1; llama.cpp server uses http://localhost:8080/v1.
+// Local servers usually ignore the api key — any non-empty string works.
+class OpenAICompatibleProvider implements AIProvider {
+  name: string;
+  private baseUrl: string;
+  private apiKey: string;
+  private model: string;
+
+  constructor(name: string, baseUrl: string, apiKey: string, model?: string) {
+    this.name = name;
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+    this.apiKey = apiKey || "local";
+    this.model = model || "local-model";
+  }
+
+  isConfigured(): boolean {
+    return !!this.baseUrl;
+  }
+
+  async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
+    const response = await fetch(`${this.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: options?.model || this.model,
+        messages: messages,
+        temperature: options?.temperature ?? 0.7,
+        max_tokens: options?.maxTokens || 4096,
+        stream: false,
+      }),
+      // Local servers can be slow on first token while the model loads
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`${this.name} API error: ${response.status} - ${error.slice(0, 300)}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content || "";
+  }
+}
+
 // ── GrokProvider — uses xAI's OpenAI-compatible API ─────────────────────────
 class GrokProvider implements AIProvider {
   name = "grok";
@@ -345,6 +399,20 @@ export function getAIProvider(config: ProviderConfig): AIProvider {
         return defaultGeminiProvider;
       }
       return new OllamaProvider(config.ollamaUrl, config.preferredModel);
+
+    case "lmstudio":
+      if (!config.lmStudioUrl) {
+        console.warn("LM Studio URL not configured, falling back to Gemini");
+        return defaultGeminiProvider;
+      }
+      return new OpenAICompatibleProvider("lmstudio", config.lmStudioUrl, "lm-studio", config.preferredModel);
+
+    case "custom_openai":
+      if (!config.customOpenaiUrl) {
+        console.warn("Custom OpenAI-compatible URL not configured, falling back to Gemini");
+        return defaultGeminiProvider;
+      }
+      return new OpenAICompatibleProvider("custom_openai", config.customOpenaiUrl, config.customOpenaiKey || "local", config.preferredModel);
 
     case "openrouter":
       if (!config.openRouterKey) {
@@ -436,6 +504,18 @@ export function validateUserChatCredentials(config: ProviderConfig): { valid: bo
       }
       return { valid: true, provider: "ollama" };
 
+    case "lmstudio":
+      if (!config.lmStudioUrl) {
+        return { valid: false, missingCredential: "LM Studio Server URL", provider: "lmstudio" };
+      }
+      return { valid: true, provider: "lmstudio" };
+
+    case "custom_openai":
+      if (!config.customOpenaiUrl) {
+        return { valid: false, missingCredential: "OpenAI-compatible endpoint URL", provider: "custom_openai" };
+      }
+      return { valid: true, provider: "custom_openai" };
+
     case "openrouter":
       if (!config.openRouterKey) {
         return { valid: false, missingCredential: "OpenRouter API Key", provider: "openrouter" };
@@ -469,6 +549,12 @@ export function getUserChatProvider(config: ProviderConfig): AIProvider | null {
 
     case "ollama":
       return new OllamaProvider(config.ollamaUrl!, config.preferredModel);
+
+    case "lmstudio":
+      return new OpenAICompatibleProvider("lmstudio", config.lmStudioUrl!, "lm-studio", config.preferredModel);
+
+    case "custom_openai":
+      return new OpenAICompatibleProvider("custom_openai", config.customOpenaiUrl!, config.customOpenaiKey || "local", config.preferredModel);
 
     case "openrouter":
       return new OpenRouterProvider(config.openRouterKey!, config.preferredModel);
@@ -552,10 +638,12 @@ export function validateByokCredentials(config: ProviderConfig): { valid: boolea
   if (config.anthropicKey) return { valid: true, provider: "anthropic" };
   if (config.huggingFaceToken) return { valid: true, provider: "huggingface" };
   if (config.ollamaUrl) return { valid: true, provider: "ollama" };
+  if (config.lmStudioUrl) return { valid: true, provider: "lmstudio" };
+  if (config.customOpenaiUrl) return { valid: true, provider: "custom_openai" };
 
   return {
     valid: false,
-    missingCredential: "API key for any provider (xAI, Gemini, OpenRouter, Anthropic, HuggingFace, or Ollama)",
+    missingCredential: "API key for any provider (xAI, Gemini, OpenRouter, Anthropic, HuggingFace, Ollama, LM Studio, or an OpenAI-compatible endpoint)",
     provider: "none",
   };
 }
@@ -585,6 +673,12 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
   }
   if (config.ollamaUrl) {
     return new OllamaProvider(config.ollamaUrl, config.preferredModel);
+  }
+  if (config.lmStudioUrl) {
+    return new OpenAICompatibleProvider("lmstudio", config.lmStudioUrl, "lm-studio", config.preferredModel);
+  }
+  if (config.customOpenaiUrl) {
+    return new OpenAICompatibleProvider("custom_openai", config.customOpenaiUrl, config.customOpenaiKey || "local", config.preferredModel);
   }
   return null;
 }
@@ -637,6 +731,9 @@ export function providerConfigFromProfile(profile: {
   preferredModel?: string | null;
   huggingFaceToken?: string | null;
   ollamaUrl?: string | null;
+  lmStudioUrl?: string | null;
+  customOpenaiUrl?: string | null;
+  customOpenaiKey?: string | null;
   openRouterKey?: string | null;
   xaiKey?: string | null;
   anthropicKey?: string | null;
@@ -647,6 +744,9 @@ export function providerConfigFromProfile(profile: {
     preferredModel: profile?.preferredModel || undefined,
     huggingFaceToken: profile?.huggingFaceToken || undefined,
     ollamaUrl: profile?.ollamaUrl || undefined,
+    lmStudioUrl: profile?.lmStudioUrl || undefined,
+    customOpenaiUrl: profile?.customOpenaiUrl || undefined,
+    customOpenaiKey: profile?.customOpenaiKey || undefined,
     openRouterKey: profile?.openRouterKey || undefined,
     xaiKey: profile?.xaiKey || undefined,
     anthropicKey: profile?.anthropicKey || undefined,
