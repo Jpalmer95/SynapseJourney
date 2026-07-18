@@ -234,7 +234,7 @@ export async function planCourseWithAI(
       const result = await generateByokOrPool(
         [{ role: "user", content: prompt }],
         options.userConfig,
-        { responseFormat: "json", temperature: 0.7 }
+        { responseFormat: "json", temperature: 0.7, maxTokens: 2048 }
       );
       content = result.content || "{}";
       console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
