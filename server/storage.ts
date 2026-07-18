@@ -162,6 +162,7 @@ export interface IStorage {
   getAllLessonUnitsWithContent(): Promise<LessonUnit[]>;
   clearLessonUnitContent(unitId: number): Promise<void>;
   deleteLessonUnitsByTopicId(topicId: number): Promise<void>;
+  removeCourseForUser(userId: string, topicId: number): Promise<{ removedTopic: boolean }>;
 
   // Lesson Progress
   getLessonProgress(userId: string, unitId: number): Promise<LessonProgress | undefined>;
@@ -930,6 +931,44 @@ export class DatabaseStorage implements IStorage {
 
     // Now safe to delete the units themselves
     await db.delete(lessonUnits).where(eq(lessonUnits.topicId, topicId));
+  }
+
+  /**
+   * Remove a course from a user's library WITHOUT deleting the shared topic row.
+   * Cleans every per-user artifact so the course disappears from getMyCourses,
+   * continue-learning, goals, timeline, and mastery. If no other user references
+   * the topic afterwards, the topic + units are deleted too (keeps the catalog clean
+   * for personal goal/custom/Hermes courses).
+   */
+  async removeCourseForUser(userId: string, topicId: number): Promise<{ removedTopic: boolean }> {
+    // Per-user rows tied to this topic
+    await db.delete(learningGoals).where(and(eq(learningGoals.userId, userId), eq(learningGoals.topicId, topicId)));
+    await db.delete(topicLearningPrefs).where(and(eq(topicLearningPrefs.userId, userId), eq(topicLearningPrefs.topicId, topicId)));
+    await db.delete(learningTimeline).where(and(eq(learningTimeline.userId, userId), eq(learningTimeline.topicId, topicId)));
+    await db.delete(userProgress).where(and(eq(userProgress.userId, userId), eq(userProgress.topicId, topicId)));
+    await db.delete(topicMastery).where(and(eq(topicMastery.userId, userId), eq(topicMastery.topicId, topicId)));
+
+    // Per-user lesson progress for this topic's units
+    const units = await db.select({ id: lessonUnits.id }).from(lessonUnits).where(eq(lessonUnits.topicId, topicId));
+    const unitIds = units.map((u) => u.id);
+    if (unitIds.length > 0) {
+      await db.delete(lessonProgress).where(and(eq(lessonProgress.userId, userId), inArray(lessonProgress.unitId, unitIds)));
+    }
+
+    // Does anyone else still reference this topic?
+    const [otherGoal] = await db.select({ id: learningGoals.id }).from(learningGoals).where(eq(learningGoals.topicId, topicId)).limit(1);
+    const [otherPref] = await db.select({ userId: topicLearningPrefs.userId }).from(topicLearningPrefs).where(eq(topicLearningPrefs.topicId, topicId)).limit(1);
+    const [otherProgress] = await db.select({ id: userProgress.id }).from(userProgress).where(eq(userProgress.topicId, topicId)).limit(1);
+    const [otherTimeline] = await db.select({ id: learningTimeline.id }).from(learningTimeline).where(eq(learningTimeline.topicId, topicId)).limit(1);
+    const stillReferenced = !!(otherGoal || otherPref || otherProgress || otherTimeline);
+
+    if (!stillReferenced) {
+      await db.delete(coursePlans).where(eq(coursePlans.topicId, topicId));
+      await this.deleteLessonUnitsByTopicId(topicId);
+      await db.delete(topics).where(eq(topics.id, topicId));
+      return { removedTopic: true };
+    }
+    return { removedTopic: false };
   }
 
   // Lesson Progress

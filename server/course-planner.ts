@@ -187,6 +187,57 @@ function stripCodeFences(text: string): string {
   return text.trim();
 }
 
+// ── Fusion Planning ────────────────────────────────────────────────────────
+
+const FUSION_PROMPT = `You are a polymath curriculum designer specializing in CROSS-DOMAIN synthesis.
+
+The learner wants to FUSE these subjects into ONE unified course:
+{inputs}
+
+TARGET COURSE LENGTH: "{targetLength}" ({targetUnitRange} units)
+LEARNER TECHNICAL LEVEL: "{technicalLevel}"
+
+Your job: design a course that genuinely fuses these domains — not a "week 1: A, week 2: B" shuffle, but a course where each unit REINFORCES the others. The capstone is a single project that only makes sense because all domains are present.
+
+Think like this example: fusing "Fluid Dynamics + Godot + Topology" → a course that builds a submarine/flight sim in Godot with real fluid physics, plus topology-based terrain/seabed mapping. Every unit pulls from at least two domains.
+
+Requirements:
+1. CROSS-LINKS — For each domain pair, find the non-obvious connection (shared math, shared algorithms, shared mental models).
+2. INNOVATIVE RESEARCH ANGLES — Surface 2-3 active research/frontier questions that sit at the INTERSECTION of these domains.
+3. ONE CAPSTONE PROJECT — a concrete build that uses ALL domains. Describe it precisely enough that an agent could start building it.
+4. PROGRESSION — units should alternate emphasis but keep threads alive: domain A concept → applied through domain B → formalized with domain C.
+
+Respond with ONLY a JSON object:
+{
+  "fusedTitle": "Course title that names the synthesis (not just the parts)",
+  "rationale": "2-3 sentences: why these domains fuse beautifully and what the learner walks away able to build",
+  "capstoneProject": {
+    "title": "Project name",
+    "description": "What it is, what it does, why it needs every domain",
+    "domains": ["domain1", "domain2"],
+    "milestones": ["milestone 1", "milestone 2", "milestone 3"]
+  },
+  "crossLinks": [
+    { "domains": ["A", "B"], "insight": "The non-obvious connection" }
+  ],
+  "researchAngles": [
+    { "title": "Frontier question", "whyInteresting": "Why this intersection is hot", "url": "https://... (paper/resource if known)" }
+  ],
+  "contentType": "code_heavy|formula_heavy|visual_heavy|theory_heavy|balanced",
+  "tiers": [ { "name": "Tier name", "description": "...", "unitCount": N } ],
+  "units": [
+    { "title": "Unit title", "outline": "What it covers + which domains it pulls from", "tierName": "Tier name" }
+  ],
+  "recommendedOER": [ { "name": "...", "url": "https://...", "reason": "..." } ]
+}
+
+CRITICAL RULES:
+- Total units within {targetUnitRange}.
+- EVERY unit outline must reference at least 2 of the fused domains.
+- Capstone milestones must be buildable in order.
+- DO NOT include quiz questions.`;
+
+
 /**
  * Heuristic: does this goal/topic describe a technical, agent-delegable task?
  * Used to decide whether to ask the planner for an Agent Playbook section.
@@ -461,4 +512,101 @@ export async function checkHasSyllabus(topicId: number): Promise<boolean> {
   }
   const map = _syllabiMap;
   return map ? map.has(topicId) : false;
+}
+
+// ── Fusion course planner ──────────────────────────────────────────────────
+
+export interface FusionPlan {
+  fusedTitle: string;
+  rationale: string;
+  capstoneProject: {
+    title: string;
+    description: string;
+    domains: string[];
+    milestones: string[];
+  };
+  crossLinks: { domains: string[]; insight: string }[];
+  researchAngles: { title: string; whyInteresting: string; url?: string }[];
+  contentType: CoursePlan["contentType"];
+  tiers: { name: string; description: string; unitCount: number }[];
+  units: CoursePlanUnit[];
+  recommendedOER: { name: string; url: string; reason: string }[];
+}
+
+/**
+ * Design a cross-domain fusion course from 2+ named inputs (existing topics
+ * and/or free-text subjects). BYOC-only: requires the learner's keys.
+ */
+export async function planFusionCourse(
+  inputNames: string[],
+  options: {
+    courseLength?: CourseLength;
+    technicalLevel?: TechnicalLevel;
+    userConfig: ProviderConfig;
+  }
+): Promise<FusionPlan> {
+  const courseLength = options.courseLength || "standard";
+  const technicalLevel = options.technicalLevel || "intermediate";
+  const range = COURSE_LENGTH_RANGES[courseLength];
+
+  const inputs = inputNames.map((n, i) => `${i + 1}. ${n}`).join("\n");
+  const prompt = FUSION_PROMPT
+    .replace("{inputs}", inputs)
+    .replace("{targetLength}", courseLength)
+    .replace("{targetUnitRange}", `${range.min}–${range.max}`)
+    .replace("{technicalLevel}", technicalLevel);
+
+  const { generateByokOrPool } = await import("./ai-providers");
+  const result = await generateByokOrPool(
+    [{ role: "user", content: prompt }],
+    options.userConfig,
+    { responseFormat: "json", temperature: 0.8, maxTokens: 4096 }
+  );
+
+  const parsed = JSON.parse(stripCodeFences(result.content || "{}"));
+  if (!parsed.units || !Array.isArray(parsed.units) || parsed.units.length === 0) {
+    throw new Error("Fusion planner returned no units");
+  }
+
+  // Map tier names to legacy difficulty (same mapping as planCourseWithAI)
+  const tierCount = (parsed.tiers || []).length;
+  const tierToDifficulty = (tierIndex: number): CoursePlanUnit["difficulty"] => {
+    if (tierCount <= 2) return tierIndex === 0 ? "beginner" : "intermediate";
+    if (tierCount === 3) return tierIndex === 0 ? "beginner" : tierIndex === 1 ? "intermediate" : "advanced";
+    if (tierIndex === 0) return "beginner";
+    if (tierIndex === tierCount - 1) return "nextgen";
+    if (tierIndex === tierCount - 2) return "advanced";
+    return "intermediate";
+  };
+  const tierMap = new Map<string, number>();
+  (parsed.tiers || []).forEach((t: any, i: number) => tierMap.set(t.name, i));
+
+  let units: CoursePlanUnit[] = parsed.units.map((u: any) => {
+    const tierIndex = tierMap.get(u.tierName) ?? 0;
+    return {
+      title: u.title,
+      outline: u.outline,
+      tierIndex,
+      tierName: u.tierName,
+      difficulty: tierToDifficulty(tierIndex),
+    };
+  });
+  if (units.length > range.max) units = units.slice(0, range.max);
+
+  return {
+    fusedTitle: parsed.fusedTitle || inputNames.join(" × "),
+    rationale: parsed.rationale || "",
+    capstoneProject: {
+      title: parsed.capstoneProject?.title || "Capstone project",
+      description: parsed.capstoneProject?.description || "",
+      domains: Array.isArray(parsed.capstoneProject?.domains) ? parsed.capstoneProject.domains : inputNames,
+      milestones: Array.isArray(parsed.capstoneProject?.milestones) ? parsed.capstoneProject.milestones : [],
+    },
+    crossLinks: Array.isArray(parsed.crossLinks) ? parsed.crossLinks : [],
+    researchAngles: Array.isArray(parsed.researchAngles) ? parsed.researchAngles : [],
+    contentType: parsed.contentType || "balanced",
+    tiers: (parsed.tiers || []).map((t: any) => ({ name: t.name, description: t.description, unitCount: t.unitCount })),
+    units,
+    recommendedOER: Array.isArray(parsed.recommendedOER) ? parsed.recommendedOER : [],
+  };
 }
