@@ -77,6 +77,21 @@ export function SavedPage() {
     },
   });
 
+  const deleteCourseMutation = useMutation({
+    mutationFn: async (topicId: number) => {
+      await apiRequest("DELETE", `/api/learn/my-courses/${topicId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/my-courses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/goals"] });
+      toast({ title: "Course removed", description: "The course and your progress on it were removed from your library." });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not remove course", description: err?.message || "Try again.", variant: "destructive" });
+    },
+  });
+
   const filteredCards = savedItems?.filter(
     (item) =>
       item.card.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -249,6 +264,21 @@ export function SavedPage() {
                       >
                         <Play className="h-4 w-4" />
                         {item.progressPercent > 0 ? "Continue" : "Open course"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="w-full gap-1.5 text-muted-foreground hover:text-destructive"
+                        disabled={deleteCourseMutation.isPending}
+                        onClick={() => {
+                          if (window.confirm(`Remove "${item.topic.title}" and your progress on it? This cannot be undone.`)) {
+                            deleteCourseMutation.mutate(item.topic.id);
+                          }
+                        }}
+                        data-testid={`button-delete-library-course-${item.topic.id}`}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Remove from library
                       </Button>
                     </CardContent>
                   </Card>

@@ -62,6 +62,21 @@ export function registerLearnRoutes(app: Express) {
     }
   });
 
+  // Remove a course from the user's library (goals/custom/Hermes/progress).
+  // Deletes per-user artifacts; deletes the shared topic only if nobody else uses it.
+  app.delete("/api/learn/my-courses/:topicId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId) || topicId <= 0) return res.status(400).json({ error: "Invalid topicId" });
+      const result = await storage.removeCourseForUser(userId, topicId);
+      res.json({ ok: true, ...result });
+    } catch (error) {
+      console.error("Error removing course:", error);
+      res.status(500).json({ error: "Failed to remove course" });
+    }
+  });
+
   // ── Global learning prefs (profile) ───────────────────────────────────────
   app.get("/api/learn/prefs", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -637,6 +652,7 @@ export function registerLearnRoutes(app: Express) {
       const userId = req.user.claims.sub;
       const schema = z.object({
         goalText: z.string().min(3).max(1000).optional(),
+        topicId: z.number().int().positive().optional(), // deepen this existing course instead of creating by title
         topic: z.object({
           title: z.string().min(2).max(200),
           description: z.string().max(2000).optional(),
@@ -678,7 +694,18 @@ export function registerLearnRoutes(app: Express) {
 
       const body = parsed.data;
       const title = body.topic.title;
-      let topic = (await storage.getTopics()).find((t) => t.title.toLowerCase() === title.toLowerCase());
+      // Optional topicId: deepen an EXISTING course (append new units) instead of
+      // creating/matching by title. This is the "agent gives guided expansions"
+      // rail — Hermes can extend any course the user is taking.
+      let topic;
+      if (body.topicId) {
+        topic = await storage.getTopicById(body.topicId);
+        if (!topic) {
+          return res.status(404).json({ error: `topicId ${body.topicId} not found` });
+        }
+      } else {
+        topic = (await storage.getTopics()).find((t) => t.title.toLowerCase() === title.toLowerCase());
+      }
       if (!topic) {
         topic = await storage.createTopic({
           title,
@@ -951,6 +978,158 @@ Respond with ONLY a JSON array of 10 objects:
     } catch (error: any) {
       console.error("Error generating explore suggestions:", error);
       res.status(500).json({ error: "Failed to generate suggestions", message: error?.message || String(error) });
+    }
+  });
+
+  // ── Fusion: combine 2+ topics/subjects into a cross-domain course ───────
+  const fusionSchema = z.object({
+    topicIds: z.array(z.number().int().positive()).max(6).optional(),
+    freeTexts: z.array(z.string().min(2).max(120)).max(6).optional(),
+    courseLength: z.enum(["quick", "standard", "deep"]).default("standard"),
+    technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).default("intermediate"),
+  }).refine(
+    (d) => ((d.topicIds?.length || 0) + (d.freeTexts?.length || 0)) >= 2,
+    { message: "Fusion needs at least 2 inputs (topics and/or free-text subjects)" }
+  );
+
+  app.post("/api/learn/fuse", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = fusionSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid fusion request", details: parsed.error.flatten() });
+      }
+      const { topicIds = [], freeTexts = [], courseLength, technicalLevel } = parsed.data;
+
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
+      // Resolve topic titles
+      const inputNames: string[] = [];
+      for (const id of topicIds) {
+        const t = await storage.getTopicById(id);
+        if (t) inputNames.push(t.title);
+      }
+      inputNames.push(...freeTexts.map((s) => s.trim()));
+
+      if (inputNames.length < 2) {
+        return res.status(400).json({ error: "Need at least 2 valid inputs to fuse" });
+      }
+
+      let fusion;
+      try {
+        const { planFusionCourse } = await import("../course-planner");
+        fusion = await planFusionCourse(inputNames, { courseLength, technicalLevel, userConfig });
+      } catch (err: any) {
+        const msg = err?.message || String(err);
+        if (msg.includes("BYOC_REQUIRED")) {
+          return res.status(402).json({
+            error: "BYOC_REQUIRED",
+            message: "Add an AI key in Settings to fuse courses — or ask Hermes Agent to author the fusion and upload it.",
+          });
+        }
+        throw err;
+      }
+
+      // Create the fused topic + units
+      const topic = await storage.createTopic({
+        title: fusion.fusedTitle,
+        description: fusion.rationale || `Fusion of: ${inputNames.join(", ")}`,
+        categoryId: null,
+        difficulty: "beginner",
+      } as any);
+
+      const createdUnits = [];
+      for (let i = 0; i < fusion.units.length; i++) {
+        const u = fusion.units[i];
+        const created = await storage.createLessonUnit({
+          topicId: topic.id,
+          difficulty: u.difficulty,
+          contentType: fusion.contentType,
+          unitIndex: i,
+          title: u.title,
+          outline: u.outline + (u.tierName ? ` [${u.tierName}]` : ""),
+        });
+        createdUnits.push(created);
+      }
+
+      // Capstone project as a final always-unlocked unit with full detail
+      const capstoneUnit = await storage.createLessonUnit({
+        topicId: topic.id,
+        difficulty: "beginner",
+        contentType: fusion.contentType,
+        unitIndex: createdUnits.length,
+        title: `Capstone: ${fusion.capstoneProject.title}`,
+        outline: "The project that fuses everything — build it with your agent alongside the course.",
+        contentJson: {
+          sections: [
+            {
+              heading: "Why this project",
+              paragraphs: [fusion.capstoneProject.description],
+            },
+            ...(fusion.crossLinks.length > 0
+              ? [{
+                  heading: "Cross-domain insights",
+                  list: fusion.crossLinks.map((c) => `${c.domains.join(" × ")}: ${c.insight}`),
+                }]
+              : []),
+            {
+              heading: "Build milestones",
+              list: fusion.capstoneProject.milestones,
+            },
+            ...(fusion.researchAngles.length > 0
+              ? [{
+                  heading: "Frontier research angles",
+                  list: fusion.researchAngles.map((r) => `${r.title} — ${r.whyInteresting}${r.url ? ` (${r.url})` : ""}`),
+                }]
+              : []),
+          ],
+        } as any,
+      });
+      createdUnits.push(capstoneUnit);
+
+      await storage.saveCoursePlan({
+        topicId: topic.id,
+        learningIntent: "standard",
+        goalDescription: `Fusion of: ${inputNames.join(", ")}`,
+        planJson: {
+          fusion: true,
+          inputs: inputNames,
+          rationale: fusion.rationale,
+          capstoneProject: fusion.capstoneProject,
+          crossLinks: fusion.crossLinks,
+          researchAngles: fusion.researchAngles,
+          tiers: fusion.tiers,
+          units: fusion.units,
+          recommendedOER: fusion.recommendedOER,
+        } as any,
+        createdByUserId: userId,
+        version: 1,
+      });
+
+      await storage.upsertTopicLearningPrefs(userId, topic.id, { depthMode: "standard", contentView: "full" });
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: topic.id,
+        eventType: "started",
+        metadata: { source: "fusion", inputs: inputNames, courseLength, technicalLevel },
+      });
+
+      res.status(201).json({
+        topic,
+        units: createdUnits,
+        fusion: {
+          inputs: inputNames,
+          rationale: fusion.rationale,
+          capstoneProject: fusion.capstoneProject,
+          crossLinks: fusion.crossLinks,
+          researchAngles: fusion.researchAngles,
+        },
+        nextUnit: createdUnits[0] || null,
+      });
+    } catch (error: any) {
+      console.error("Error fusing course:", error);
+      res.status(500).json({ error: "Failed to fuse course", message: error?.message || String(error) });
     }
   });
 }

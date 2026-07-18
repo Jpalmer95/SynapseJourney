@@ -1,6 +1,6 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Target, Loader2, Sparkles, Rocket, BookOpen, Compass, ChevronDown, ChevronUp, Wand2 } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Target, Loader2, Sparkles, Rocket, BookOpen, Compass, ChevronDown, ChevronUp, Wand2, Combine, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,8 +8,9 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Topic, Category } from "@shared/schema";
+import type { MyCourseItem } from "@/components/my-courses-strip";
 
-type Mode = "goal" | "custom" | "explore";
+type Mode = "goal" | "custom" | "explore" | "fuse";
 type CourseLength = "quick" | "standard" | "deep";
 type TechnicalLevel = "beginner" | "intermediate" | "advanced" | "expert";
 
@@ -56,6 +57,12 @@ const MODE_META: Record<Mode, { icon: typeof Target; label: string; placeholder:
     placeholder: "",
     hint: "10 subjects hand-picked for you based on your goals and interests. Pick one to build a course.",
   },
+  fuse: {
+    icon: Combine,
+    label: "Fuse",
+    placeholder: "Add a subject (e.g. Topology)…",
+    hint: "Pick 2+ courses or add free-text subjects — get one course that weaves them together with cross-domain insights, frontier research, and a capstone project spanning all of them.",
+  },
 };
 
 export function CourseCreator({ onStart }: CourseCreatorProps) {
@@ -66,7 +73,18 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
   const [suggestions, setSuggestions] = useState<ExploreSuggestion[]>([]);
   const [selectedSuggestion, setSelectedSuggestion] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  // Fusion mode state
+  const [fuseTopicIds, setFuseTopicIds] = useState<number[]>([]);
+  const [fuseFreeTexts, setFuseFreeTexts] = useState<string[]>([]);
+  const [fuseInput, setFuseInput] = useState("");
   const { toast } = useToast();
+
+  // Needed for fusion topic picker (only fetched when fuse tab opens)
+  const { data: myCourses } = useQuery<MyCourseItem[]>({
+    queryKey: ["/api/learn/my-courses"],
+    staleTime: 30_000,
+    enabled: expanded && mode === "fuse",
+  });
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
@@ -137,7 +155,32 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
     onError: (err: any) => handleError(err, "Could not load suggestions."),
   });
 
-  const isPending = goalMutation.isPending || customMutation.isPending;
+  const fuseMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/learn/fuse", {
+        topicIds: fuseTopicIds,
+        freeTexts: fuseFreeTexts,
+        courseLength: length,
+        technicalLevel: level,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      invalidate();
+      const cap = data.fusion?.capstoneProject?.title;
+      toast({
+        title: "Fusion course ready",
+        description: cap ? `Capstone: ${cap}` : `Fused: ${data.topic?.title}`,
+      });
+      if (data.topic) onStart(data.topic, data.category);
+      setFuseTopicIds([]);
+      setFuseFreeTexts([]);
+      setFuseInput("");
+    },
+    onError: (err: any) => handleError(err, "Try different inputs."),
+  });
+
+  const isPending = goalMutation.isPending || customMutation.isPending || fuseMutation.isPending;
   const meta = MODE_META[mode];
   const ModeIcon = meta.icon;
 
@@ -146,6 +189,7 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
     if (mode === "goal" && text.length >= 5) goalMutation.mutate(text);
     else if (mode === "custom" && text.length >= 3) customMutation.mutate(text);
     else if (mode === "explore" && selectedSuggestion) customMutation.mutate(selectedSuggestion);
+    else if (mode === "fuse" && fuseTopicIds.length + fuseFreeTexts.length >= 2) fuseMutation.mutate();
   };
 
   const switchMode = (m: Mode) => {
@@ -154,6 +198,14 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
     setSelectedSuggestion(null);
     if (m === "explore" && suggestions.length === 0 && !exploreMutation.isPending) {
       exploreMutation.mutate();
+    }
+  };
+
+  const addFuseFreeText = () => {
+    const t = fuseInput.trim();
+    if (t.length >= 2 && !fuseFreeTexts.includes(t) && fuseTopicIds.length + fuseFreeTexts.length < 6) {
+      setFuseFreeTexts([...fuseFreeTexts, t]);
+      setFuseInput("");
     }
   };
 
@@ -173,7 +225,7 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
           <div className="min-w-0 flex-1">
             <h3 className="text-sm font-semibold leading-tight">Create a course</h3>
             <p className="text-xs text-muted-foreground truncate">
-              Goal, custom subject, or explore something new
+              Goal, custom subject, explore, or fuse courses together
             </p>
           </div>
           {expanded ? <ChevronUp className="h-4 w-4 text-muted-foreground shrink-0" /> : <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />}
@@ -182,7 +234,7 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
         {expanded && (
           <>
             {/* Mode tabs */}
-            <div className="grid grid-cols-3 gap-1.5">
+            <div className="grid grid-cols-4 gap-1.5">
               {(Object.keys(MODE_META) as Mode[]).map((m) => {
                 const Icon = MODE_META[m].icon;
                 return (
@@ -206,8 +258,78 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
 
             <p className="text-xs text-muted-foreground">{meta.hint}</p>
 
-            {/* Explore mode: suggestion grid */}
-            {mode === "explore" ? (
+            {/* Fuse mode: pick 2+ courses and/or free-text subjects */}
+            {mode === "fuse" ? (
+              <div className="space-y-2">
+                {/* Selected chips */}
+                {(fuseTopicIds.length > 0 || fuseFreeTexts.length > 0) && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {fuseTopicIds.map((id) => {
+                      const t = (myCourses || []).find((c) => c.topic.id === id)?.topic.title || `#${id}`;
+                      return (
+                        <span key={`t-${id}`} className="inline-flex items-center gap-1 rounded-full border border-primary/40 bg-primary/10 px-2 py-0.5 text-[11px]">
+                          {t}
+                          <button type="button" onClick={() => setFuseTopicIds(fuseTopicIds.filter((x) => x !== id))} aria-label="remove">
+                            <X className="h-3 w-3" />
+                          </button>
+                        </span>
+                      );
+                    })}
+                    {fuseFreeTexts.map((t) => (
+                      <span key={`f-${t}`} className="inline-flex items-center gap-1 rounded-full border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-[11px]">
+                        {t}
+                        <button type="button" onClick={() => setFuseFreeTexts(fuseFreeTexts.filter((x) => x !== t))} aria-label="remove">
+                          <X className="h-3 w-3" />
+                        </button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                {/* Your courses picker */}
+                {(myCourses || []).length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {(myCourses || [])
+                      .filter((c) => !fuseTopicIds.includes(c.topic.id))
+                      .slice(0, 10)
+                      .map((c) => (
+                        <button
+                          key={c.topic.id}
+                          type="button"
+                          onClick={() => setFuseTopicIds([...fuseTopicIds, c.topic.id])}
+                          className="rounded-full border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                          data-testid={`fuse-pick-${c.topic.id}`}
+                        >
+                          + {c.topic.title.length > 34 ? c.topic.title.slice(0, 31) + "…" : c.topic.title}
+                        </button>
+                      ))}
+                  </div>
+                )}
+                {/* Free-text adder */}
+                <form
+                  className="flex gap-2"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    addFuseFreeText();
+                  }}
+                >
+                  <Input
+                    value={fuseInput}
+                    onChange={(e) => setFuseInput(e.target.value)}
+                    placeholder={meta.placeholder}
+                    className="h-9 text-sm"
+                    data-testid="input-fuse-subject"
+                  />
+                  <Button type="submit" variant="outline" size="sm" className="h-9 shrink-0" disabled={fuseInput.trim().length < 2}>
+                    Add
+                  </Button>
+                </form>
+                <p className="text-[11px] text-muted-foreground">
+                  {fuseTopicIds.length + fuseFreeTexts.length < 2
+                    ? `Add ${2 - (fuseTopicIds.length + fuseFreeTexts.length)} more to fuse (max 6 total)`
+                    : `${fuseTopicIds.length + fuseFreeTexts.length} selected — ready to fuse`}
+                </p>
+              </div>
+            ) : mode === "explore" ? (
               <div className="space-y-2">
                 {exploreMutation.isPending ? (
                   <div className="flex items-center gap-2 text-xs text-muted-foreground py-3 justify-center">
@@ -314,13 +436,19 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
                   isPending ||
                   (mode === "goal" && input.trim().length < 5) ||
                   (mode === "custom" && input.trim().length < 3) ||
-                  (mode === "explore" && !selectedSuggestion)
+                  (mode === "explore" && !selectedSuggestion) ||
+                  (mode === "fuse" && fuseTopicIds.length + fuseFreeTexts.length < 2)
                 }
                 onClick={submit}
                 data-testid="btn-course-generate"
               >
                 {isPending ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
+                ) : mode === "fuse" ? (
+                  <>
+                    <Combine className="h-3.5 w-3.5 mr-1" />
+                    Fuse
+                  </>
                 ) : (
                   <>
                     <Rocket className="h-3.5 w-3.5 mr-1" />
@@ -341,6 +469,23 @@ export function CourseCreator({ onStart }: CourseCreatorProps) {
                     className="text-[11px] px-2 py-1 rounded-full border border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors inline-flex items-center gap-1"
                   >
                     <Sparkles className="h-3 w-3" />
+                    {ex}
+                  </button>
+                ))}
+              </div>
+            )}
+            {/* Example fusion ideas */}
+            {mode === "fuse" && fuseTopicIds.length + fuseFreeTexts.length === 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-[11px] text-muted-foreground self-center">Try:</span>
+                {["Fluid Dynamics + Godot + Topology", "Music theory + Signal processing", "Economics + Machine learning"].map((ex) => (
+                  <button
+                    key={ex}
+                    type="button"
+                    onClick={() => setFuseFreeTexts(ex.split(" + ").map((s) => s.trim()))}
+                    className="text-[11px] px-2 py-1 rounded-full border border-border/70 text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors inline-flex items-center gap-1"
+                  >
+                    <Combine className="h-3 w-3" />
                     {ex}
                   </button>
                 ))}

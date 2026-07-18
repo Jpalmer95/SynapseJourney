@@ -1,9 +1,11 @@
-import { useQuery } from "@tanstack/react-query";
-import { BookOpen, Target, Sparkles, Play, Library } from "lucide-react";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { BookOpen, Target, Sparkles, Play, Library, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Topic, Category, LearningGoal } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
@@ -39,6 +41,21 @@ export function MyCoursesStrip({ onOpen, className, limit = 8 }: MyCoursesStripP
     queryKey: ["/api/learn/my-courses"],
     staleTime: 20_000,
   });
+  const { toast } = useToast();
+
+  const deleteMutation = useMutation({
+    mutationFn: async (topicId: number) => {
+      await apiRequest("DELETE", `/api/learn/my-courses/${topicId}`);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/my-courses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
+      toast({ title: "Course removed" });
+    },
+    onError: (err: any) => {
+      toast({ title: "Could not remove course", description: err?.message, variant: "destructive" });
+    },
+  });
 
   const list = (items || []).slice(0, limit);
 
@@ -67,9 +84,23 @@ export function MyCoursesStrip({ onOpen, className, limit = 8 }: MyCoursesStripP
         {list.map((item) => (
           <Card
             key={item.topic.id}
-            className="min-w-[270px] max-w-[290px] snap-start border-border/60 bg-card/80 shrink-0"
+            className="group min-w-[270px] max-w-[290px] snap-start border-border/60 bg-card/80 shrink-0 relative"
             data-testid={`my-course-card-${item.topic.id}`}
           >
+            <button
+              type="button"
+              aria-label="Remove course"
+              className="absolute top-2 right-2 z-10 p-1 rounded-md text-muted-foreground/50 opacity-0 group-hover:opacity-100 hover:text-destructive hover:bg-destructive/10 transition-all"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (window.confirm(`Remove "${item.topic.title}" and your progress on it?`)) {
+                  deleteMutation.mutate(item.topic.id);
+                }
+              }}
+              data-testid={`button-delete-course-${item.topic.id}`}
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
             <CardContent className="p-3 space-y-2">
               <div className="flex items-start justify-between gap-2">
                 <div className="min-w-0">
