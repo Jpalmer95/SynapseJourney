@@ -903,7 +903,7 @@ Respond with ONLY a JSON array of 10 objects:
         const result = await generateByokOrPool(
           [{ role: "user", content: prompt }],
           userConfig,
-          { responseFormat: "json", temperature: 0.9 }
+          { responseFormat: "json", temperature: 0.9, maxTokens: 2048 }
         );
         const parsed = JSON.parse(result.content || "[]");
         if (Array.isArray(parsed)) {
