@@ -298,11 +298,12 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
         preset: z.enum(VALID_PRESETS).optional(),
         referenceAudio: z.string().optional(),
         playbackSpeed: z.number().min(0.5).max(3).optional(),
-        speaker: z.string().optional(), // Qwen3-TTS preset speaker (e.g. "Ryan", "Serena")
-        qwenMode: z.enum(["custom_voice", "voice_design", "voice_clone"]).optional(),
-        qwenStyleInstruction: z.string().max(500).optional(),
-        qwenVoiceDescription: z.string().max(500).optional(),
-        refText: z.string().max(1000).optional(),
+        speaker: z.string().nullish(), // Qwen3-TTS preset speaker (e.g. "Ryan", "Serena")
+        qwenMode: z.enum(["custom_voice", "voice_design", "voice_clone"]).nullish(),
+        // Clients send null for unset optional fields — accept null or undefined, coerce away
+        qwenStyleInstruction: z.string().max(500).nullish(),
+        qwenVoiceDescription: z.string().max(500).nullish(),
+        refText: z.string().max(1000).nullish(),
       }).optional(),
       forceRegenerate: z.boolean().optional(),
       firstParagraphOnly: z.boolean().optional(),
@@ -355,6 +356,19 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
     // Build Qwen3-TTS mode options from stored settings + client overrides
     const userProfile = await storage.getUserProfile(userId);
     const hfToken = userProfile?.huggingFaceToken || undefined;
+
+    // Explicit early-exit: Qwen engine selected but no HF token on the profile.
+    // Without this the request falls through to OpenAI/HF-inference fallbacks and
+    // the user has no idea why Qwen didn't speak.
+    if ((voicePreset === "qwen" || voicePreset === "custom") && !hfToken) {
+      return res.status(428).json({
+        error: "HF_TOKEN_REQUIRED",
+        message:
+          "Qwen Cloud TTS needs a Hugging Face token. Add one in Settings → AI Chat Provider → Hugging Face Access Token (free at huggingface.co/settings/tokens), then retry.",
+        fallbackToBrowser: true,
+      });
+    }
+
     const qwenMode = (voiceConfig?.qwenMode || ttsSettings.qwenMode) as "custom_voice" | "voice_design" | "voice_clone";
     const buildQwenOptions = (): import("../tts-service").QwenTTSOptions => ({
       mode: qwenMode,

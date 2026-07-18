@@ -204,8 +204,10 @@ async function callOpenAITTS(text: string, voicePresetId: string): Promise<Buffe
   if (!OPENAI_VOICE_MAP[voicePresetId]) return null;
 
   const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || process.env.OPENAI_API_KEY;
-  if (!apiKey) {
-    console.info("[TTS] OpenAI TTS: no API key configured — skipping");
+  // Skip when no key, or when the key is a known placeholder/dummy value left in .env
+  // (prevents noisy 401s against the real OpenAI API on every TTS fallback).
+  if (!apiKey || /^(placeholder|dummy|changeme|your[_-]?key|sk-dummy)/i.test(apiKey.trim())) {
+    if (apiKey) console.info("[TTS] OpenAI TTS: placeholder API key detected — skipping");
     return null;
   }
   const baseURL = process.env.AI_INTEGRATIONS_OPENAI_BASE_URL || undefined;

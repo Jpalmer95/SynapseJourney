@@ -99,6 +99,25 @@ async function waitForBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
   });
 }
 
+// Thrown when the server says Qwen TTS needs an HF token (HTTP 428).
+// Distinct from a generic failure so the UI can tell the user exactly what to do.
+class HfTokenRequiredError extends Error {
+  constructor(public serverMessage: string) {
+    super("HF_TOKEN_REQUIRED");
+    this.name = "HfTokenRequiredError";
+  }
+}
+
+async function throwIfHfTokenRequired(res: Response): Promise<void> {
+  if (res.status !== 428) return;
+  let message = "Qwen Cloud TTS needs a Hugging Face token. Add one in Settings.";
+  try {
+    const data = await res.clone().json();
+    if (data?.message) message = data.message;
+  } catch { /* keep default */ }
+  throw new HfTokenRequiredError(message);
+}
+
 async function fetchServerTTSAudio(unitId: number, voiceConfig?: object): Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> {
   try {
     const body: Record<string, unknown> = { unitId };
@@ -109,12 +128,14 @@ async function fetchServerTTSAudio(unitId: number, voiceConfig?: object): Promis
       credentials: "include",
       body: JSON.stringify(body),
     });
+    await throwIfHfTokenRequired(res);
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.audioData) return null;
     return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
-  } catch {
+  } catch (err) {
+    if (err instanceof HfTokenRequiredError) throw err;
     return null;
   }
 }
@@ -129,6 +150,7 @@ async function fetchServerTTSIntro(unitId: number, voiceConfig?: object): Promis
       credentials: "include",
       body: JSON.stringify(body),
     });
+    await throwIfHfTokenRequired(res);
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
     const data = await res.json();
@@ -139,7 +161,8 @@ async function fetchServerTTSIntro(unitId: number, voiceConfig?: object): Promis
       playbackSpeed: data.playbackSpeed || 1.0,
       restText: data.restText || null,
     };
-  } catch {
+  } catch (err) {
+    if (err instanceof HfTokenRequiredError) throw err;
     return null;
   }
 }
@@ -154,12 +177,14 @@ async function fetchServerTTSText(text: string, voiceConfig?: object): Promise<{
       credentials: "include",
       body: JSON.stringify(body),
     });
+    await throwIfHfTokenRequired(res);
     if (res.status === 403 || res.status === 401) return null;
     if (!res.ok) return null;
     const data = await res.json();
     if (!data.audioData) return null;
     return { audioData: data.audioData, audioFormat: data.audioFormat || "wav", playbackSpeed: data.playbackSpeed || 1.0 };
-  } catch {
+  } catch (err) {
+    if (err instanceof HfTokenRequiredError) throw err;
     return null;
   }
 }
@@ -927,13 +952,21 @@ function useTTSImpl(): UseTTSReturn {
   }, [getAudioCtx]);
 
   // Helper to build the voiceConfig object sent to the server for Qwen TTS.
-  const getVoiceConfig = useCallback(() => ({
-    speaker: qwenVoiceRef.current,
-    qwenMode: qwenModeRef.current,
-    qwenStyleInstruction: qwenStyleInstructionRef.current,
-    qwenVoiceDescription: qwenVoiceDescriptionRef.current,
-    refText: refTextRef.current,
-  }), []);
+  // Only include fields that have real values — sending null for unset optionals
+  // trips server-side schema validation.
+  const getVoiceConfig = useCallback(() => {
+    const cfg: Record<string, unknown> = {
+      speaker: qwenVoiceRef.current,
+      qwenMode: qwenModeRef.current,
+    };
+    const style = qwenStyleInstructionRef.current?.trim();
+    const desc = qwenVoiceDescriptionRef.current?.trim();
+    const refText = refTextRef.current?.trim();
+    if (style) cfg.qwenStyleInstruction = style;
+    if (desc) cfg.qwenVoiceDescription = desc;
+    if (refText) cfg.refText = refText;
+    return cfg;
+  }, []);
 
   // ─────────────────────────────────────────────────────────────────────────
 
@@ -1102,7 +1135,14 @@ function useTTSImpl(): UseTTSReturn {
           if (await speakViaServer(text, unitId, vcfg)) return;
         } catch (cloudErr) {
           if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
-          console.warn("[TTS] Server Qwen TTS failed, falling back to browser:", cloudErr);
+          if (cloudErr instanceof HfTokenRequiredError) {
+            toast({
+              title: "Hugging Face token required",
+              description: cloudErr.serverMessage,
+            });
+          } else {
+            console.warn("[TTS] Server Qwen TTS failed, falling back to browser:", cloudErr);
+          }
         }
         // Fall through to browser TTS
       }
@@ -1278,7 +1318,14 @@ function useTTSImpl(): UseTTSReturn {
             }
           } catch (cloudErr) {
             if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
-            console.warn("[TTS sections] Server Qwen failed for section", i, ":", cloudErr);
+            if (cloudErr instanceof HfTokenRequiredError) {
+              toast({
+                title: "Hugging Face token required",
+                description: cloudErr.serverMessage,
+              });
+            } else {
+              console.warn("[TTS sections] Server Qwen failed for section", i, ":", cloudErr);
+            }
           }
           // Fall through to browser TTS
         }
