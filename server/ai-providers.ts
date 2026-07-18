@@ -656,7 +656,36 @@ export function validateByokCredentials(config: ProviderConfig): { valid: boolea
  * Returns null if user has no valid BYOK credentials.
  */
 export function getByokProvider(config: ProviderConfig): AIProvider | null {
-  // Priority: xAI → Gemini (user's own) → OpenRouter → Anthropic → HuggingFace → Ollama
+  // Honor the user's selected provider first when its credential exists —
+  // silently picking a different provider ignores their choice (and their
+  // preferredModel, which is provider-specific).
+  switch (config.provider) {
+    case "huggingface":
+      if (config.huggingFaceToken) return new HuggingFaceProvider(config.huggingFaceToken, config.preferredModel);
+      break;
+    case "ollama":
+      if (config.ollamaUrl) return new OllamaProvider(config.ollamaUrl, config.preferredModel);
+      break;
+    case "lmstudio":
+      if (config.lmStudioUrl) return new OpenAICompatibleProvider("lmstudio", config.lmStudioUrl, "lm-studio", config.preferredModel);
+      break;
+    case "custom_openai":
+      if (config.customOpenaiUrl) return new OpenAICompatibleProvider("custom_openai", config.customOpenaiUrl, config.customOpenaiKey || "local", config.preferredModel);
+      break;
+    case "openrouter":
+      if (config.openRouterKey) return new OpenRouterProvider(config.openRouterKey, config.preferredModel);
+      break;
+    case "xai":
+      if (config.xaiKey) return new ByokGrokProvider(config.xaiKey, config.preferredModel);
+      break;
+    case "gemini":
+      if (config.geminiKey) return new ByokGeminiProvider(config.geminiKey);
+      break;
+    case "anthropic":
+      break; // falls through to priority scan (no native client yet)
+  }
+
+  // Fallback priority scan: xAI → Gemini → OpenRouter → Anthropic → HuggingFace → Ollama → LM Studio → custom
   if (config.xaiKey) {
     return new ByokGrokProvider(config.xaiKey, config.preferredModel);
   }
