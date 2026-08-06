@@ -874,7 +874,7 @@ export default function SettingsPage() {
                           {
                             id: "qwen",
                             label: "Qwen Cloud",
-                            description: "Hugging Face ZeroGPU — high quality, requires HF token",
+                            description: "Hugging Face ZeroGPU — high quality; optional HF token improves reliability",
                             icon: <Cloud className="h-4 w-4 text-blue-500" />,
                             badge: <span className="text-[10px] px-1 py-0.5 rounded bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 font-medium">Pro</span>,
                           },
@@ -1093,7 +1093,7 @@ export default function SettingsPage() {
                       <Key className="h-4 w-4" />
                       Hugging Face Access Token
                       {(localVoicePreset === "qwen" || localVoicePreset === "custom") && (
-                        <span className="text-xs text-muted-foreground font-normal ml-1">· required for Qwen Cloud TTS</span>
+                        <span className="text-xs text-muted-foreground font-normal ml-1">· recommended for Qwen Cloud TTS</span>
                       )}
                     </Label>
                     <Input

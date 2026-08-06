@@ -355,19 +355,25 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 
     // Build Qwen3-TTS mode options from stored settings + client overrides
     const userProfile = await storage.getUserProfile(userId);
-    const hfToken = userProfile?.huggingFaceToken || undefined;
+    // Token priority: user's own HF token (BYOK) → platform env token (server-managed
+    // fallback so the platform can offer Qwen without per-user tokens). If neither is
+    // available we still TRY anonymous ZeroGPU (works while the Space allows it) and
+    // only return 428 when generation actually fails without a token.
+    const hfToken = userProfile?.huggingFaceToken || process.env.HF_TOKEN || undefined;
 
-    // Explicit early-exit: Qwen engine selected but no HF token on the profile.
-    // Without this the request falls through to OpenAI/HF-inference fallbacks and
-    // the user has no idea why Qwen didn't speak.
-    if ((voicePreset === "qwen" || voicePreset === "custom") && !hfToken) {
-      return res.status(428).json({
-        error: "HF_TOKEN_REQUIRED",
-        message:
-          "Qwen Cloud TTS needs a Hugging Face token. Add one in Settings → AI Chat Provider → Hugging Face Access Token (free at huggingface.co/settings/tokens), then retry.",
-        fallbackToBrowser: true,
-      });
-    }
+    // Uniform error response for the two Qwen presets: guide users to add a token
+    // only when generation failed AND they have no token available at all.
+    const failNoAudio = () => {
+      if ((voicePreset === "qwen" || voicePreset === "custom") && !hfToken) {
+        return res.status(428).json({
+          error: "HF_TOKEN_REQUIRED",
+          message:
+            "Qwen Cloud TTS couldn't reach the Hugging Face Space. Add a free Hugging Face token in Settings → AI Chat Provider → Hugging Face Access Token (huggingface.co/settings/tokens) and retry.",
+          fallbackToBrowser: true,
+        });
+      }
+      return failNoAudio();
+    };
 
     const qwenMode = (voiceConfig?.qwenMode || ttsSettings.qwenMode) as "custom_voice" | "voice_design" | "voice_clone";
     const buildQwenOptions = (): import("../tts-service").QwenTTSOptions => ({
@@ -391,7 +397,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       }
       const introResult = await callTTSDirect(introText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!introResult) {
-        return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
+        return failNoAudio();
       }
       // Non-blocking: cache the full audio in the background so the next listen is instant
       generateTTSAudio({
@@ -421,7 +427,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
     if (freeText && !unitIdForCache) {
       const directResult = await callTTSDirect(freeText, voicePreset, referenceAudio, hfToken, buildQwenOptions());
       if (!directResult) {
-        return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
+        return failNoAudio();
       }
       return res.json({
         audioData: directResult.buffer.toString("base64"),
@@ -452,7 +458,7 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
 
     if (!result) {
       // No audio data available — client should fall back to browser TTS
-      return res.status(503).json({ error: "TTS generation failed", fallbackToBrowser: true });
+      return failNoAudio();
     }
 
     res.json({ ...result, playbackSpeed });
@@ -467,7 +473,7 @@ app.get("/api/tts/presets", (_req, res) => {
   res.json([
     { id: "kokoro", name: "Kokoro", description: "Local WebGPU/WASM model — offline, no token needed", tier: "local" },
     { id: "browser", name: "Browser TTS", description: "Device speech engine — quality depends on your OS", tier: "server" },
-    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — 3 modes: preset speakers, voice design, voice clone. Requires HF token", tier: "cloud" },
+    { id: "qwen", name: "Qwen Cloud", description: "Hugging Face ZeroGPU — 3 modes: preset speakers, voice design, voice clone. Free; an optional HF token improves reliability", tier: "cloud" },
     { id: "custom", name: "Custom Voice", description: "Clone your own voice with a reference audio sample (Qwen3-TTS voice_clone mode)", tier: "cloud" },
   ]);
 });
