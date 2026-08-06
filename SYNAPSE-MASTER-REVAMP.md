@@ -697,6 +697,31 @@ See [PHASE9-ADAPTIVE-LEARNING.md](PHASE9-ADAPTIVE-LEARNING.md) for full plan.
 
 ---
 
+## Phase 10: TTS Reliability & Open Audio
+
+**Core concept:** Every read-aloud path must work out of the box for every learner — no tokens, no dead fallbacks, no mystery 503s. Audio is a first-class accessibility feature of an open learning platform.
+
+See `docs/tts-audit-2026-08-06.md` (or the Desktop report) for the full audit.
+
+### 10.1 — TTS engine configuration & fallback hardening (DONE 2026-08-06)
+- [x] Wire `process.env.HF_TOKEN` server fallback into `/api/tts/generate` (token priority: user profile token → platform env token → anonymous ZeroGPU)
+- [x] Qwen3-TTS now works anonymously while the Space permits it; `428 HF_TOKEN_REQUIRED` only returned when generation actually fails with no token available
+- [x] Remove dead `api-inference.huggingface.co` last-resort fallback (host is DNS-dead; was pure latency with zero success chance)
+- [x] Live-verified Qwen3-TTS Space: all 3 endpoints (`generate_custom_voice`, `generate_voice_design`, `generate_voice_clone`) + upload + SSE stream + audio fetch (authenticated AND anonymous)
+- [x] Verified speaker IDs / param shapes against `/gradio_api/info` — code matches the real API surface
+- [x] Prod container recreated with `HF_TOKEN` in env (was missing despite being in host `.env`)
+- [x] UI copy updated: HF token now "recommended" not "required"
+
+### 10.2 — Audio-first polish (backlog)
+- [ ] **Word-level playback highlighting** — sync spoken audio with sentence highlighting in lesson view (needs word timestamps from Qwen or VAD alignment)
+- [ ] **Voice previews** — one-click sample sentence per Qwen speaker / Kokoro voice before committing
+- [ ] **TTS cache lifecycle** — size cap + GC for `tts_audio_cache` (currently append-only per voice config)
+- [ ] **Warm-cache seeding** — pre-generate audio for prebuilt courses on deploy so first listen is instant
+- [ ] **Poster + goal-summary audio** — read completion posters / milestone summaries aloud
+- [ ] **Podcast pathway** — playlist-style continuous audio across a course (stretch)
+
+---
+
 ## Future Roadmap (Post-Phase 9 — Do NOT Execute)
 
 - **XR/VR Learning Sandboxes** — physics-bound 3D environments for experimentation
@@ -713,8 +738,8 @@ See [PHASE9-ADAPTIVE-LEARNING.md](PHASE9-ADAPTIVE-LEARNING.md) for full plan.
 
 - **Created:** 2026-05-28
 - **Author:** Jonathan Korstad + Hermes Agent
-- **Status:** Phase 1 (Sprint 2) + Phase 8 (in progress)
-- **Last Updated:** 2026-06-24 (Phase 8: Dynamic course planning, on-demand quizzes, OER sourcing, course posters)
+- **Status:** Phase 1 (Sprint 2) + Phase 8 (in progress) + Phase 10.1 (TTS hardening — done)
+- **Last Updated:** 2026-08-06 (Phase 10: TTS reliability & open audio — HF token fallback, anonymous ZeroGPU, dead fallback removal)
 - **License:** Apache-2.0
 
 This document is authoritative. Update it as phases complete.
@@ -763,3 +788,16 @@ This document is authoritative. Update it as phases complete.
 - Interdisciplinary topics get the depth they deserve with sub-topic decomposition
 - On-demand quizzes are tailored to what the learner just read, not generic
 - OER-first approach ensures the platform leverages existing free educational content
+
+### 2026-08-06: TTS Configuration and Fallback Decision
+**Problem:** The read-aloud feature had three silent failure modes: (1) the documented `HF_TOKEN` server fallback was never wired into `/api/tts/generate` — only per-user profile tokens worked; (2) the running prod container didn't actually have `HF_TOKEN` in its env (host `.env` had it, container didn't — frozen-env drift); (3) the last-resort fallback hit `api-inference.huggingface.co`, a DNS-dead host, so it could never succeed and only added latency.
+
+**Live verification:** Qwen3-TTS HF Space (qwen-qwen3-tts.hf.space) — all three endpoints (`generate_custom_voice`, `generate_voice_design`, `generate_voice_clone`), file upload, SSE result stream, and audio fetch all work, both authenticated and **anonymously** (ZeroGPU currently allows tokenless calls).
+
+**Solution:**
+- Token priority for Qwen Cloud: user profile token (BYOK) → `process.env.HF_TOKEN` (platform) → anonymous ZeroGPU attempt
+- `428 HF_TOKEN_REQUIRED` fires only when generation actually fails AND no token was available — users without tokens can now use Qwen Cloud for free while the Space permits it
+- Removed the dead `api-inference.huggingface.co` fallback entirely
+- Recreated the prod container with `HF_TOKEN` injected (same image/ports/binds/restart policy, env preserved + HF_TOKEN added)
+
+**Why this works:** TTS stays free for the platform (ZeroGPU), works out of the box for every learner, and the platform operator retains an escape hatch (env token) if the Space ever flips to auth-required.

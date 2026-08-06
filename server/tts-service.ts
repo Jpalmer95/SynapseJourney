@@ -248,7 +248,7 @@ export interface QwenTTSOptions {
   referenceAudio?: string;
   /** For voice_clone mode: transcript of the reference audio */
   refText?: string;
-  /** HF token for ZeroGPU access */
+  /** HF token for ZeroGPU access. Optional — the Space also accepts anonymous calls. */
   hfToken?: string;
   /** Language for synthesis (default: "English") */
   language?: string;
@@ -517,42 +517,6 @@ async function callQwen3TTS(text: string, opts: QwenTTSOptions): Promise<Buffer 
   }
 }
 
-/**
- * Call HF Inference API for TTS.
- * Last-resort server-side fallback using facebook/mms-tts-eng.
- */
-async function callHFInferenceTTS(text: string, hfToken: string): Promise<Buffer | null> {
-  try {
-    const response = await fetch(
-      "https://api-inference.huggingface.co/models/facebook/mms-tts-eng",
-      {
-        method: "POST",
-        headers: {
-          "Authorization": `Bearer ${hfToken}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ inputs: text }),
-        signal: AbortSignal.timeout(30000),
-      }
-    );
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "");
-      console.info(`[TTS] HF Inference (mms-tts-eng): ${response.status} — ${errText.slice(0, 100)}`);
-      return null;
-    }
-
-    const arrayBuf = await response.arrayBuffer();
-    if (arrayBuf.byteLength > 0) {
-      return Buffer.from(arrayBuf);
-    }
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.info(`[TTS] HF Inference (mms-tts-eng): ${message}`);
-  }
-  return null;
-}
-
 export interface TTSGenerateOptions {
   unitId: number;
   content: any;
@@ -592,14 +556,15 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   let fallback = false;
 
   if (voicePreset !== "browser") {
-    // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets with HF token)
-    if ((voicePreset === "qwen" || voicePreset === "custom") && hfToken) {
+    // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets).
+    //    Works with a token or anonymously (ZeroGPU Space accepts both).
+    if (voicePreset === "qwen" || voicePreset === "custom") {
       const qwenOpts: QwenTTSOptions = qwenOptions || {
         mode: voicePreset === "custom" ? "voice_clone" : "custom_voice",
         referenceAudio,
         hfToken,
       };
-      // Ensure hfToken is always set
+      // Ensure hfToken is always set (may be undefined → anonymous call)
       qwenOpts.hfToken = hfToken;
       audioBuffer = await callQwen3TTS(truncatedText, qwenOpts);
     }
@@ -607,15 +572,6 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
     // 2. OpenAI TTS — server fallback (reliable, fast, high quality)
     if (!audioBuffer) {
       audioBuffer = await callOpenAITTS(truncatedText, voicePreset);
-    }
-
-    // 3. HF Inference API — last server-side fallback (uses server env token or user token)
-    if (!audioBuffer) {
-      const effectiveToken = process.env.HF_TOKEN || hfToken;
-      if (effectiveToken) {
-        audioBuffer = await callHFInferenceTTS(truncatedText, effectiveToken);
-        if (audioBuffer) fallback = true;
-      }
     }
   }
 
@@ -648,8 +604,9 @@ export async function callTTSDirect(
 
   let audioBuffer: Buffer | null = null;
 
-  // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets with HF token)
-  if ((voicePreset === "qwen" || voicePreset === "custom") && hfToken) {
+  // 1. Qwen3-TTS via Gradio REST API (for qwen/custom presets).
+  //    Works with a token or anonymously (ZeroGPU Space accepts both).
+  if (voicePreset === "qwen" || voicePreset === "custom") {
     const qwenOpts: QwenTTSOptions = qwenOptions || {
       mode: voicePreset === "custom" ? "voice_clone" : "custom_voice",
       referenceAudio,
@@ -662,14 +619,6 @@ export async function callTTSDirect(
   // 2. OpenAI TTS — server fallback
   if (!audioBuffer) {
     audioBuffer = await callOpenAITTS(truncated, voicePreset);
-  }
-
-  // 3. HF Inference API — last server-side fallback
-  if (!audioBuffer) {
-    const effectiveToken = process.env.HF_TOKEN || hfToken;
-    if (effectiveToken) {
-      audioBuffer = await callHFInferenceTTS(truncated, effectiveToken);
-    }
   }
 
   if (!audioBuffer) return null;
