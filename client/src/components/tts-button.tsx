@@ -613,7 +613,7 @@ export function TTSButton({
                     <Button
                       size="sm"
                       className="w-full"
-                      disabled={!qwenVoiceDescription.trim()}
+                      disabled={!qwenVoiceDescription?.trim()}
                       onClick={() =>
                         toast({
                           title: "Voice description applied",
