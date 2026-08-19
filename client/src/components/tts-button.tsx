@@ -37,6 +37,55 @@ interface TTSButtonProps {
   sections?: TTSSection[];
 }
 
+/** Encode an AudioBuffer as a 16-bit PCM WAV Blob (server expects WAV/MP3/OGG). */
+function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const numCh = Math.min(2, buffer.numberOfChannels);
+  const sr = buffer.sampleRate;
+  const length = buffer.length * numCh;
+  const view = new DataView(new ArrayBuffer(44 + length * 2));
+  const writeStr = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * numCh * 2, true);
+  view.setUint16(32, numCh * 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, length * 2, true);
+
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numCh; c++) channels.push(buffer.getChannelData(c));
+  let offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([view.buffer], { type: "audio/wav" });
+}
+
+/** Decode a MediaRecorder blob (webm/opus etc.) and re-encode as WAV File. */
+async function blobToWavFile(blob: Blob): Promise<File> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AC();
+  try {
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return new File([audioBufferToWavBlob(audioBuffer)], "recording.wav", { type: "audio/wav" });
+  } finally {
+    void ctx.close();
+  }
+}
+
 export function TTSButton({
   text,
   unitId,
@@ -91,6 +140,11 @@ export function TTSButton({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeQwenTab, setActiveQwenTab] = useState<QwenMode>(qwenMode);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -188,44 +242,85 @@ export function TTSButton({
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadVoiceFile = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) { setUploadStatus("error"); return; }
     setUploading(true);
     setUploadStatus("idle");
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64 = (reader.result as string).split(",")[1];
-          const res = await fetch("/api/tts/voice-upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
-          });
-          if (res.ok) {
-            setUploadStatus("success");
-            await setServerVoicePreset("custom");
-            queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
-          } else {
-            setUploadStatus("error");
-          }
-        } catch {
-          setUploadStatus("error");
-        } finally {
-          setUploading(false);
-        }
-      };
-      reader.onerror = () => { setUploadStatus("error"); setUploading(false); };
-      reader.readAsDataURL(file);
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/tts/voice-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
+      });
+      if (res.ok) {
+        setUploadStatus("success");
+        setSelectedFile(null);
+        await setServerVoicePreset("custom");
+        queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+      } else {
+        setUploadStatus("error");
+      }
     } catch {
       setUploadStatus("error");
+    } finally {
       setUploading(false);
     }
-    if (fileRef.current) fileRef.current.value = "";
   };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+          const file = await blobToWavFile(blob);
+          setSelectedFile(file);
+          setUploadStatus("idle");
+        } catch {
+          setUploadStatus("error");
+          toast({ title: "Recording failed", description: "Could not process the recording. Please try again." });
+        } finally {
+          setIsRecording(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setIsRecording(true);
+    } catch {
+      toast({ title: "Microphone unavailable", description: "Please allow microphone access to record a voice sample." });
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
+  };
+
+  // Release the mic if the popover is closed mid-recording.
+  useEffect(() => {
+    return () => {
+      if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   const getIcon = () => {
     if (isLoading) return <Loader2 className="h-4 w-4 animate-spin" />;
@@ -515,6 +610,20 @@ export function TTSButton({
                         Voice design active — overrides preset speakers
                       </p>
                     )}
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!qwenVoiceDescription.trim()}
+                      onClick={() =>
+                        toast({
+                          title: "Voice description applied",
+                          description: "This voice will be used the next time you press Listen.",
+                        })
+                      }
+                      data-testid="button-voice-design-apply"
+                    >
+                      Apply voice description
+                    </Button>
                   </TabsContent>
 
                   {/* Voice Clone tab */}
@@ -536,7 +645,12 @@ export function TTSButton({
                         type="file"
                         accept="audio/*"
                         className="hidden"
-                        onChange={handleFileUpload}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          setSelectedFile(f);
+                          if (f) setUploadStatus("idle");
+                          if (fileRef.current) fileRef.current.value = "";
+                        }}
                         data-testid="input-voice-file"
                       />
                       {uploading ? (
@@ -554,6 +668,12 @@ export function TTSButton({
                           <Square className="h-3.5 w-3.5 text-red-500" />
                           <p className="text-xs text-red-500">Upload failed. Max 2MB, ≤30 s.</p>
                         </div>
+                      ) : selectedFile ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Check className="h-3.5 w-3.5 text-blue-500" />
+                          <p className="text-xs font-medium truncate max-w-full">{selectedFile.name}</p>
+                          <p className="text-xs text-muted-foreground/60">Ready — click "Upload &amp; use this voice" below</p>
+                        </div>
                       ) : (
                         <div className="flex flex-col items-center gap-0.5">
                           <Mic className="h-3.5 w-3.5 text-muted-foreground" />
@@ -561,6 +681,23 @@ export function TTSButton({
                           <p className="text-xs text-muted-foreground/60">WAV · MP3 · M4A · Max 2MB</p>
                         </div>
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={isRecording ? stopRecording : startRecording}
+                        data-testid="button-voice-record"
+                      >
+                        {isRecording ? (
+                          <><Square className="h-3.5 w-3.5 text-red-500" /> Stop recording</>
+                        ) : (
+                          <><Mic className="h-3.5 w-3.5" /> Record voice sample</>
+                        )}
+                      </Button>
+                      {isRecording && <span className="text-xs text-red-500 animate-pulse">Recording…</span>}
                     </div>
 
                     <div className="space-y-1">
@@ -575,6 +712,16 @@ export function TTSButton({
                         data-testid="textarea-qwen-ref-text"
                       />
                     </div>
+
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!selectedFile || uploading}
+                      onClick={() => selectedFile && uploadVoiceFile(selectedFile)}
+                      data-testid="button-voice-upload"
+                    >
+                      {uploading ? "Uploading…" : "Upload & use this voice"}
+                    </Button>
                   </TabsContent>
                 </Tabs>
               </div>
@@ -622,6 +769,22 @@ export function TTSButton({
             )}
           </div>
         </div>
+
+          {/* ── pagevoice companion call-out ── */}
+          <div className="border-t px-3 py-2.5">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Want a full-page reading overlay with per-paragraph navigation and custom voice cloning? Try the{" "}
+              <a
+                href="https://github.com/Jpalmer95/pagevoice"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
+              >
+                pagevoice
+              </a>{" "}
+              Brave extension — free &amp; open source.
+            </p>
+          </div>
       </PopoverContent>
     </Popover>
   );

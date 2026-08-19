@@ -1,13 +1,46 @@
 export type VoiceTier = "local" | "cloud" | "server";
 
-export const KOKORO_VOICES = [
-  { id: "af_bella", name: "Bella", gender: "female", style: "Warm & friendly" },
-  { id: "af_sky", name: "Sky", gender: "female", style: "Bright & clear" },
-  { id: "af_heart", name: "Heart", gender: "female", style: "Calm & soothing" },
-  { id: "am_michael", name: "Michael", gender: "male", style: "Professional" },
-  { id: "bm_george", name: "George", gender: "male", style: "Authoritative" },
-  { id: "am_adam", name: "Adam", gender: "male", style: "Thoughtful" },
-] as const;
+/**
+ * All 54 Kokoro-82M voice packs (authoritative list from hexgrad/Kokoro-82M).
+ * Metadata is derived from the voice id: the 2nd char is gender (f/m) and the
+ * 1st char is the language/accent.
+ */
+const KOKORO_LANGUAGE: Record<string, string> = {
+  a: "American English",
+  b: "British English",
+  e: "English",
+  f: "French",
+  h: "Hindi",
+  i: "Italian",
+  j: "Japanese",
+  p: "Portuguese",
+  z: "Mandarin",
+};
+
+const KOKORO_IDS = [
+  "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore",
+  "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
+  "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
+  "am_onyx", "am_puck", "am_santa",
+  "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
+  "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+  "ef_dora", "em_alex", "em_santa",
+  "ff_siwis",
+  "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
+  "if_sara", "im_nicola",
+  "jf_alpha", "jf_gongitsune", "jf_nezumi", "jf_tebukuro", "jm_kumo",
+  "pf_dora", "pm_alex", "pm_santa",
+  "zf_xiaobei", "zf_xiaoni", "zf_xiaoxiao", "zf_xiaoyi",
+  "zm_yunjian", "zm_yunxi", "zm_yunxia", "zm_yunyang",
+];
+
+export const KOKORO_VOICES = KOKORO_IDS.map((id) => {
+  const gender = id.charAt(1) === "f" ? "female" : "male";
+  const style = KOKORO_LANGUAGE[id.charAt(0)] ?? "English";
+  const raw = id.split("_")[1];
+  const name = raw.charAt(0).toUpperCase() + raw.slice(1);
+  return { id, name, gender, style };
+});
 
 /**
  * Qwen3-TTS preset speakers (from the official HF Space).
