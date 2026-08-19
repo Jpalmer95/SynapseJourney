@@ -433,19 +433,22 @@ function useTTSImpl(): UseTTSReturn {
         try { localStorage.setItem(QWEN_MODE_KEY, ttsSettings.qwenMode); } catch { /* ignore */ }
       }
       if (ttsSettings.qwenStyleInstruction !== undefined) {
-        setQwenStyleInstructionState(ttsSettings.qwenStyleInstruction);
-        qwenStyleInstructionRef.current = ttsSettings.qwenStyleInstruction;
-        try { if (ttsSettings.qwenStyleInstruction) localStorage.setItem(QWEN_STYLE_KEY, ttsSettings.qwenStyleInstruction); else localStorage.removeItem(QWEN_STYLE_KEY); } catch { /* ignore */ }
+        const v = ttsSettings.qwenStyleInstruction ?? "";
+        setQwenStyleInstructionState(v);
+        qwenStyleInstructionRef.current = v;
+        try { if (v) localStorage.setItem(QWEN_STYLE_KEY, v); else localStorage.removeItem(QWEN_STYLE_KEY); } catch { /* ignore */ }
       }
       if (ttsSettings.qwenVoiceDescription !== undefined) {
-        setQwenVoiceDescriptionState(ttsSettings.qwenVoiceDescription);
-        qwenVoiceDescriptionRef.current = ttsSettings.qwenVoiceDescription;
-        try { if (ttsSettings.qwenVoiceDescription) localStorage.setItem(QWEN_VOICE_DESC_KEY, ttsSettings.qwenVoiceDescription); else localStorage.removeItem(QWEN_VOICE_DESC_KEY); } catch { /* ignore */ }
+        const v = ttsSettings.qwenVoiceDescription ?? "";
+        setQwenVoiceDescriptionState(v);
+        qwenVoiceDescriptionRef.current = v;
+        try { if (v) localStorage.setItem(QWEN_VOICE_DESC_KEY, v); else localStorage.removeItem(QWEN_VOICE_DESC_KEY); } catch { /* ignore */ }
       }
       if (ttsSettings.refText !== undefined) {
-        setRefTextState(ttsSettings.refText);
-        refTextRef.current = ttsSettings.refText;
-        try { if (ttsSettings.refText) localStorage.setItem(QWEN_REF_TEXT_KEY, ttsSettings.refText); else localStorage.removeItem(QWEN_REF_TEXT_KEY); } catch { /* ignore */ }
+        const v = ttsSettings.refText ?? "";
+        setRefTextState(v);
+        refTextRef.current = v;
+        try { if (v) localStorage.setItem(QWEN_REF_TEXT_KEY, v); else localStorage.removeItem(QWEN_REF_TEXT_KEY); } catch { /* ignore */ }
       }
     }
   }, [ttsSettings]);
