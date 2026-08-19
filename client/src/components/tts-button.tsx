@@ -37,6 +37,55 @@ interface TTSButtonProps {
   sections?: TTSSection[];
 }
 
+/** Encode an AudioBuffer as a 16-bit PCM WAV Blob (server expects WAV/MP3/OGG). */
+function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
+  const numCh = Math.min(2, buffer.numberOfChannels);
+  const sr = buffer.sampleRate;
+  const length = buffer.length * numCh;
+  const view = new DataView(new ArrayBuffer(44 + length * 2));
+  const writeStr = (offset: number, s: string) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+  };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true); // PCM
+  view.setUint16(22, numCh, true);
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * numCh * 2, true);
+  view.setUint16(32, numCh * 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, length * 2, true);
+
+  const channels: Float32Array[] = [];
+  for (let c = 0; c < numCh; c++) channels.push(buffer.getChannelData(c));
+  let offset = 44;
+  for (let i = 0; i < buffer.length; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      offset += 2;
+    }
+  }
+  return new Blob([view.buffer], { type: "audio/wav" });
+}
+
+/** Decode a MediaRecorder blob (webm/opus etc.) and re-encode as WAV File. */
+async function blobToWavFile(blob: Blob): Promise<File> {
+  const arrayBuffer = await blob.arrayBuffer();
+  const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+  const ctx = new AC();
+  try {
+    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+    return new File([audioBufferToWavBlob(audioBuffer)], "recording.wav", { type: "audio/wav" });
+  } finally {
+    void ctx.close();
+  }
+}
+
 export function TTSButton({
   text,
   unitId,
@@ -92,6 +141,10 @@ export function TTSButton({
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeQwenTab, setActiveQwenTab] = useState<QwenMode>(qwenMode);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -220,6 +273,54 @@ export function TTSButton({
       setUploading(false);
     }
   };
+
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      const rec = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      chunksRef.current = [];
+      rec.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      rec.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        streamRef.current = null;
+        recorderRef.current = null;
+        try {
+          const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
+          const file = await blobToWavFile(blob);
+          setSelectedFile(file);
+          setUploadStatus("idle");
+        } catch {
+          setUploadStatus("error");
+          toast({ title: "Recording failed", description: "Could not process the recording. Please try again." });
+        } finally {
+          setIsRecording(false);
+        }
+      };
+      recorderRef.current = rec;
+      rec.start();
+      setIsRecording(true);
+    } catch {
+      toast({ title: "Microphone unavailable", description: "Please allow microphone access to record a voice sample." });
+    }
+  };
+
+  const stopRecording = () => {
+    if (recorderRef.current && recorderRef.current.state !== "inactive") {
+      recorderRef.current.stop();
+    }
+  };
+
+  // Release the mic if the popover is closed mid-recording.
+  useEffect(() => {
+    return () => {
+      if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
+      streamRef.current?.getTracks().forEach((t) => t.stop());
+    };
+  }, []);
 
   const getIcon = () => {
     if (isLoading) return <Loader2 className="h-4 w-4 animate-spin" />;
@@ -509,6 +610,20 @@ export function TTSButton({
                         Voice design active — overrides preset speakers
                       </p>
                     )}
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!qwenVoiceDescription.trim()}
+                      onClick={() =>
+                        toast({
+                          title: "Voice description applied",
+                          description: "This voice will be used the next time you press Listen.",
+                        })
+                      }
+                      data-testid="button-voice-design-apply"
+                    >
+                      Apply voice description
+                    </Button>
                   </TabsContent>
 
                   {/* Voice Clone tab */}
@@ -566,6 +681,23 @@ export function TTSButton({
                           <p className="text-xs text-muted-foreground/60">WAV · MP3 · M4A · Max 2MB</p>
                         </div>
                       )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={isRecording ? stopRecording : startRecording}
+                        data-testid="button-voice-record"
+                      >
+                        {isRecording ? (
+                          <><Square className="h-3.5 w-3.5 text-red-500" /> Stop recording</>
+                        ) : (
+                          <><Mic className="h-3.5 w-3.5" /> Record voice sample</>
+                        )}
+                      </Button>
+                      {isRecording && <span className="text-xs text-red-500 animate-pulse">Recording…</span>}
                     </div>
 
                     <div className="space-y-1">

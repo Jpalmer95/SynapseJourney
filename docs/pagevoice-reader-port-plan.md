@@ -19,6 +19,11 @@ the pagevoice extension as a companion tool.
 - [x] **Voice-clone "Upload" flow gets an explicit button** — the file picker now only
       selects the file; an "Upload & use this voice" button submits (previously it
       auto-uploaded on selection, which was confusing — same fix as pagevoice).
+- [x] **Mic recording for voice clone** — "Record voice sample" captures from the
+      microphone (MediaRecorder) and re-encodes to WAV in-browser before upload, since
+      the server + Gradio Space expect WAV/MP3/OGG (not webm/opus).
+- [x] **Voice-design "Apply" button** — explicit feedback that the typed description
+      will be used on the next Listen.
 - [x] **pagevoice companion call-out** — a footer link in the TTS settings popover
       pointing to the pagevoice Brave extension.
 
