@@ -1,9 +1,30 @@
-# Plan: Port the pagevoice reader UX into Synapse TTS
+# Plan: pagevoice TTS alignment for Synapse
 
-Status: **PROPOSAL — awaiting review before implementation.**
+Status: **Scope narrowed by author (see "Scope decision" below). Core polish implemented in
+this branch; the full reader-overlay port is deferred to a future phase.**
 Branch: `feature/pagevoice-reader-port`
 Related: `references/tts-architecture.md`, `docs/tts-audit-2026-08-06.md`
-Source of the UX: the standalone `pagevoice` project (Brave extension + local GPU server).
+Source of the fixes: the standalone `pagevoice` project (Brave extension + local GPU server).
+
+## Scope decision (updated)
+
+The author decided **not** to port the reader overlay (floating reader, per-paragraph
+navigation, cache/prefetch) right now. Instead this branch does the narrow, high-value
+work — carry over the model/UX fixes already solved in pagevoice — plus a call-out to
+the pagevoice extension as a companion tool.
+
+### Implemented in this branch
+- [x] **Kokoro voice list corrected & expanded** — 6 hardcoded voices → the authoritative
+      54 packs (the same fix applied to pagevoice after invalid names caused errors).
+- [x] **Voice-clone "Upload" flow gets an explicit button** — the file picker now only
+      selects the file; an "Upload & use this voice" button submits (previously it
+      auto-uploaded on selection, which was confusing — same fix as pagevoice).
+- [x] **pagevoice companion call-out** — a footer link in the TTS settings popover
+      pointing to the pagevoice Brave extension.
+
+### Deferred (future phase — the original reader-overlay port)
+The full reader UX described in §4–§5 below (floating reader, per-paragraph click-to-start,
+LRU cache + lookahead prefetch, pitch-preserved speed, grouped voice picker).
 
 ## 1. Objective
 

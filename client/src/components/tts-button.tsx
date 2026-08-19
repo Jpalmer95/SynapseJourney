@@ -91,6 +91,7 @@ export function TTSButton({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [activeQwenTab, setActiveQwenTab] = useState<QwenMode>(qwenMode);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -188,43 +189,36 @@ export function TTSButton({
     }
   };
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const uploadVoiceFile = async (file: File) => {
     if (file.size > 2 * 1024 * 1024) { setUploadStatus("error"); return; }
     setUploading(true);
     setUploadStatus("idle");
     try {
-      const reader = new FileReader();
-      reader.onload = async () => {
-        try {
-          const base64 = (reader.result as string).split(",")[1];
-          const res = await fetch("/api/tts/voice-upload", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
-          });
-          if (res.ok) {
-            setUploadStatus("success");
-            await setServerVoicePreset("custom");
-            queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
-          } else {
-            setUploadStatus("error");
-          }
-        } catch {
-          setUploadStatus("error");
-        } finally {
-          setUploading(false);
-        }
-      };
-      reader.onerror = () => { setUploadStatus("error"); setUploading(false); };
-      reader.readAsDataURL(file);
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve((reader.result as string).split(",")[1]);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(file);
+      });
+      const res = await fetch("/api/tts/voice-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ audioBase64: base64, mimeType: file.type }),
+      });
+      if (res.ok) {
+        setUploadStatus("success");
+        setSelectedFile(null);
+        await setServerVoicePreset("custom");
+        queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
+      } else {
+        setUploadStatus("error");
+      }
     } catch {
       setUploadStatus("error");
+    } finally {
       setUploading(false);
     }
-    if (fileRef.current) fileRef.current.value = "";
   };
 
   const getIcon = () => {
@@ -536,7 +530,12 @@ export function TTSButton({
                         type="file"
                         accept="audio/*"
                         className="hidden"
-                        onChange={handleFileUpload}
+                        onChange={(e) => {
+                          const f = e.target.files?.[0] ?? null;
+                          setSelectedFile(f);
+                          if (f) setUploadStatus("idle");
+                          if (fileRef.current) fileRef.current.value = "";
+                        }}
                         data-testid="input-voice-file"
                       />
                       {uploading ? (
@@ -553,6 +552,12 @@ export function TTSButton({
                         <div className="flex items-center justify-center gap-1">
                           <Square className="h-3.5 w-3.5 text-red-500" />
                           <p className="text-xs text-red-500">Upload failed. Max 2MB, ≤30 s.</p>
+                        </div>
+                      ) : selectedFile ? (
+                        <div className="flex flex-col items-center gap-0.5">
+                          <Check className="h-3.5 w-3.5 text-blue-500" />
+                          <p className="text-xs font-medium truncate max-w-full">{selectedFile.name}</p>
+                          <p className="text-xs text-muted-foreground/60">Ready — click "Upload &amp; use this voice" below</p>
                         </div>
                       ) : (
                         <div className="flex flex-col items-center gap-0.5">
@@ -575,6 +580,16 @@ export function TTSButton({
                         data-testid="textarea-qwen-ref-text"
                       />
                     </div>
+
+                    <Button
+                      size="sm"
+                      className="w-full"
+                      disabled={!selectedFile || uploading}
+                      onClick={() => selectedFile && uploadVoiceFile(selectedFile)}
+                      data-testid="button-voice-upload"
+                    >
+                      {uploading ? "Uploading…" : "Upload & use this voice"}
+                    </Button>
                   </TabsContent>
                 </Tabs>
               </div>
@@ -622,6 +637,22 @@ export function TTSButton({
             )}
           </div>
         </div>
+
+          {/* ── pagevoice companion call-out ── */}
+          <div className="border-t px-3 py-2.5">
+            <p className="text-[11px] text-muted-foreground leading-relaxed">
+              Want a full-page reading overlay with per-paragraph navigation and custom voice cloning? Try the{" "}
+              <a
+                href="https://github.com/Jpalmer95/pagevoice"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
+              >
+                pagevoice
+              </a>{" "}
+              Brave extension — free &amp; open source.
+            </p>
+          </div>
       </PopoverContent>
     </Popover>
   );
