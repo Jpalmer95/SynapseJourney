@@ -877,10 +877,9 @@ function useTTSImpl(): UseTTSReturn {
     return merged.length > 0 ? merged : [text];
   }
 
-  // Wraps kokoroSpeak with a per-chunk synthesis timeout (default 30 s).
-  // If WASM hangs during generation, rejects so the caller can fall through
-  // to the server TTS fallback rather than staying stuck.
-  const KOKORO_SYNTH_TIMEOUT_MS = 30_000;
+  // Wraps kokoroSpeak with a per-chunk synthesis timeout. Uses a generous 90s
+  // because the first call also performs the one-time model download + compile.
+  const KOKORO_SYNTH_TIMEOUT_MS = 90_000;
   const kokoroSpeakWithTimeout = useCallback(async (text: string, voice: string): Promise<Blob> => {
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -1093,8 +1092,11 @@ function useTTSImpl(): UseTTSReturn {
 
     try {
       // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      // Skip Kokoro until the model is ready so first-click listen stays instant.
-      if (voiceTier === "local" && !kokoroIncompatibleRef.current && kokoroReady) {
+      // Load on-demand here (kokoroSpeak → ensureKokoroInit) rather than gating
+      // behind `kokoroReady`. The ready-gate deadlocked first-time use — the model
+      // never initialized, so it always fell through to browser TTS (which fails
+      // on devices with no system speech voices).
+      if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
         let kokoroDone = false;
         try {
           const sentences = splitIntoSentences(text);
@@ -1123,9 +1125,6 @@ function useTTSImpl(): UseTTSReturn {
         }
 
         // Fallback: fall through to browser TTS (free and instant)
-      } else if (voiceTier === "local" && !kokoroReady) {
-        // Warm Kokoro in background; speak immediately via browser
-        console.debug("[TTS] Kokoro not ready — speaking with browser now");
       }
 
       // ── Tier 2: Server Qwen TTS (qwen / custom presets) ────────────────────
@@ -1252,7 +1251,7 @@ function useTTSImpl(): UseTTSReturn {
         const sectionText = sections[i].text;
 
         // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        if (voiceTier === "local" && !kokoroIncompatibleRef.current && kokoroReady) {
+        if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
           let kokoroDone = false;
           try {
             const sentences = splitIntoSentences(sectionText);
