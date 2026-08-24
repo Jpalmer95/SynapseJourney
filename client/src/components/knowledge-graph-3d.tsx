@@ -34,6 +34,7 @@ interface GraphEdge {
 export function KnowledgeGraph3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>();
+  const axisGroupRef = useRef<THREE.Group | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -161,6 +162,90 @@ export function KnowledgeGraph3D() {
       graphRef.current.d3Force('charge').strength(-150);
     }
   }, [forceNodes]);
+
+  // Draw the three semantic-axis reference lines directly in the three.js scene
+  // so the relational frame described by the legend is actually visible. Nodes
+  // are pinned to these same axes (fx/fy/fz), so the lines cross at the cloud's
+  // origin. Colors match the legend: X cyan, Y emerald, Z amber; a bright sphere
+  // marks each positive pole (+X Applied, +Y Natural, +Z Macro).
+  useEffect(() => {
+    if (isMobile) return;
+    const fg = graphRef.current;
+    if (!fg) return;
+    const scene = fg.scene();
+    if (!scene) return;
+
+    // Remove any previous axis group (and dispose its GPU resources).
+    if (axisGroupRef.current) {
+      scene.remove(axisGroupRef.current);
+      axisGroupRef.current.traverse((obj) => {
+        const m = obj as THREE.Mesh;
+        if (m.geometry) m.geometry.dispose();
+        const mat = m.material as THREE.Material | undefined;
+        if (mat) mat.dispose();
+      });
+      axisGroupRef.current = null;
+    }
+
+    if (!allNodes.length) return;
+
+    // Span the FULL cloud (allNodes), not the filtered subset — the axes define
+    // the stable frame, independent of search/centering.
+    let minX = Infinity, maxX = -Infinity;
+    let minY = Infinity, maxY = -Infinity;
+    let minZ = Infinity, maxZ = -Infinity;
+    for (const n of allNodes) {
+      if (n.x < minX) minX = n.x;
+      if (n.x > maxX) maxX = n.x;
+      if (n.y < minY) minY = n.y;
+      if (n.y > maxY) maxY = n.y;
+      if (n.z < minZ) minZ = n.z;
+      if (n.z > maxZ) maxZ = n.z;
+    }
+    minX = Math.min(minX, 0); maxX = Math.max(maxX, 0);
+    minY = Math.min(minY, 0); maxY = Math.max(maxY, 0);
+    minZ = Math.min(minZ, 0); maxZ = Math.max(maxZ, 0);
+    const padX = (maxX - minX) * 0.1 || 20;
+    const padY = (maxY - minY) * 0.1 || 20;
+    const padZ = (maxZ - minZ) * 0.1 || 20;
+
+    const group = new THREE.Group();
+
+    const axes: {
+      from: [number, number, number];
+      to: [number, number, number];
+      color: number;
+    }[] = [
+      { from: [minX - padX, 0, 0], to: [maxX + padX, 0, 0], color: 0x22d3ee }, // X: Applied ↔ Theoretical
+      { from: [0, minY - padY, 0], to: [0, maxY + padY, 0], color: 0x34d399 }, // Y: Natural ↔ Synthetic
+      { from: [0, 0, minZ - padZ], to: [0, 0, maxZ + padZ], color: 0xfbbf24 }, // Z: Micro ↔ Macro
+    ];
+
+    for (const ax of axes) {
+      const lineGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(ax.from[0], ax.from[1], ax.from[2]),
+        new THREE.Vector3(ax.to[0], ax.to[1], ax.to[2]),
+      ]);
+      const lineMat = new THREE.LineBasicMaterial({ color: ax.color, transparent: true, opacity: 0.55 });
+      group.add(new THREE.Line(lineGeo, lineMat));
+
+      // Positive-pole marker (indicates direction of the + end of the axis).
+      const poleGeo = new THREE.SphereGeometry(5, 16, 16);
+      const poleMat = new THREE.MeshBasicMaterial({ color: ax.color, transparent: true, opacity: 0.9 });
+      const pole = new THREE.Mesh(poleGeo, poleMat);
+      pole.position.set(ax.to[0], ax.to[1], ax.to[2]);
+      group.add(pole);
+    }
+
+    // Origin marker — the center where the three axes intersect.
+    const originGeo = new THREE.SphereGeometry(4, 16, 16);
+    const originMat = new THREE.MeshBasicMaterial({ color: 0xf8fafc, transparent: true, opacity: 0.6 });
+    const origin = new THREE.Mesh(originGeo, originMat);
+    group.add(origin);
+
+    scene.add(group);
+    axisGroupRef.current = group;
+  }, [allNodes, isMobile]);
 
   const getNodeColor = (status: string) => {
     if (status === "mastered") return "#fbbf24"; // Gold
@@ -319,7 +404,7 @@ export function KnowledgeGraph3D() {
               </Tooltip>
             </div>
             <p className="text-[10px] text-muted-foreground/70 mt-2">
-              Nearby topics are semantically similar. Hover an axis for its meaning.
+              The three colored axis lines cross at the map's center — each node sits where its topic lands on all three axes. Hover an axis for its meaning.
             </p>
           </Card>
         )}
