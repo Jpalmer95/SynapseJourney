@@ -179,6 +179,47 @@ function KeysAndSupportSection() {
     },
   });
 
+  // ── Prepaid inference credits ────────────────────────────────────────────
+  interface BillingBalance {
+    balanceCents: number;
+    packages: { id: string; label: string; amountCents: number }[];
+    model: string;
+    prepaidEnabled: boolean;
+    publishableKey: string;
+    ledger: {
+      id: number;
+      kind: string;
+      amountCents: number;
+      balanceAfterCents: number;
+      model: string | null;
+      totalTokens: number | null;
+      costCents: number | null;
+      sellCents: number | null;
+      createdAt: string;
+    }[];
+  }
+  const { data: billing } = useQuery<BillingBalance>({
+    queryKey: ["/api/billing/balance"],
+    staleTime: 15000,
+  });
+
+  const checkout = useMutation({
+    mutationFn: async (packageId: string) => {
+      const res = await apiRequest("POST", "/api/billing/checkout", { packageId });
+      return res.json() as Promise<{ url?: string; sessionId?: string }>;
+    },
+    onSuccess: (data) => {
+      if (data?.url) {
+        window.location.assign(data.url);
+      } else {
+        toast({ title: "Checkout unavailable", description: "Could not start checkout. Try again later.", variant: "destructive" });
+      }
+    },
+    onError: (err: any) => {
+      toast({ title: "Checkout failed", description: err?.message || "Could not start checkout.", variant: "destructive" });
+    },
+  });
+
   return (
     <div className="space-y-6">
       <Card>
@@ -200,6 +241,58 @@ function KeysAndSupportSection() {
           <p>
             <strong className="text-foreground">Option B — Hermes:</strong> generate with Hermes (your Grok/Gemini/Nous compute), then upload via token. Monthly chat subscriptions rarely expose API to third-party apps; Hermes is the bridge.
           </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <Wallet className="h-5 w-5 text-emerald-500" />
+            <CardTitle>Prepaid Inference Credits</CardTitle>
+          </div>
+          <CardDescription>
+            Optional. No API key? No local Ollama? Buy prepaid compute to power course
+            generation and Q&amp;A. Your own key (above) always takes priority — BYOK stays free.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-4 py-3">
+            <span className="text-sm text-muted-foreground">Your balance</span>
+            <span className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+              ${((billing?.balanceCents ?? 0) / 100).toFixed(2)}
+            </span>
+          </div>
+
+          {!billing?.prepaidEnabled ? (
+            <p className="text-sm text-muted-foreground">
+              Prepaid credits are not enabled on this server yet. Add your own key in AI Provider, or use Hermes.
+            </p>
+          ) : (
+            <>
+              <div className="flex flex-wrap gap-2">
+                {(billing?.packages ?? []).map((pkg) => (
+                  <Button
+                    key={pkg.id}
+                    variant="outline"
+                    className="gap-2"
+                    disabled={checkout.isPending}
+                    onClick={() => checkout.mutate(pkg.id)}
+                  >
+                    {checkout.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <ShoppingCart className="h-4 w-4" />
+                    )}
+                    Buy {pkg.label}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Generations use a single pinned model ({billing?.model ?? "deepseek/deepseek-chat"}) and debit
+                your balance at a fixed per-token price — never metered, never over your balance.
+              </p>
+            </>
+          )}
         </CardContent>
       </Card>
 

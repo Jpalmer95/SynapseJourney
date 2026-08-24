@@ -258,11 +258,17 @@ export function registerLearnRoutes(app: Express) {
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
+          if (msg.includes("INSUFFICIENT_CREDITS")) {
+            return res.status(402).json({
+              error: "INSUFFICIENT_CREDITS",
+              message: "Buy prepaid credits in Settings to generate this goal — or add your own AI key.",
+            });
+          }
           if (msg.includes("BYOC_REQUIRED")) {
             return res.status(402).json({
               error: "BYOC_REQUIRED",
               message:
-                "Platform free AI is disabled. Add API keys in Settings, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
+                "Platform free AI is disabled. Add API keys in Settings, buy prepaid credits, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
             });
           }
           throw genErr;
@@ -861,11 +867,17 @@ export function registerLearnRoutes(app: Express) {
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
+          if (msg.includes("INSUFFICIENT_CREDITS")) {
+            return res.status(402).json({
+              error: "INSUFFICIENT_CREDITS",
+              message: "Buy prepaid credits in Settings to generate this course — or add your own AI key.",
+            });
+          }
           if (msg.includes("BYOC_REQUIRED")) {
             return res.status(402).json({
               error: "BYOC_REQUIRED",
               message:
-                "Platform free AI is disabled. Add API keys in Settings, or author this course with Hermes Agent and upload via Personal Access Token.",
+                "Platform free AI is disabled. Add API keys in Settings, buy prepaid credits, or author this course with Hermes Agent and upload via Personal Access Token.",
             });
           }
           throw genErr;
@@ -926,11 +938,13 @@ Respond with ONLY a JSON array of 10 objects:
 
       let suggestions: { title: string; hook: string; category: string; difficulty: string }[] = [];
       try {
-        const { generateByokOrPool } = await import("../ai-providers");
-        const result = await generateByokOrPool(
+        const { generateByokOrPrepaid } = await import("../inference-orchestrator");
+        const result = await generateByokOrPrepaid(
+          userId,
           [{ role: "user", content: prompt }],
           userConfig,
-          { responseFormat: "json", temperature: 0.9, maxTokens: 2048 }
+          { responseFormat: "json", temperature: 0.9, maxTokens: 2048 },
+          "explore"
         );
         const raw = result.content || "[]";
         const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -948,10 +962,16 @@ Respond with ONLY a JSON array of 10 objects:
         }
       } catch (err: any) {
         const msg = err?.message || String(err);
+        if (msg.includes("INSUFFICIENT_CREDITS")) {
+          return res.status(402).json({
+            error: "INSUFFICIENT_CREDITS",
+            message: "Buy prepaid credits in Settings to get personalized subject suggestions — or add your own AI key.",
+          });
+        }
         if (msg.includes("BYOC_REQUIRED")) {
           return res.status(402).json({
             error: "BYOC_REQUIRED",
-            message: "Add an AI key in Settings (or LM Studio URL) to get personalized subject suggestions.",
+            message: "Add an AI key in Settings (or LM Studio URL), or buy prepaid credits, to get personalized subject suggestions.",
           });
         }
         console.warn("[Explore] AI suggestions failed, using fallback:", msg);
@@ -1019,13 +1039,19 @@ Respond with ONLY a JSON array of 10 objects:
       let fusion;
       try {
         const { planFusionCourse } = await import("../course-planner");
-        fusion = await planFusionCourse(inputNames, { courseLength, technicalLevel, userConfig });
+        fusion = await planFusionCourse(inputNames, { courseLength, technicalLevel, userConfig, userId });
       } catch (err: any) {
         const msg = err?.message || String(err);
+        if (msg.includes("INSUFFICIENT_CREDITS")) {
+          return res.status(402).json({
+            error: "INSUFFICIENT_CREDITS",
+            message: "Buy prepaid credits in Settings to fuse courses — or add your own AI key.",
+          });
+        }
         if (msg.includes("BYOC_REQUIRED")) {
           return res.status(402).json({
             error: "BYOC_REQUIRED",
-            message: "Add an AI key in Settings to fuse courses — or ask Hermes Agent to author the fusion and upload it.",
+            message: "Add an AI key in Settings, buy prepaid credits, or ask Hermes Agent to author the fusion and upload it.",
           });
         }
         throw err;

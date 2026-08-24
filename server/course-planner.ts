@@ -18,6 +18,7 @@
  */
 
 import { generateCourseContent, generateByokOrPool, type ProviderConfig } from "./ai-providers";
+import { generateByokOrPrepaid } from "./inference-orchestrator";
 import { classifyTopicByKeywords } from "./routes/ai";
 
 // ── Types ──────────────────────────────────────────────────────────────────
@@ -264,8 +265,10 @@ export async function planCourseWithAI(
     courseLength?: CourseLength;
     technicalLevel?: TechnicalLevel;
     includeAgentContext?: boolean;
-    /** BYOC: use learner's keys first, then platform pool */
+    /** BYOC: use learner's keys first, then prepaid balance */
     userConfig?: ProviderConfig;
+    /** Present when called from an authenticated user flow — enables the prepaid fallback */
+    userId?: string;
   }
 ): Promise<CoursePlan> {
   const learningIntent = options?.learningIntent || "standard";
@@ -289,11 +292,19 @@ export async function planCourseWithAI(
     let content: string;
     // Always BYOC-or-fail for dynamic plans — never silent platform spend
     if (options?.userConfig) {
-      const result = await generateByokOrPool(
-        [{ role: "user", content: prompt }],
-        options.userConfig,
-        { responseFormat: "json", temperature: 0.7, maxTokens: 2048 }
-      );
+      const result = options.userId
+        ? await generateByokOrPrepaid(
+            options.userId,
+            [{ role: "user", content: prompt }],
+            options.userConfig,
+            { responseFormat: "json", temperature: 0.7, maxTokens: 2048 },
+            "course_generation"
+          )
+        : await generateByokOrPool(
+            [{ role: "user", content: prompt }],
+            options.userConfig,
+            { responseFormat: "json", temperature: 0.7, maxTokens: 2048 }
+          );
       content = result.content || "{}";
       console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
     } else {
@@ -543,6 +554,8 @@ export async function planFusionCourse(
     courseLength?: CourseLength;
     technicalLevel?: TechnicalLevel;
     userConfig: ProviderConfig;
+    /** Present when called from an authenticated user flow — enables the prepaid fallback */
+    userId?: string;
   }
 ): Promise<FusionPlan> {
   const courseLength = options.courseLength || "standard";
@@ -556,12 +569,19 @@ export async function planFusionCourse(
     .replace("{targetUnitRange}", `${range.min}–${range.max}`)
     .replace("{technicalLevel}", technicalLevel);
 
-  const { generateByokOrPool } = await import("./ai-providers");
-  const result = await generateByokOrPool(
-    [{ role: "user", content: prompt }],
-    options.userConfig,
-    { responseFormat: "json", temperature: 0.8, maxTokens: 4096 }
-  );
+  const result = options.userId
+    ? await generateByokOrPrepaid(
+        options.userId,
+        [{ role: "user", content: prompt }],
+        options.userConfig,
+        { responseFormat: "json", temperature: 0.8, maxTokens: 4096 },
+        "fusion"
+      )
+    : await generateByokOrPool(
+        [{ role: "user", content: prompt }],
+        options.userConfig,
+        { responseFormat: "json", temperature: 0.8, maxTokens: 4096 }
+      );
 
   const parsed = JSON.parse(stripCodeFences(result.content || "{}"));
   if (!parsed.units || !Array.isArray(parsed.units) || parsed.units.length === 0) {

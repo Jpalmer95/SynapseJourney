@@ -966,6 +966,7 @@ export async function generateLessonOutline(
       technicalLevel: options?.technicalLevel,
       includeAgentContext: options?.includeAgentContext,
       userConfig: options?.userConfig,
+      userId: options?.createdByUserId,
     });
 
     // Persist plan for OER surface + versioning

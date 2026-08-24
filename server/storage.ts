@@ -8,6 +8,7 @@ import {
   practiceTests, practiceTestQuestions, practiceTestAttempts, testGapRecommendations, practiceQuestionBank,
   unlockKeys, keyUsageHistory, keyEarnHistory, keyPurchaseRequests,
   ideaContributions, novaCoins,
+  userCredits, inferenceCharges,
   ttsAudioCache, flashcards, flashcardReviews,
   openScienceIdeas, openScienceComments,
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
@@ -57,6 +58,8 @@ import {
   type IdeaContribution,
   type InsertIdeaContribution,
   type NovaCoin,
+  type UserCredit,
+  type InferenceCharge,
   type Flashcard,
   type InsertFlashcard,
   type FlashcardReview,
@@ -85,7 +88,7 @@ import {
   type InsertUserAccessToken,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
+import { eq, desc, and, sql, inArray, isNotNull, gte } from "drizzle-orm";
 
 export interface IStorage {
   // Categories
@@ -312,6 +315,27 @@ export interface IStorage {
   // Nova Coins
   getUserNovaCoins(userId: string): Promise<NovaCoin>;
   awardNovaCoin(userId: string): Promise<NovaCoin>;
+
+  // Prepaid inference credits + audit ledger
+  getUserCreditBalance(userId: string): Promise<number>;
+  creditUserBalance(
+    userId: string,
+    amountCents: number,
+    opts?: { stripeEventId?: string; source?: string; metadata?: Record<string, unknown> | null }
+  ): Promise<{ balanceCents: number; alreadyProcessed?: boolean }>;
+  debitForInference(
+    userId: string,
+    charge: {
+      amountCents: number;
+      costCents: number;
+      model?: string;
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      source?: string;
+    }
+  ): Promise<{ balanceCents: number }>;
+  getInferenceLedger(userId: string, limit?: number): Promise<InferenceCharge[]>;
 
   // TTS Settings
   getTtsSettings(userId: string): Promise<{
@@ -2149,6 +2173,117 @@ export class DatabaseStorage implements IStorage {
       .where(eq(novaCoins.userId, userId))
       .returning();
     return updated || existing;
+  }
+
+  // ── Prepaid inference credits + audit ledger ──────────────────────────────
+  async getUserCreditBalance(userId: string): Promise<number> {
+    const [row] = await db.select({ balanceCents: userCredits.balanceCents })
+      .from(userCredits)
+      .where(eq(userCredits.userId, userId));
+    return row?.balanceCents ?? 0;
+  }
+
+  async creditUserBalance(
+    userId: string,
+    amountCents: number,
+    opts?: { stripeEventId?: string; source?: string; metadata?: Record<string, unknown> | null }
+  ): Promise<{ balanceCents: number; alreadyProcessed?: boolean }> {
+    if (amountCents <= 0) throw new Error("credit amount must be positive");
+
+    return db.transaction(async (tx) => {
+      // Idempotency: a Stripe webhook may be redelivered. If this event was
+      // already processed, return the current balance without double-crediting.
+      if (opts?.stripeEventId) {
+        const [existing] = await tx.select({ id: inferenceCharges.id })
+          .from(inferenceCharges)
+          .where(eq(inferenceCharges.stripeEventId, opts.stripeEventId));
+        if (existing) {
+          const [row] = await tx.select({ balanceCents: userCredits.balanceCents })
+            .from(userCredits)
+            .where(eq(userCredits.userId, userId));
+          return { balanceCents: row?.balanceCents ?? 0, alreadyProcessed: true };
+        }
+      }
+
+      await tx.insert(userCredits)
+        .values({ userId, balanceCents: amountCents, updatedAt: new Date() })
+        .onConflictDoUpdate({
+          target: userCredits.userId,
+          set: { balanceCents: sql`${userCredits.balanceCents} + ${amountCents}`, updatedAt: sql`CURRENT_TIMESTAMP` },
+        });
+
+      const [row] = await tx.select({ balanceCents: userCredits.balanceCents })
+        .from(userCredits)
+        .where(eq(userCredits.userId, userId));
+      const newBalance = row?.balanceCents ?? amountCents;
+
+      await tx.insert(inferenceCharges).values({
+        userId,
+        kind: "credit",
+        amountCents,
+        balanceAfterCents: newBalance,
+        source: opts?.source ?? "stripe",
+        stripeEventId: opts?.stripeEventId ?? null,
+        metadata: opts?.metadata ?? null,
+      });
+
+      return { balanceCents: newBalance };
+    });
+  }
+
+  async debitForInference(
+    userId: string,
+    charge: {
+      amountCents: number;
+      costCents: number;
+      model?: string;
+      promptTokens?: number;
+      completionTokens?: number;
+      totalTokens?: number;
+      source?: string;
+    }
+  ): Promise<{ balanceCents: number }> {
+    if (charge.amountCents <= 0) throw new Error("debit amount must be positive");
+
+    return db.transaction(async (tx) => {
+      // Atomic, guarded decrement: the row is only updated if there is enough
+      // balance to cover the sell price. A concurrent debit cannot overdraw —
+      // the UPDATE row lock serializes and the gte() guard rejects the loser.
+      const [updated] = await tx.update(userCredits)
+        .set({
+          balanceCents: sql`${userCredits.balanceCents} - ${charge.amountCents}`,
+          updatedAt: sql`CURRENT_TIMESTAMP`,
+        })
+        .where(and(eq(userCredits.userId, userId), gte(userCredits.balanceCents, charge.amountCents)))
+        .returning({ balanceCents: userCredits.balanceCents });
+
+      if (!updated) {
+        throw new Error(`INSUFFICIENT_CREDITS: prepaid balance too low for a ${charge.amountCents}¢ generation`);
+      }
+
+      await tx.insert(inferenceCharges).values({
+        userId,
+        kind: "debit",
+        amountCents: charge.amountCents,
+        balanceAfterCents: updated.balanceCents,
+        model: charge.model ?? null,
+        promptTokens: charge.promptTokens ?? null,
+        completionTokens: charge.completionTokens ?? null,
+        totalTokens: charge.totalTokens ?? null,
+        costCents: charge.costCents,
+        sellCents: charge.amountCents,
+        source: charge.source ?? null,
+      });
+
+      return { balanceCents: updated.balanceCents };
+    });
+  }
+
+  async getInferenceLedger(userId: string, limit = 50): Promise<InferenceCharge[]> {
+    return db.select().from(inferenceCharges)
+      .where(eq(inferenceCharges.userId, userId))
+      .orderBy(desc(inferenceCharges.createdAt))
+      .limit(Math.min(limit, 200));
   }
 
   async getTtsSettings(userId: string): Promise<{

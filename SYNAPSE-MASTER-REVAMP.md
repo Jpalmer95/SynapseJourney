@@ -93,13 +93,25 @@ their prepaid balance. `generateByokOrPool` already has the right shape — add 
 `"prepaid"` that resolves *after* BYOK and *before* any (already-disabled) free pool.
 
 **Cost-safety checklist for implementation:**
-- [ ] Reuse existing `novaCoins` table (currently a simple coin counter — will need a real
+- [x] Reuse existing `novaCoins` table (currently a simple coin counter — will need a real
   `credit_balance_cents` column or a new `user_credits` table; no billing table exists yet).
-- [ ] Stripe is NOT yet in Synapse deps (it's in the Kynda repo only) — add `stripe` (server) +
+  → Implemented a dedicated `user_credits` table (balance in cents) + `inference_charges`
+  append-only ledger. `novaCoins` untouched (stays valueless/attribution-only).
+- [x] Stripe is NOT yet in Synapse deps (it's in the Kynda repo only) — add `stripe` (server) +
   `@stripe/stripe-js` (client) + a server-side checkout + webhook (idempotent, verify signature).
-- [ ] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
+  → `stripe` + `@stripe/stripe-js` added. Server-side Checkout Session (`/api/billing/checkout`),
+  signature-verified webhook (`/api/billing/webhook`, idempotent by `stripe_event_id`, credits on
+  `checkout.session.completed`).
+- [x] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
+  → `storage.debitForInference` runs in a DB transaction with a guarded `UPDATE … WHERE balance >= sell`
+  (no overdraft), and always writes a `kind='debit'` ledger row with model, tokens, cost, sell, balance_after.
 - [ ] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
+  → Not yet implemented. The webhook is signature-verified so only genuine Stripe events can credit,
+  and the guarded debit prevents overdraft, but an explicit per-user rate-limit / max-balance ceiling
+  is a follow-up hardening item.
 - [ ] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
+  → Operator-side config (OpenRouter account limits); recommended to set before launch. The margin is
+  locked in regardless of per-request price movement via `PREPAID_MARGIN`.
 
 ### Content Review & Quality Gates
 

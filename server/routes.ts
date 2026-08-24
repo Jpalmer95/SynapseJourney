@@ -77,6 +77,9 @@ import { registerContributionsRoutes } from "./routes/contributions";
 // Phase 9: Adaptive learning (continue, goals, prefs, timeline)
 import { registerLearnRoutes } from "./routes/learn";
 
+// Prepaid inference billing (Stripe checkout + webhook + balance)
+import { registerBillingRoutes } from "./routes/billing";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -92,6 +95,7 @@ export async function registerRoutes(
   registerAdminRoutes(app);
   registerContributionsRoutes(app);
   registerLearnRoutes(app);
+  registerBillingRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {

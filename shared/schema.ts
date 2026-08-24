@@ -546,6 +546,34 @@ export const novaCoins = pgTable("nova_coins", {
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
 });
 
+// Prepaid inference credits — a real, spendable balance (in cents) per user.
+// This is the ONLY account a generation can draw on (never operator funds).
+export const userCredits = pgTable("user_credits", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull().unique(),
+  balanceCents: integer("balance_cents").default(0).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Append-only audit ledger for every credit (Stripe purchase) and debit (generation).
+export const inferenceCharges = pgTable("inference_charges", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  kind: varchar("kind").notNull(), // 'credit' | 'debit'
+  amountCents: integer("amount_cents").notNull(),
+  balanceAfterCents: integer("balance_after_cents").notNull(),
+  model: varchar("model"),
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  totalTokens: integer("total_tokens"),
+  costCents: integer("cost_cents"), // operator cost
+  sellCents: integer("sell_cents"), // what the user was charged (cost × margin, floored)
+  source: varchar("source"),
+  stripeEventId: varchar("stripe_event_id").unique(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
 // Community Pool Usage Tracking (for BYOK sustainability)
 export const communityPoolUsage = pgTable("community_pool_usage", {
   id: serial("id").primaryKey(),
@@ -779,6 +807,8 @@ export const insertPracticeTestAttemptSchema = createInsertSchema(practiceTestAt
 export const insertTestGapRecommendationSchema = createInsertSchema(testGapRecommendations).omit({ id: true, createdAt: true });
 export const insertIdeaContributionSchema = createInsertSchema(ideaContributions).omit({ id: true, submittedAt: true });
 export const insertNovaCoinSchema = createInsertSchema(novaCoins).omit({ id: true, updatedAt: true });
+export const insertUserCreditSchema = createInsertSchema(userCredits).omit({ id: true, updatedAt: true });
+export const insertInferenceChargeSchema = createInsertSchema(inferenceCharges).omit({ id: true, createdAt: true });
 export const insertTtsAudioCacheSchema = createInsertSchema(ttsAudioCache).omit({ id: true, createdAt: true });
 export const insertFlashcardSchema = createInsertSchema(flashcards).omit({ id: true, createdAt: true });
 export const insertFlashcardReviewSchema = createInsertSchema(flashcardReviews).omit({ id: true, createdAt: true });
@@ -881,6 +911,10 @@ export type IdeaContribution = typeof ideaContributions.$inferSelect;
 export type InsertIdeaContribution = z.infer<typeof insertIdeaContributionSchema>;
 export type NovaCoin = typeof novaCoins.$inferSelect;
 export type InsertNovaCoin = z.infer<typeof insertNovaCoinSchema>;
+export type UserCredit = typeof userCredits.$inferSelect;
+export type InsertUserCredit = z.infer<typeof insertUserCreditSchema>;
+export type InferenceCharge = typeof inferenceCharges.$inferSelect;
+export type InsertInferenceCharge = z.infer<typeof insertInferenceChargeSchema>;
 export type TtsAudioCache = typeof ttsAudioCache.$inferSelect;
 export type InsertTtsAudioCache = z.infer<typeof insertTtsAudioCacheSchema>;
 export type Flashcard = typeof flashcards.$inferSelect;
