@@ -65,41 +65,24 @@ For users who can't afford their own API keys but want to contribute:
 
 This means the platform can ALWAYS serve content even if the seed fund runs dry — the 604 existing units are permanent. The pool is purely for growth.
 
-### The Optional Paid Inference Lane (BYOK-first, prepaid only)
+### BYOK-Only (Decision: no payment lane)
 
-> **Design decision (2026-08-23).** BYOK remains the default and the ethos. This lane is an
-> *optional* convenience for users who have no key and no local Ollama — NOT a requirement.
+> **Decision (2026-08-24, supersedes the 2026-08-23 "paid lane" sketch).** SynapseJourney is
+> **BYOK-only**. The platform does **not** accept payments and does **not** manage credit
+> balances — keeping it purely about learning, with zero payment/infra liability on our side.
 
-**Hard invariant (never break this):** the platform must *never* front someone else's compute.
-This is guaranteed by construction because the lane is **prepaid credits**, not metered billing:
+- Users connect **their own compute**: xAI/Grok, Gemini, OpenRouter, Anthropic, Hugging Face,
+  Ollama, LM Studio, or any OpenAI-compatible endpoint. Compute cost is entirely on their own
+  provider account.
+- Resolution is single-path: **user's own key → generate; no key → 402 BYOC_REQUIRED**
+  (with a pointer to Hermes Agent authoring + PAT upload). No free platform pool, no paid lane.
+- A prepaid-credit + Stripe lane was briefly implemented then **removed** (PR #21, closed) when we
+  decided to stay BYOK-only. Do not re-add payments — the ethos is "bring your own compute, no
+  payment management."
 
-1. User buys a **prepaid credit balance** (Stripe) — e.g. $5 / $10 / $20.
-2. Each generation **debits that balance** at a fixed sell-price you set once.
-3. Sell-price = `pinned-model cost-per-token × margin`, rounded *up* to a safe floor.
-4. Balance hits zero → generation stops. **There is no code path where a request draws on
-   the operator's money.** The only account that can be overdrawn is the user's prepaid balance.
-
-**Model policy (the key cost-safety lever):** pin ONE model, don't let users pick arbitrary
-models (surprise-cost vector). Recommendation, to be benchmarked before launch:
-- Default: `deepseek/deepseek-chat` — best intelligence-per-dollar for long structured
-  course generation.
-- Fallback / "premium" tier later: `anthropic/claude-3.5-haiku` (or successor) — safest for
-  strict JSON schemas.
-- The operator tops up their OpenRouter account in bulk; the margin is locked in regardless
-  of per-request price movement.
-
-**Coexistence with BYOK:** same generation pipeline. BYOK (their key) = $0 to them; paid lane =
-their prepaid balance. `generateByokOrPool` already has the right shape — add a third source
-`"prepaid"` that resolves *after* BYOK and *before* any (already-disabled) free pool.
-
-**Cost-safety checklist for implementation:**
-- [ ] Reuse existing `novaCoins` table (currently a simple coin counter — will need a real
-  `credit_balance_cents` column or a new `user_credits` table; no billing table exists yet).
-- [ ] Stripe is NOT yet in Synapse deps (it's in the Kynda repo only) — add `stripe` (server) +
-  `@stripe/stripe-js` (client) + a server-side checkout + webhook (idempotent, verify signature).
-- [ ] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
-- [ ] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
-- [ ] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
+**Why no payments:** no Stripe/PCI scope, no chargebacks/refunds, no tax nexus, no operator-funded
+OpenRouter account to babysit — and no "never front someone else's compute" invariant to defend,
+because the platform never spends a dime on user generation.
 
 ### Content Review & Quality Gates
 
