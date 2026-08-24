@@ -11,6 +11,7 @@ import { Link } from "wouter";
 import ForceGraph3D from "react-force-graph-3d";
 import * as THREE from "three";
 import { AiChat } from "@/components/ai-chat";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 
 interface GraphNode {
   id: number;
@@ -273,12 +274,36 @@ export function KnowledgeGraph3D() {
               Knowledge axes
             </h3>
             <div className="space-y-1 text-[11px] leading-tight">
-              <p><span className="text-primary font-medium">X:</span> {graphData.axes.x}</p>
-              <p><span className="text-emerald-400 font-medium">Y:</span> {graphData.axes.y}</p>
-              <p><span className="text-amber-400 font-medium">Z:</span> {graphData.axes.z}</p>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="cursor-help"><span className="text-primary font-medium">X:</span> {graphData.axes.x}</p>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-[240px]">
+                  How you engage the topic: hands-on building and application
+                  vs. understanding underlying principles and theory.
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="cursor-help"><span className="text-emerald-400 font-medium">Y:</span> {graphData.axes.y}</p>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-[240px]">
+                  What the topic is about: the natural/physical world vs.
+                  human-made and synthetic systems (software, tools, language).
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <p className="cursor-help"><span className="text-amber-400 font-medium">Z:</span> {graphData.axes.z}</p>
+                </TooltipTrigger>
+                <TooltipContent side="right" className="max-w-[240px]">
+                  The scale of the topic: subatomic and microscopic vs.
+                  planetary, cosmic, and systemic.
+                </TooltipContent>
+              </Tooltip>
             </div>
             <p className="text-[10px] text-muted-foreground/70 mt-2">
-              Nearby topics are semantically similar.
+              Nearby topics are semantically similar. Hover an axis for its meaning.
             </p>
           </Card>
         )}
