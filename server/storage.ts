@@ -13,6 +13,7 @@ import {
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
   coursePlans, learningGoals, learningTimeline, topicLearningPrefs,
   coursePosters, userAccessTokens,
+  topicCoordinates,
   type Category, type InsertCategory,
   type Topic, type InsertTopic,
   type KnowledgeCard, type InsertKnowledgeCard,
@@ -648,14 +649,18 @@ export class DatabaseStorage implements IStorage {
 
   // Knowledge Graph
   async getKnowledgeGraph(userId: string): Promise<{
-    nodes: { id: number; title: string; category?: string; color: string; x: number; y: number; mastery: number; status: string }[];
+    nodes: { id: number; title: string; category?: string; color: string; x: number; y: number; z: number; mastery: number; status: string }[];
     edges: { from: number; to: number; strength: number }[];
     stats: { total: number; mastered: number; learning: number };
+    axes?: { x: string; y: string; z: string };
   }> {
     const allTopics = await this.getTopics();
     const progress = await this.getUserProgress(userId);
     const connections = await db.select().from(topicConnections);
     const allCategories = await this.getCategories();
+    // 3D knowledge-axis coordinates (PCA over embeddings) when available
+    const coords = await db.select().from(topicCoordinates);
+    const coordMap = new Map(coords.map((c) => [c.topicId, c]));
 
     const categoryMap = new Map(allCategories.map((c) => [c.id, c]));
     const progressMap = new Map(progress.map((p) => [p.topicId, p]));
@@ -670,18 +675,26 @@ export class DatabaseStorage implements IStorage {
     };
 
     const nodes = allTopics.map((topic, index) => {
-      const angle = (index / allTopics.length) * 2 * Math.PI;
-      const radius = 150 + Math.random() * 100;
       const category = topic.categoryId ? categoryMap.get(topic.categoryId) : undefined;
       const userProgressItem = progressMap.get(topic.id);
+      const c = coordMap.get(topic.id);
+      // Use relational PCA coordinates when present, else deterministic fallback
+      // (seeded by id so it's stable, NOT Math.random()).
+      const seeded = (topic.id * 2654435761) % 1000;
+      const angle = (seeded / 1000) * 2 * Math.PI;
+      const radius = 120 + (seeded % 80);
+      const x = c ? c.x * 200 : 400 + Math.cos(angle) * radius;
+      const y = c ? c.y * 200 : 300 + Math.sin(angle) * radius;
+      const z = c ? c.z * 200 : (seeded % 200) - 100;
 
       return {
         id: topic.id,
         title: topic.title,
         category: category?.name,
         color: category ? categoryColors[category.color] || "#6b7280" : "#6b7280",
-        x: 400 + Math.cos(angle) * radius,
-        y: 300 + Math.sin(angle) * radius,
+        x,
+        y,
+        z,
         mastery: userProgressItem?.mastery || 0,
         status: userProgressItem?.status || "unexplored",
       };
@@ -699,7 +712,13 @@ export class DatabaseStorage implements IStorage {
       learning: progress.filter((p) => p.status === "learning").length,
     };
 
-    return { nodes, edges, stats };
+    // Axis labels: first coord row carries the semantic labels (identical across rows)
+    const first = coords[0];
+    const axes = first
+      ? { x: first.axis0Label || "Axis 0", y: first.axis1Label || "Axis 1", z: first.axis2Label || "Axis 2" }
+      : undefined;
+
+    return { nodes, edges, stats, axes };
   }
 
   // XP System
