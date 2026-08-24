@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated, optionalAuth } from "./replit_integrations/auth";
 import { authStorage } from "./replit_integrations/auth/storage";
 import { registerChatRoutes } from "./replit_integrations/chat";
-import { generateCourseContent, type ProviderConfig } from "./ai-providers";
+import { generateCourseContent, type ProviderConfig, testByokConnection, providerConfigFromProfile } from "./ai-providers";
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS, DEFAULT_ACHIEVEMENTS, DEFAULT_TOPIC_CONNECTIONS } from "./seed-data";
 import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 import { insertOpenScienceIdeaSchema, insertOpenScienceCommentSchema } from "@shared/schema";
@@ -1337,6 +1337,29 @@ Return a JSON object in this exact format:
     } catch (error) {
       console.error("Error updating profile:", error);
       res.status(500).json({ error: "Failed to update profile" });
+    }
+  });
+
+  // Test a user's BYOK connection (reachability + auth) for the Settings
+  // "Test Connection" button. Reads the provider config from the request body
+  // (the current draft on the Settings form) — no secrets persisted server-side.
+  app.post("/api/ai/test-connection", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const config = providerConfigFromProfile({
+        preferredAiProvider: req.body?.preferredAiProvider,
+        preferredModel: req.body?.preferredModel,
+        huggingFaceToken: req.body?.huggingFaceToken,
+        ollamaUrl: req.body?.ollamaUrl,
+        lmStudioUrl: req.body?.lmStudioUrl,
+        customOpenaiUrl: req.body?.customOpenaiUrl,
+        customOpenaiKey: req.body?.customOpenaiKey,
+        openRouterKey: req.body?.openRouterKey,
+      });
+      const result = await testByokConnection(config);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error testing BYOK connection:", error);
+      res.status(500).json({ ok: false, message: error?.message || String(error) });
     }
   });
 

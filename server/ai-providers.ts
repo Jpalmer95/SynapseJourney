@@ -568,6 +568,120 @@ export function getUserChatProvider(config: ProviderConfig): AIProvider | null {
   }
 }
 
+// ── BYOK connection health check (Settings "Test Connection" button) ────────
+// Per-provider reachability + auth validation. Uses lightweight probe endpoints
+// (no generation, no token spend, no gated-model ambiguity) so a first-time
+// user gets a fast, accurate "is my setup actually working" answer.
+export interface ConnectionTestResult {
+  ok: boolean;
+  provider?: string;
+  latencyMs?: number;
+  message?: string;
+  detail?: string;
+}
+
+export async function testByokConnection(config: ProviderConfig): Promise<ConnectionTestResult> {
+  const started = Date.now();
+  const done = (r: Omit<ConnectionTestResult, "latencyMs">): ConnectionTestResult => ({
+    ...r,
+    latencyMs: Date.now() - started,
+  });
+  const timeout = () => AbortSignal.timeout(15_000);
+
+  try {
+    switch (config.provider) {
+      case "huggingface": {
+        if (!config.huggingFaceToken) {
+          return done({ ok: false, provider: "huggingface", message: "Missing Hugging Face token — paste it above, then test again." });
+        }
+        // /api/whoami-v2 validates the token without touching any (possibly gated) model.
+        const r = await fetch("https://huggingface.co/api/whoami-v2", {
+          headers: { Authorization: `Bearer ${config.huggingFaceToken}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          const data = await r.json().catch(() => null);
+          const name = data?.name || data?.fullname || null;
+          return done({ ok: true, provider: "huggingface", detail: name ? `Token valid — signed in as ${name}` : "Token valid" });
+        }
+        return done({ ok: false, provider: "huggingface", message: `Hugging Face rejected that token (HTTP ${r.status}).` });
+      }
+
+      case "ollama": {
+        if (!config.ollamaUrl) {
+          return done({ ok: false, provider: "ollama", message: "Missing Ollama server URL — add it above, then test again." });
+        }
+        const base = config.ollamaUrl.replace(/\/+$/, "");
+        const r = await fetch(`${base}/api/tags`, { signal: timeout() });
+        if (r.ok) {
+          const data = await r.json().catch(() => null);
+          const models: string[] = Array.isArray(data?.models) ? data.models.map((m: any) => m.name) : [];
+          return done({
+            ok: true,
+            provider: "ollama",
+            detail: models.length ? `${models.length} model(s) ready: ${models.join(", ")}` : "Server reachable — pull a model with `ollama pull <name>`",
+          });
+        }
+        return done({ ok: false, provider: "ollama", message: `Couldn't reach Ollama at ${base} (HTTP ${r.status}). Is it running?` });
+      }
+
+      case "lmstudio":
+      case "custom_openai": {
+        const url = config.provider === "lmstudio" ? config.lmStudioUrl : config.customOpenaiUrl;
+        if (!url) {
+          return done({ ok: false, provider: config.provider, message: "Missing server URL — add it above, then test again." });
+        }
+        const base = url.replace(/\/+$/, "");
+        const key = config.provider === "lmstudio" ? "lm-studio" : config.customOpenaiKey || "local";
+        const r = await fetch(`${base}/models`, {
+          headers: { Authorization: `Bearer ${key}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({ ok: true, provider: config.provider, detail: "Endpoint reachable and responding" });
+        }
+        return done({
+          ok: false,
+          provider: config.provider,
+          message: `Couldn't reach ${base}/models (HTTP ${r.status}). Confirm the server is running and the URL is correct.`,
+        });
+      }
+
+      case "openrouter": {
+        if (!config.openRouterKey) {
+          return done({ ok: false, provider: "openrouter", message: "Missing OpenRouter API key — paste it above, then test again." });
+        }
+        const r = await fetch("https://openrouter.ai/api/v1/models", {
+          headers: { Authorization: `Bearer ${config.openRouterKey}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({ ok: true, provider: "openrouter", detail: "Key valid — OpenRouter reachable" });
+        }
+        return done({ ok: false, provider: "openrouter", message: `OpenRouter rejected that key (HTTP ${r.status}).` });
+      }
+
+      default:
+        return done({
+          ok: false,
+          message: "Select a chat provider (Hugging Face, Ollama, LM Studio, OpenAI-compatible, or OpenRouter) and add its credentials, then test.",
+        });
+    }
+  } catch (err: unknown) {
+    const e = err as any;
+    const name = e?.name || "";
+    const cause = e?.cause?.code || "";
+    const raw = e?.message || String(err);
+    if (name === "TimeoutError" || name === "AbortError" || cause === "UND_ERR_CONNECT_TIMEOUT") {
+      return done({ ok: false, message: "Connection timed out. Check the URL and your network, then try again." });
+    }
+    if (cause === "ECONNREFUSED" || raw.includes("fetch failed")) {
+      return done({ ok: false, message: "Could not connect — is the server running at that address? (connection refused)" });
+    }
+    return done({ ok: false, message: raw.slice(0, 300) });
+  }
+}
+
 // ── BYOK (Bring Your Own Key) Provider Factory ──────────────────────────────
 // Phase 1.3: User's keys pay for content generation, not the platform.
 // Priority: user's BYOK key → community pool (capped) → reject with 402.

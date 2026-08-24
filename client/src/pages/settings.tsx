@@ -1,6 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet, Volume2, Mic, Upload, Cloud } from "lucide-react";
+import { Settings as SettingsIcon, Brain, Calculator, Code, Beaker, Check, X, User, GraduationCap, Sparkles, Key, Server, Zap, RotateCcw, Loader2, Rss, Plus, Trash2, Star, Edit2, Gift, Trophy, ShoppingCart, ExternalLink, Heart, Copy, Coffee, Wallet, Volume2, Mic, Upload, Cloud, PlugZap } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
@@ -71,6 +71,14 @@ const colorMap: Record<string, string> = {
   blue: "bg-blue-500",
   green: "bg-green-500",
   orange: "bg-orange-500",
+};
+
+const providerNames: Record<string, string> = {
+  huggingface: "Hugging Face",
+  ollama: "Ollama",
+  lmstudio: "LM Studio",
+  custom_openai: "OpenAI-compatible",
+  openrouter: "OpenRouter",
 };
 
 const ageRanges = [
@@ -486,6 +494,30 @@ export default function SettingsPage() {
   const saveProfile = () => {
     profileMutation.mutate(localProfile);
   };
+
+  const [testResult, setTestResult] = useState<{ ok: boolean; provider?: string; latencyMs?: number; message?: string; detail?: string } | null>(null);
+
+  const testConnection = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/ai/test-connection", {
+        preferredAiProvider: localProfile.preferredAiProvider,
+        preferredModel: localProfile.preferredModel,
+        huggingFaceToken: localProfile.huggingFaceToken,
+        ollamaUrl: localProfile.ollamaUrl,
+        lmStudioUrl: localProfile.lmStudioUrl,
+        customOpenaiUrl: localProfile.customOpenaiUrl,
+        customOpenaiKey: localProfile.customOpenaiKey,
+        openRouterKey: localProfile.openRouterKey,
+      });
+      return res.json() as Promise<{ ok: boolean; provider?: string; latencyMs?: number; message?: string; detail?: string }>;
+    },
+    onSuccess: (data) => {
+      setTestResult(data);
+    },
+    onError: (err: any) => {
+      setTestResult({ ok: false, message: err?.message || "Test failed." });
+    },
+  });
 
   const enabledCount = preferences?.filter((p) => p.enabled).length || 0;
 
@@ -1336,6 +1368,63 @@ export default function SettingsPage() {
                     )}
                   </div>
                 )}
+
+                {/* Test Connection — verify the selected provider is reachable + credentials work */}
+                <div className="p-4 rounded-lg border bg-muted/30 space-y-3">
+                  <div className="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                      <p className="font-medium">Test Connection</p>
+                      <p className="text-xs text-muted-foreground">
+                        Verify your provider is reachable and your credentials work before you rely on it.
+                      </p>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testConnection.mutate()}
+                      disabled={testConnection.isPending}
+                      data-testid="btn-test-connection"
+                    >
+                      {testConnection.isPending ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <PlugZap className="h-4 w-4 mr-2" />
+                      )}
+                      {testConnection.isPending ? "Testing…" : "Test Connection"}
+                    </Button>
+                  </div>
+
+                  {testResult && (
+                    <div
+                      className={`flex items-start gap-2 text-sm p-3 rounded-md ${
+                        testResult.ok
+                          ? "bg-green-500/10 text-green-700 dark:text-green-400"
+                          : "bg-red-500/10 text-red-700 dark:text-red-400"
+                      }`}
+                      data-testid="test-connection-result"
+                    >
+                      {testResult.ok ? (
+                        <Check className="h-4 w-4 mt-0.5 shrink-0" />
+                      ) : (
+                        <X className="h-4 w-4 mt-0.5 shrink-0" />
+                      )}
+                      <div className="space-y-1">
+                        <p className="font-medium">
+                          {testResult.ok
+                            ? `Connected${testResult.provider ? ` — ${providerNames[testResult.provider] || testResult.provider}` : ""}`
+                            : "Not connected"}
+                          {testResult.ok && typeof testResult.latencyMs === "number" ? ` (${testResult.latencyMs}ms)` : ""}
+                        </p>
+                        {testResult.ok && testResult.detail && (
+                          <p className="text-xs opacity-80">{testResult.detail}</p>
+                        )}
+                        {!testResult.ok && testResult.message && (
+                          <p className="text-xs opacity-80">{testResult.message}</p>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
               </CardContent>
             </Card>
           </motion.div>
