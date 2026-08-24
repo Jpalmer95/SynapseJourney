@@ -33,7 +33,9 @@ function interpretPosition(
   axes: { x: string; y: string; z: string }
 ): string {
   const splits = (label: string): [string, string] => {
-    const parts = label.split("↔").map((s) => s.trim());
+    // Axis labels are authored with either a unicode ↔ or ASCII "<->"
+    // separator (the seed/DB uses "<->"); accept both.
+    const parts = label.split(/↔|<->/).map((s) => s.trim());
     return parts[1] ? [parts[0], parts[1]] : [label, label];
   };
   const pick = (val: number, label: string) => {
