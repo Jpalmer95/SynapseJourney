@@ -735,12 +735,22 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       const res = await apiRequest("POST", "/api/lessons/complete", { unitId, quizScore });
       return res.json();
     },
-    onSuccess: (data: { progress: any; xpAwarded: number; mastery: any; message?: string }) => {
+    onSuccess: (data: { progress: any; xpAwarded: number; mastery: any; message?: string; newAchievements?: { name: string }[] }) => {
       setXpEarned((prev) => prev + data.xpAwarded);
-      toast({
-        title: `+${data.xpAwarded} XP`,
-        description: data.message || "Lesson completed!",
-      });
+      // Surface newly-earned badges (e.g. "First Steps" on the very first
+      // lesson — the roadmap A "earn your first badge" beat).
+      if (data.newAchievements && data.newAchievements.length > 0) {
+        const names = data.newAchievements.map((a) => a.name).join(", ");
+        toast({
+          title: `🏅 ${names} unlocked!`,
+          description: `+${data.xpAwarded} XP · ${data.message || "Lesson completed!"}`,
+        });
+      } else {
+        toast({
+          title: `+${data.xpAwarded} XP`,
+          description: data.message || "Lesson completed!",
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
       queryClient.invalidateQueries({ queryKey: ["/api/user/xp"] });
       queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });

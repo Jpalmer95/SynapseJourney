@@ -94,11 +94,23 @@ export function registerContributionsRoutes(app: Express) {
         semanticOnly = vec.filter(v => !trgm.some(t => t.id === v.id));
       }
 
+      // Attach 3D-axis position + nearest neighbors so results surface
+      // relationships ("similar to X, Y") rather than a flat list (roadmap C).
+      const topicIds = topics.map((t) => t.id);
+      const relations = await storage.getTopicRelations(topicIds);
+
+      const topicsWithRelations = topics.map((t) => ({
+        ...t,
+        coordinate: relations.coords[t.id],
+        neighbors: relations.neighbors[t.id] || [],
+      }));
+
       res.json({
-        topics: topics.slice(0, limit),
+        topics: topicsWithRelations.slice(0, limit),
         lessons: lessons.slice(0, limit),
         mode: qvec ? "hybrid" : "keyword",
         semanticOnly: semanticOnly.slice(0, 3),
+        axes: relations.axes,
       });
     } catch (error) {
       console.error("Error searching:", error);

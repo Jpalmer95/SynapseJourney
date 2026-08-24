@@ -281,14 +281,17 @@ Synapse is the learning platform humans AND AI agents wish they had:
 Goal: make Synapse simple to learn for anyone, on any device, with or without their own
 compute. Ordered; do A→C first (ease of use), then D→E (power).
 
-- **A. First-60-seconds onboarding.** New user (no progress) → guided 3-step: pick a topic
-  from the map → take one lesson → earn first badge. Tighten existing `Onboarding` + auto-enroll
-  into a single frictionless funnel. *(highest impact, lowest effort)*
-- **B. Mobile / narrow-screen polish.** Feed card action bar thumb-friendly; 3D map degrades
-  to a touch-friendly 2D/zoomable list on small viewports. Targets phone / car-browser / PC.
-- **C. Search discoverability.** Surface the (now-shipped) hybrid search: a real search box on
-  the home feed, results show *relationships* (axis position + neighbors), not just a list.
-- **D. Generative map features** (builds on the relational axes):
+- [x] **A. First-60-seconds onboarding.** New user (no progress) → guided 3-step: pick a topic
+  from the map → take one lesson → earn first badge. *(done — `feature/usability-roadmap`:
+  `Onboarding` final step is now a topic picker that dives straight into the first lesson;
+  first-lesson badge surfaced via the `newAchievements` toast in the rabbit-hole.)*
+- [x] **B. Mobile / narrow-screen polish.** Feed card action bar now wraps + uses 48px tap
+  targets (never clips); `knowledge-graph-3d` degrades to a touch-friendly 2D scrollable list
+  below 768px. *(done)*
+- [x] **C. Search discoverability.** Visible search box on the home feed (guest + signed-in)
+  calling `/api/search`; results now include axis position + nearest-neighbor relations
+  ("similar to X, Y") via a new `storage.getTopicRelations`. *(done)*
+- **D. Generative map features** (builds on the relational axes) — NOT started; scoped only:
   - Select 1+ points → ask a question with those included in context.
   - Select an existing point → "generate a new topic like this, but with [context twist]".
   - Select a void → gap-detection: is there a known topic/industry that fits here? → propose
