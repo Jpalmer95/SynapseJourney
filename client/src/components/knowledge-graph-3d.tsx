@@ -44,6 +44,18 @@ export function KnowledgeGraph3D() {
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisTopicsStr, setSynthesisTopicsStr] = useState("");
 
+  // Narrow-viewport fallback: react-force-graph-3d is WebGL + pointer-event
+  // driven and is unusable on touch. Below 768px we render a touch-friendly
+  // 2D scrollable list instead (roadmap B).
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 767px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
+
   useEffect(() => {
     const updateSize = () => {
       if (containerRef.current) {
@@ -199,6 +211,10 @@ export function KnowledgeGraph3D() {
       setShowSynthesis(true);
     }
   };
+
+  if (isMobile) {
+    return <MobileKnowledgeList nodes={allNodes} axes={graphData?.axes} />;
+  }
 
   return (
     <div className="h-screen w-full relative bg-[#0f172a] overflow-hidden">
@@ -454,6 +470,135 @@ export function KnowledgeGraph3D() {
           </motion.div>
         )}
       </AnimatePresence>
+    </div>
+  );
+}
+
+// Touch-friendly 2D fallback for narrow viewports. Lists every topic with a
+// search box; tapping a node opens an inline detail panel with mastery + a
+// link into the topic. Replaces ForceGraph3D (broken on touch) below 768px.
+function MobileKnowledgeList({
+  nodes,
+  axes,
+}: {
+  nodes: GraphNode[];
+  axes?: { x: string; y: string; z: string };
+}) {
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<GraphNode | null>(null);
+
+  const filtered = query.trim()
+    ? nodes.filter(
+        (n) =>
+          n.title.toLowerCase().includes(query.toLowerCase()) ||
+          n.category?.toLowerCase().includes(query.toLowerCase())
+      )
+    : nodes;
+
+  const statusColor: Record<GraphNode["status"], string> = {
+    mastered: "#fbbf24",
+    learning: "#3b82f6",
+    discovered: "#f59e0b",
+    unexplored: "#334155",
+  };
+
+  return (
+    <div className="h-screen w-full bg-[#0f172a] flex flex-col">
+      <div className="shrink-0 p-4 pb-2">
+        <h2 className="text-base font-semibold text-white mb-1">Knowledge Map</h2>
+        {axes && (
+          <p className="text-[10px] text-muted-foreground/70 mb-2 leading-tight">
+            {axes.x} · {axes.y} · {axes.z}
+          </p>
+        )}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search topics…"
+            className="pl-9 pr-8 h-10"
+            data-testid="mobile-graph-search"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-white"
+              aria-label="Clear"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
+        <ul className="space-y-1.5">
+          {filtered.map((node) => (
+            <li key={node.id}>
+              <button
+                onClick={() => setSelected(node)}
+                className="w-full text-left flex items-center gap-3 px-3 py-3 rounded-lg bg-background/40 border border-border/40 active:bg-background/60"
+                data-testid={`mobile-graph-node-${node.id}`}
+              >
+                <span
+                  className="w-3 h-3 rounded-full shrink-0"
+                  style={{ backgroundColor: statusColor[node.status] }}
+                />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-sm font-medium text-white truncate">{node.title}</span>
+                  <span className="block text-xs text-muted-foreground">{node.category}</span>
+                </span>
+                <Badge variant="outline" className="text-[10px] capitalize shrink-0">
+                  {node.status}
+                </Badge>
+              </button>
+            </li>
+          ))}
+          {filtered.length === 0 && (
+            <li className="py-8 text-center text-sm text-muted-foreground">No topics match.</li>
+          )}
+        </ul>
+      </div>
+
+      {selected && (
+        <div className="shrink-0 border-t border-border bg-background/95 p-4">
+          <div className="flex items-start justify-between">
+            <div className="min-w-0">
+              <h3 className="font-semibold text-white">{selected.title}</h3>
+              <p className="text-xs text-muted-foreground capitalize">
+                {selected.category} · {selected.status}
+              </p>
+            </div>
+            <button
+              onClick={() => setSelected(null)}
+              className="text-muted-foreground hover:text-white"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          {selected.status !== "unexplored" && (
+            <div className="mt-2">
+              <div className="flex justify-between text-xs mb-1">
+                <span className="text-muted-foreground">Mastery</span>
+                <span className="text-white">{selected.mastery}%</span>
+              </div>
+              <div className="h-2 bg-muted rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-primary rounded-full transition-all"
+                  style={{ width: `${selected.mastery}%` }}
+                />
+              </div>
+            </div>
+          )}
+          <Link href={`/rabbit-hole?topic=${selected.id}`} className="block mt-3">
+            <Button size="sm" className="w-full text-white">
+              Explore Topic
+            </Button>
+          </Link>
+        </div>
+      )}
     </div>
   );
 }

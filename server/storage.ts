@@ -342,6 +342,12 @@ export interface IStorage {
   searchTopicsVectors(queryEmbedding: number[], limit?: number, threshold?: number): Promise<(Topic & { category?: Category; distance: number })[]>;
   searchTopicsTrgm(query: string, limit?: number): Promise<Topic[]>;
   searchLessonsVectors(queryEmbedding: number[], limit?: number, threshold?: number): Promise<(LessonUnit & { topicTitle: string; distance: number })[]>;
+  // Usability roadmap C: axis coords + nearest neighbors for relation-aware search
+  getTopicRelations(topicIds: number[]): Promise<{
+    coords: Record<number, { x: number; y: number; z: number }>;
+    neighbors: Record<number, { id: number; title: string; distance: number }[]>;
+    axes?: { x: string; y: string; z: string };
+  }>;
 
   // ── Phase 1: Content Versioning ───────────────────────────────────────────
   createContentVersion(data: InsertContentVersion): Promise<ContentVersion>;
@@ -2374,6 +2380,58 @@ export class DatabaseStorage implements IStorage {
       LIMIT ${limit}
     `) as any;
     return results.rows;
+  }
+
+  // ── Usability roadmap C: relation-aware search ────────────────────────────
+  // Returns 3D-axis coordinates + nearest neighbors (Euclidean distance in the
+  // fixed semantic-axis space) for a set of topics, so search results can show
+  // "similar to X, Y" and axis position instead of a flat list.
+  async getTopicRelations(topicIds: number[]): Promise<{
+    coords: Record<number, { x: number; y: number; z: number }>;
+    neighbors: Record<number, { id: number; title: string; distance: number }[]>;
+    axes?: { x: string; y: string; z: string };
+  }> {
+    const coordRows = await db.select().from(topicCoordinates);
+    const topicRows = await db.select({ id: topics.id, title: topics.title }).from(topics);
+    const titleMap = new Map(topicRows.map((t) => [t.id, t.title]));
+
+    const coords: Record<number, { x: number; y: number; z: number }> = {};
+    for (const c of coordRows) {
+      coords[c.topicId] = { x: c.x, y: c.y, z: c.z };
+    }
+
+    const axes = coordRows.length > 0
+      ? {
+          x: coordRows[0].axis0Label || "Axis 0",
+          y: coordRows[0].axis1Label || "Axis 1",
+          z: coordRows[0].axis2Label || "Axis 2",
+        }
+      : undefined;
+
+    const dist = (
+      a: { x: number; y: number; z: number },
+      b: { x: number; y: number; z: number }
+    ) => Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z);
+
+    const neighbors: Record<number, { id: number; title: string; distance: number }[]> = {};
+    for (const topicId of topicIds) {
+      const self = coords[topicId];
+      if (!self) {
+        neighbors[topicId] = [];
+        continue;
+      }
+      neighbors[topicId] = coordRows
+        .filter((c) => c.topicId !== topicId)
+        .map((c) => ({
+          id: c.topicId,
+          title: titleMap.get(c.topicId) || "",
+          distance: dist(self, { x: c.x, y: c.y, z: c.z }),
+        }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, 3);
+    }
+
+    return { coords, neighbors, axes };
   }
 
   // ── Phase 1: Content Versioning ───────────────────────────────────────────

@@ -219,7 +219,7 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
 
   if (isLoading) {
     return (
-      <div className="h-screen w-full relative overflow-hidden">
+      <div className="h-full w-full relative overflow-hidden">
         <CardSkeleton />
       </div>
     );
@@ -236,13 +236,13 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
 
   if (error || !feedData || feedData.length === 0) {
     if (user && !onboardingComplete) {
-      return <Onboarding onComplete={handleOnboardingComplete} />;
+      return <Onboarding onComplete={handleOnboardingComplete} onDive={onDive} />;
     }
     
     // Show loading state while auto-enrolling or about to auto-enroll
     if (isAutoEnrolling || autoEnrollMutation.isPending || shouldAutoEnroll) {
       return (
-        <div className="h-screen w-full flex items-center justify-center">
+        <div className="h-full w-full flex items-center justify-center">
           <div className="text-center px-6">
             <motion.div
               initial={{ opacity: 0, scale: 0.9 }}
@@ -264,7 +264,7 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
     }
     
     return (
-      <div className="h-screen w-full flex items-center justify-center">
+      <div className="h-full w-full flex items-center justify-center">
         <div className="text-center px-6">
           <motion.div
             initial={{ opacity: 0, scale: 0.9 }}
@@ -287,14 +287,14 @@ export function NebulaFeed({ onDive }: NebulaFeedProps) {
   // Guard against undefined currentCard (can happen during data transitions)
   if (!currentCard || !currentCard.card || !currentCard.topic) {
     return (
-      <div className="h-screen w-full relative overflow-hidden">
+      <div className="h-full w-full relative overflow-hidden">
         <CardSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="h-screen w-full relative overflow-hidden">
+    <div className="h-full w-full relative overflow-hidden">
       <div className="absolute top-4 left-4 right-4 z-20 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <div className="flex items-center gap-1">

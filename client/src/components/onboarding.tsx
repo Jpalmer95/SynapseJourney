@@ -21,10 +21,11 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { cn } from "@/lib/utils";
-import type { Category, Pathway } from "@shared/schema";
+import type { Category, Topic } from "@shared/schema";
 
 interface OnboardingProps {
   onComplete: () => void;
+  onDive: (topic: Topic) => void;
 }
 
 const iconMap: Record<string, any> = {
@@ -45,27 +46,16 @@ const defaultSTEMCategories = [
   { name: "Science", icon: "Beaker", color: "orange" },
 ];
 
-export function Onboarding({ onComplete }: OnboardingProps) {
+export function Onboarding({ onComplete, onDive }: OnboardingProps) {
   const [step, setStep] = useState(1);
   const [selectedCategories, setSelectedCategories] = useState<number[]>([]);
-  const [selectedPathway, setSelectedPathway] = useState<number | null>(null);
 
   const { data: categories, isLoading: loadingCategories } = useQuery<Category[]>({
     queryKey: ["/api/categories"],
   });
 
-  const { data: pathways, isLoading: loadingPathways } = useQuery<Pathway[]>({
-    queryKey: ["/api/pathways"],
-  });
-
-  const enrollMutation = useMutation({
-    mutationFn: async (pathwayId: number) => {
-      const res = await apiRequest("POST", `/api/pathways/${pathwayId}/enroll`);
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/user/pathways"] });
-    },
+  const { data: topics, isLoading: loadingTopics } = useQuery<Topic[]>({
+    queryKey: ["/api/topics"],
   });
 
   const preferenceMutation = useMutation({
@@ -99,9 +89,6 @@ export function Onboarding({ onComplete }: OnboardingProps) {
       }
       setStep(3);
     } else if (step === 3) {
-      if (selectedPathway) {
-        await enrollMutation.mutateAsync(selectedPathway);
-      }
       queryClient.invalidateQueries({ queryKey: ["/api/feed"] });
       queryClient.invalidateQueries({ queryKey: ["/api/feed/personalized"] });
       onComplete();
@@ -135,13 +122,26 @@ export function Onboarding({ onComplete }: OnboardingProps) {
   const totalSteps = 3;
   const progress = (step / totalSteps) * 100;
 
-  if (loadingCategories || loadingPathways) {
+  if (loadingCategories || loadingTopics) {
     return (
       <div className="h-screen w-full flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
       </div>
     );
   }
+
+  // Curated starter topics: prefer ones matching the user's chosen interests,
+  // else fall back to the first few topics. Tapping one dives straight into a
+  // lesson (the roadmap A "take one lesson" step).
+  const recommendedTopics = (() => {
+    if (!topics) return [];
+    const preferred = topics.filter(
+      (t) =>
+        selectedCategories.length === 0 ||
+        (t.categoryId != null && selectedCategories.includes(t.categoryId))
+    );
+    return (preferred.length > 0 ? preferred : topics).slice(0, 8);
+  })();
 
   return (
     <div className="min-h-screen w-full bg-background overflow-y-auto">
@@ -322,63 +322,50 @@ export function Onboarding({ onComplete }: OnboardingProps) {
               className="space-y-8"
             >
               <div className="text-center space-y-4">
-                <h1 className="text-3xl font-bold">Choose a learning path</h1>
+                <h1 className="text-3xl font-bold">Pick your first topic</h1>
                 <p className="text-muted-foreground max-w-md mx-auto">
-                  Start with a curated pathway or explore freely. Pathways guide you through connected topics.
+                  Tap a topic to jump straight into your first lesson and earn your first badge. Or skip and browse your feed.
                 </p>
               </div>
 
-              <div className="space-y-4">
-                {pathways && pathways.length > 0 ? (
-                  pathways.slice(0, 4).map((pathway) => {
-                    const isSelected = selectedPathway === pathway.id;
-                    const Icon = getIcon(pathway.icon);
-
-                    return (
-                      <Card
-                        key={pathway.id}
-                        className={cn(
-                          "cursor-pointer transition-all hover-elevate",
-                          isSelected && "border-primary bg-primary/10"
-                        )}
-                        onClick={() => setSelectedPathway(isSelected ? null : pathway.id)}
-                        data-testid={`pathway-${pathway.id}`}
-                      >
-                        <CardContent className="p-4 sm:p-6 flex items-center gap-4">
-                          <div
-                            className={cn(
-                              "shrink-0 w-12 h-12 rounded-full flex items-center justify-center",
-                              isSelected ? "bg-primary text-primary-foreground" : "bg-muted"
-                            )}
-                          >
-                            {isSelected ? (
-                              <CheckCircle className="h-6 w-6" />
-                            ) : (
-                              <Icon className="h-6 w-6" />
-                            )}
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-semibold">{pathway.name}</h3>
-                            <p className="text-sm text-muted-foreground line-clamp-2">
-                              {pathway.description}
-                            </p>
-                          </div>
-                          {pathway.estimatedHours && (
-                            <Badge variant="secondary" className="shrink-0">
-                              ~{pathway.estimatedHours}h
+              <div className="space-y-3">
+                {recommendedTopics.length > 0 ? (
+                  recommendedTopics.map((topic) => (
+                    <Card
+                      key={topic.id}
+                      className="cursor-pointer transition-all hover-elevate"
+                      onClick={() => {
+                        onDive(topic);
+                        onComplete();
+                      }}
+                      data-testid={`onboarding-topic-${topic.id}`}
+                    >
+                      <CardContent className="p-4 sm:p-5 flex items-center gap-4">
+                        <div className="shrink-0 w-12 h-12 rounded-full bg-primary/10 flex items-center justify-center">
+                          <Sparkles className="h-6 w-6 text-primary" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2">
+                            <h3 className="font-semibold truncate">{topic.title}</h3>
+                            <Badge variant="outline" className="text-[10px] capitalize shrink-0">
+                              {topic.difficulty}
                             </Badge>
-                          )}
-                        </CardContent>
-                      </Card>
-                    );
-                  })
+                          </div>
+                          <p className="text-sm text-muted-foreground line-clamp-2">
+                            {topic.description}
+                          </p>
+                        </div>
+                        <ArrowRight className="h-5 w-5 shrink-0 text-muted-foreground" />
+                      </CardContent>
+                    </Card>
+                  ))
                 ) : (
                   <Card className="border-dashed">
                     <CardContent className="p-6 text-center">
                       <Rocket className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                      <h3 className="font-semibold mb-2">Explore freely!</h3>
+                      <h3 className="font-semibold mb-2">No topics loaded yet</h3>
                       <p className="text-sm text-muted-foreground">
-                        No pathways set up yet. You'll discover topics in your personalized feed based on your interests.
+                        Skip ahead and discover topics from your personalized feed.
                       </p>
                     </CardContent>
                   </Card>
@@ -395,17 +382,12 @@ export function Onboarding({ onComplete }: OnboardingProps) {
                 </Button>
                 <Button
                   size="lg"
+                  variant="ghost"
                   onClick={handleNext}
                   className="min-w-[150px]"
-                  disabled={enrollMutation.isPending}
-                  data-testid="button-start-learning"
+                  data-testid="button-skip-to-feed"
                 >
-                  {enrollMutation.isPending ? (
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                  ) : (
-                    <Rocket className="mr-2 h-5 w-5" />
-                  )}
-                  Start Learning
+                  Skip — browse my feed
                 </Button>
               </div>
             </motion.div>

@@ -91,8 +91,8 @@ export function KnowledgeCard({
         )}
       />
       
-      <div className="relative flex flex-col h-full px-6 pt-12 pb-6 md:px-12 md:pt-16">
-        <div className="flex items-center gap-2 mb-6">
+      <div className="relative flex flex-col h-full px-5 pt-12 pb-5 md:px-12 md:pt-16">
+        <div className="flex items-center gap-2 mb-5">
           {category && (
             <Badge variant="secondary" className="text-xs">
               {category.name}
@@ -105,7 +105,7 @@ export function KnowledgeCard({
 
         <div className="flex-1 flex flex-col justify-center max-w-2xl mx-auto w-full min-h-0">
           <motion.h1
-            className="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 leading-tight"
+            className="text-2xl sm:text-3xl md:text-4xl lg:text-5xl font-bold mb-5 leading-tight"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
@@ -114,7 +114,7 @@ export function KnowledgeCard({
           </motion.h1>
           
           <motion.p
-            className="text-base md:text-lg text-muted-foreground mb-6 leading-relaxed line-clamp-4"
+            className="text-sm sm:text-base md:text-lg text-muted-foreground mb-5 leading-relaxed line-clamp-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
@@ -142,10 +142,11 @@ export function KnowledgeCard({
         </div>
 
         {/* Action bar: pinned below the content so it's always visible without
-            scrolling; "Swipe for next" sits above it, never overlapping. */}
-        <div className="shrink-0 mt-6 flex flex-col items-center gap-3">
+            scrolling; "Swipe for next" sits above it, never overlapping. Wraps on
+            narrow screens so Save / Dive Deep never clip (thumb-friendly). */}
+        <div className="shrink-0 mt-4 flex flex-col items-center gap-2">
           <motion.div
-            className="flex items-center justify-center gap-4"
+            className="flex flex-wrap items-center justify-center gap-3 w-full max-w-sm mx-auto"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.4 }}
@@ -158,7 +159,7 @@ export function KnowledgeCard({
                 onSave?.();
               }}
               className={cn(
-                "gap-2 backdrop-blur-md",
+                "gap-2 backdrop-blur-md min-h-[48px] px-5 flex-1 sm:flex-none",
                 isSaved && "text-red-500 border-red-500/50"
               )}
               data-testid="button-save-card"
@@ -173,7 +174,7 @@ export function KnowledgeCard({
                 playClick("deep");
                 onDive?.();
               }}
-              className="gap-2"
+              className="gap-2 min-h-[48px] px-5 flex-[2] sm:flex-none"
               data-testid="button-dive"
             >
               <BookOpen className="h-5 w-5" />

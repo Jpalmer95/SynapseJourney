@@ -5,6 +5,7 @@ import { RabbitHole } from "@/components/rabbit-hole";
 import { AppLayout } from "@/components/app-layout";
 import { MyCoursesStrip } from "@/components/my-courses-strip";
 import { CourseCreator } from "@/components/course-creator";
+import { HomeSearch } from "@/components/home-search";
 import { useAuth } from "@/hooks/use-auth";
 import type { Topic, Category } from "@shared/schema";
 
@@ -38,7 +39,12 @@ export function HomePage() {
             resumeUnitId={resumeUnitId}
           />
         ) : (
-          <div key="feed" className="flex flex-col h-full min-h-0">
+          <div key="feed" className="h-screen flex flex-col min-h-0 pt-16 md:pt-0">
+            {/* Visible search box on the home feed (guest + signed-in). pt-16
+                clears the fixed mobile header; md:pt-0 for the desktop rail. */}
+            <div className="shrink-0 z-30 px-4 pt-3 pb-2 bg-background/90 backdrop-blur border-b border-border/40">
+              <HomeSearch onDive={handleDive} />
+            </div>
             {user && (
               <div className="shrink-0 z-30 bg-background/90 backdrop-blur border-b border-border/40 pr-16 md:pr-24">
                 {/* pr-16/md:pr-24 clears the fixed profile menu (top-right) so the
