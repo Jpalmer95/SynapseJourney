@@ -17,6 +17,9 @@ interface GraphNode {
   title: string;
   category?: string;
   color: string;
+  x: number;
+  y: number;
+  z: number;
   mastery: number;
   status: "mastered" | "learning" | "discovered" | "unexplored";
 }
@@ -61,21 +64,22 @@ export function KnowledgeGraph3D() {
     nodes: GraphNode[];
     edges: GraphEdge[];
     stats: { total: number; mastered: number; learning: number };
+    axes?: { x: string; y: string; z: string };
   }>({
     queryKey: ["/api/knowledge-graph"],
   });
 
   const sampleNodes: GraphNode[] = useMemo(() => [
-    { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", mastery: 75, status: "learning" as const },
-    { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", mastery: 60, status: "learning" as const },
-    { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", mastery: 30, status: "discovered" as const },
-    { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", mastery: 40, status: "discovered" as const },
-    { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", mastery: 85, status: "mastered" as const },
-    { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", mastery: 90, status: "mastered" as const },
-    { id: 5, title: "Python", category: "CS", color: "#22c55e", mastery: 95, status: "mastered" as const },
-    { id: 6, title: "Data Structures", category: "CS", color: "#22c55e", mastery: 70, status: "learning" as const },
-    { id: 11, title: "Quantum Mechanics", category: "Physics", color: "#eab308", mastery: 0, status: "unexplored" as const },
-    { id: 24, title: "General Chemistry", category: "Chemistry", color: "#14b8a6", mastery: 35, status: "learning" as const },
+    { id: 1, title: "Machine Learning", category: "AI", color: "#8b5cf6", x: 60, y: -40, z: 0, mastery: 75, status: "learning" as const },
+    { id: 2, title: "Neural Networks", category: "AI", color: "#8b5cf6", x: 50, y: -30, z: 10, mastery: 60, status: "learning" as const },
+    { id: 9, title: "Deep Learning", category: "AI", color: "#8b5cf6", x: 55, y: -35, z: -5, mastery: 30, status: "discovered" as const },
+    { id: 7, title: "Computer Vision", category: "AI", color: "#8b5cf6", x: 45, y: -45, z: 15, mastery: 40, status: "discovered" as const },
+    { id: 3, title: "Linear Algebra", category: "Math", color: "#3b82f6", x: -40, y: 50, z: 20, mastery: 85, status: "mastered" as const },
+    { id: 4, title: "Calculus", category: "Math", color: "#3b82f6", x: -50, y: 55, z: 15, mastery: 90, status: "mastered" as const },
+    { id: 5, title: "Python", category: "CS", color: "#22c55e", x: 30, y: -50, z: -10, mastery: 95, status: "mastered" as const },
+    { id: 6, title: "Data Structures", category: "CS", color: "#22c55e", x: 25, y: -55, z: -15, mastery: 70, status: "learning" as const },
+    { id: 11, title: "Quantum Mechanics", category: "Physics", color: "#eab308", x: -60, y: -20, z: -30, mastery: 0, status: "unexplored" as const },
+    { id: 24, title: "General Chemistry", category: "Chemistry", color: "#14b8a6", x: -55, y: -25, z: -35, mastery: 35, status: "learning" as const },
   ], []);
 
   const sampleEdges: GraphEdge[] = useMemo(() => [
@@ -121,8 +125,9 @@ export function KnowledgeGraph3D() {
       filteredEdges = allEdges.filter(e => connected.has(e.from) && connected.has(e.to));
     }
 
-    // Map to ForceGraph3D exact format
-    const nodes = filteredNodes.map(n => ({...n, val: 1})); // Use val for sizing manually via three
+    // Map to ForceGraph3D exact format. Pin nodes to their PCA coordinates via
+    // fx/fy/fz so the layout stays relationally indexed (not force-scattered).
+    const nodes = filteredNodes.map(n => ({ ...n, val: 1, fx: n.x, fy: n.y, fz: n.z }));
     const links = filteredEdges.map(e => ({ source: e.from, target: e.to, strength: e.strength }));
 
     return { forceNodes: nodes, forceEdges: links };
@@ -261,6 +266,22 @@ export function KnowledgeGraph3D() {
             )}
           </AnimatePresence>
         </Card>
+
+        {graphData?.axes && (
+          <Card className="p-3 bg-background/80 backdrop-blur-lg">
+            <h3 className="text-xs font-semibold text-muted-foreground mb-1.5 uppercase tracking-wide">
+              Knowledge axes
+            </h3>
+            <div className="space-y-1 text-[11px] leading-tight">
+              <p><span className="text-primary font-medium">X:</span> {graphData.axes.x}</p>
+              <p><span className="text-emerald-400 font-medium">Y:</span> {graphData.axes.y}</p>
+              <p><span className="text-amber-400 font-medium">Z:</span> {graphData.axes.z}</p>
+            </div>
+            <p className="text-[10px] text-muted-foreground/70 mt-2">
+              Nearby topics are semantically similar.
+            </p>
+          </Card>
+        )}
 
         {stats.mastered >= 2 && (
           <motion.div initial={{opacity: 0, scale: 0.9}} animate={{opacity: 1, scale: 1}}>

@@ -40,7 +40,9 @@ export function HomePage() {
         ) : (
           <div key="feed" className="flex flex-col h-full min-h-0">
             {user && (
-              <div className="shrink-0 z-30 bg-background/90 backdrop-blur border-b border-border/40">
+              <div className="shrink-0 z-30 bg-background/90 backdrop-blur border-b border-border/40 pr-16 md:pr-24">
+                {/* pr-16/md:pr-24 clears the fixed profile menu (top-right) so the
+                    "View all" link and header controls never overlap it. */}
                 {/* Single unified strip: goals, in-progress, and owned courses with
                     continue buttons (previously two stacked sections). */}
                 <MyCoursesStrip onOpen={(topic, category) => handleDive(topic, category)} />
