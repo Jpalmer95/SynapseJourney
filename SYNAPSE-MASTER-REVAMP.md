@@ -65,6 +65,40 @@ For users who can't afford their own API keys but want to contribute:
 
 This means the platform can ALWAYS serve content even if the seed fund runs dry — the 604 existing units are permanent. The pool is purely for growth.
 
+### The Optional Paid Inference Lane (BYOK-first, prepaid only)
+
+> **Design decision (2026-08-23).** BYOK remains the default and the ethos. This lane is an
+> *optional* convenience for users who have no key and no local Ollama — NOT a requirement.
+
+**Hard invariant (never break this):** the platform must *never* front someone else's compute.
+This is guaranteed by construction because the lane is **prepaid credits**, not metered billing:
+
+1. User buys a **prepaid credit balance** (Stripe) — e.g. $5 / $10 / $20.
+2. Each generation **debits that balance** at a fixed sell-price you set once.
+3. Sell-price = `pinned-model cost-per-token × margin`, rounded *up* to a safe floor.
+4. Balance hits zero → generation stops. **There is no code path where a request draws on
+   the operator's money.** The only account that can be overdrawn is the user's prepaid balance.
+
+**Model policy (the key cost-safety lever):** pin ONE model, don't let users pick arbitrary
+models (surprise-cost vector). Recommendation, to be benchmarked before launch:
+- Default: `deepseek/deepseek-chat` — best intelligence-per-dollar for long structured
+  course generation.
+- Fallback / "premium" tier later: `anthropic/claude-3.5-haiku` (or successor) — safest for
+  strict JSON schemas.
+- The operator tops up their OpenRouter account in bulk; the margin is locked in regardless
+  of per-request price movement.
+
+**Coexistence with BYOK:** same generation pipeline. BYOK (their key) = $0 to them; paid lane =
+their prepaid balance. `generateByokOrPool` already has the right shape — add a third source
+`"prepaid"` that resolves *after* BYOK and *before* any (already-disabled) free pool.
+
+**Cost-safety checklist for implementation:**
+- [ ] Reuse existing `novaCoins` table (or add `credit_balance` to `user_profiles`) — no new billing table if avoidable.
+- [ ] Stripe already in deps (`@stripe/react-stripe-js`); add a server-side checkout + webhook (idempotent, verify signature).
+- [ ] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
+- [ ] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
+- [ ] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
+
 ### Content Review & Quality Gates
 
 Without quality control, open contribution = spam and misinformation. Multi-tier trust system:
@@ -230,11 +264,11 @@ Synapse is the learning platform humans AND AI agents wish they had:
 ## Current State (May 2026)
 
 ### What Works
-- 70 topics, 604 lesson units, 8 categories (seeded DB content)
+- 78 topics, 705 lesson units, 16 categories (seeded DB content)
 - AI syllabus generation (xAI Grok primary, Gemini fallback)
 - Kokoro WebGPU TTS with server-side fallback chain
 - SM-2 spaced repetition flashcards
-- 3D knowledge graph (react-force-graph-3d / Three.js)
+- 3D knowledge graph (react-force-graph-3d / Three.js) — **now relationally indexed** via fixed semantic axes (Applied↔Theoretical, Natural↔Synthetic, Micro↔Macro)
 - Mermaid.js concept diagrams, Sandpack code editors
 - Pathways system (Physics, Engineering, etc.) with DAG prerequisites
 - Open Science feed (submit ideas, upvote, comment)
@@ -243,6 +277,7 @@ Synapse is the learning platform humans AND AI agents wish they had:
 - Custom topic generation from free-text
 - Multi-provider AI: xAI, Gemini, HuggingFace, Ollama, OpenRouter
 - Email/password auth (bcryptjs + express-session)
+- **Hybrid semantic search** (pgvector + pg_trgm) with local Ollama embeddings + forum search (Phase 2 shipped)
 
 ### What's Broken / Missing
 - **No agent API** — Hermes or any agent can't interact programmatically
@@ -255,6 +290,26 @@ Synapse is the learning platform humans AND AI agents wish they had:
 - **No public read access** — gated behind auth, limiting discoverability
 - **Cross-topic synthesis exist only as a chat prompt** — no dedicated system
 - **Monolith routes file** — `server/routes.ts` is 4,941 lines
+
+### Prioritized Usability Roadmap (impact ÷ effort — 2026-08-23)
+
+Goal: make Synapse simple to learn for anyone, on any device, with or without their own
+compute. Ordered; do A→C first (ease of use), then D→E (power).
+
+- **A. First-60-seconds onboarding.** New user (no progress) → guided 3-step: pick a topic
+  from the map → take one lesson → earn first badge. Tighten existing `Onboarding` + auto-enroll
+  into a single frictionless funnel. *(highest impact, lowest effort)*
+- **B. Mobile / narrow-screen polish.** Feed card action bar thumb-friendly; 3D map degrades
+  to a touch-friendly 2D/zoomable list on small viewports. Targets phone / car-browser / PC.
+- **C. Search discoverability.** Surface the (now-shipped) hybrid search: a real search box on
+  the home feed, results show *relationships* (axis position + neighbors), not just a list.
+- **D. Generative map features** (builds on the relational axes):
+  - Select 1+ points → ask a question with those included in context.
+  - Select an existing point → "generate a new topic like this, but with [context twist]".
+  - Select a void → gap-detection: is there a known topic/industry that fits here? → propose
+    generating that course, ask for confirmation + extra context.
+- **E. Remaining roadmap phases** (unchanged, see below): Phase 2 semantic web surfacing,
+  Phase 5 Polymath synthesis, Phase 6 Open Science Commons, future mobile-native/voice/credentials.
 
 ### Environment
 - **Repo:** github.com/Jpalmer95/SynapseJourney
