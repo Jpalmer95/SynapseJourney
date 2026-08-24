@@ -93,8 +93,10 @@ their prepaid balance. `generateByokOrPool` already has the right shape — add 
 `"prepaid"` that resolves *after* BYOK and *before* any (already-disabled) free pool.
 
 **Cost-safety checklist for implementation:**
-- [ ] Reuse existing `novaCoins` table (or add `credit_balance` to `user_profiles`) — no new billing table if avoidable.
-- [ ] Stripe already in deps (`@stripe/react-stripe-js`); add a server-side checkout + webhook (idempotent, verify signature).
+- [ ] Reuse existing `novaCoins` table (currently a simple coin counter — will need a real
+  `credit_balance_cents` column or a new `user_credits` table; no billing table exists yet).
+- [ ] Stripe is NOT yet in Synapse deps (it's in the Kynda repo only) — add `stripe` (server) +
+  `@stripe/stripe-js` (client) + a server-side checkout + webhook (idempotent, verify signature).
 - [ ] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
 - [ ] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
 - [ ] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
