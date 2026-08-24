@@ -97,6 +97,7 @@ export interface IStorage {
   getTopicById(id: number): Promise<Topic | undefined>;
   getTopicsByCategory(categoryId: number): Promise<Topic[]>;
   createTopic(topic: InsertTopic): Promise<Topic>;
+  updateTopicEmbedding(id: number, embedding: number[]): Promise<void>;
 
   // Knowledge Cards
   getAllCards(): Promise<KnowledgeCard[]>;
@@ -160,6 +161,8 @@ export interface IStorage {
   createLessonUnit(unit: InsertLessonUnit): Promise<LessonUnit>;
   updateLessonContent(unitId: number, contentJson: LessonContent | NextGenContent): Promise<LessonUnit>;
   getAllLessonUnitsWithContent(): Promise<LessonUnit[]>;
+  getAllLessonUnits(): Promise<LessonUnit[]>;
+  updateLessonEmbedding(unitId: number, embedding: number[]): Promise<void>;
   clearLessonUnitContent(unitId: number): Promise<void>;
   deleteLessonUnitsByTopicId(topicId: number): Promise<void>;
   removeCourseForUser(userId: string, topicId: number): Promise<{ removedTopic: boolean }>;
@@ -464,6 +467,11 @@ export class DatabaseStorage implements IStorage {
       }
       throw err;
     }
+  }
+
+  async updateTopicEmbedding(id: number, embedding: number[]): Promise<void> {
+    const v = `[${embedding.join(",")}]`;
+    await db.execute(sql`UPDATE topics SET embedding = ${v}::vector WHERE id = ${id}`);
   }
 
   // Knowledge Cards
@@ -910,6 +918,15 @@ export class DatabaseStorage implements IStorage {
 
   async getAllLessonUnitsWithContent(): Promise<LessonUnit[]> {
     return db.select().from(lessonUnits).where(isNotNull(lessonUnits.contentJson));
+  }
+
+  async getAllLessonUnits(): Promise<LessonUnit[]> {
+    return db.select().from(lessonUnits);
+  }
+
+  async updateLessonEmbedding(unitId: number, embedding: number[]): Promise<void> {
+    const v = `[${embedding.join(",")}]`;
+    await db.execute(sql`UPDATE lesson_units SET embedding = ${v}::vector WHERE id = ${unitId}`);
   }
 
   async clearLessonUnitContent(unitId: number): Promise<void> {

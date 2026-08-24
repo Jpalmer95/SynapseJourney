@@ -5,6 +5,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { isAdminUser } from "./shared";
+import { embed } from "../embeddings";
 
 // ── Key Encryption (AES-256-GCM) ──────────────────────────────────────────
 // API keys are encrypted at rest. The encryption key comes from env var.
@@ -56,6 +57,9 @@ const saveApiKeySchema = z.object({
 
 export function registerContributionsRoutes(app: Express) {
   // ── Semantic Search (public — no auth required) ─────────────────────────
+  // Hybrid retrieval: pgvector (semantic, via local Ollama embeddings) blended
+  // with pg_trgm (keyword). Falls back gracefully to keyword-only if the local
+  // embedding engine is unreachable, so search never breaks.
   app.get("/api/search", async (req: Request, res: Response) => {
     try {
       const query = req.query.q as string;
@@ -66,34 +70,36 @@ export function registerContributionsRoutes(app: Express) {
         return res.json({ topics: [], lessons: [] });
       }
 
-      // Use trigram search for now (vector search needs embedding generation)
-      // In production, you'd call an embedding API here first
-      const [topics, textMatches] = await Promise.all([
+      const qvec = await embed(query);
+      const [trgm, lessons] = await Promise.all([
         storage.searchTopicsTrgm(query, limit),
-        // Fallback: basic text filter for lessons
-        (async () => {
-          const allTopics = await storage.getTopics();
-          const matching = allTopics.filter(t =>
-            t.title.toLowerCase().includes(query.toLowerCase()) ||
-            t.description.toLowerCase().includes(query.toLowerCase())
-          );
-          return matching.slice(0, limit);
-        })()
+        qvec
+          ? storage.searchLessonsVectors(qvec, limit, threshold)
+          : Promise.resolve([] as any[]),
       ]);
 
-      // Merge and deduplicate results
-      const seen = new Set<number>();
-      const merged = [...topics];
-      for (const t of textMatches) {
-        if (!seen.has(t.id)) {
-          merged.push(t);
-          seen.add(t.id);
+      let topics = [...trgm];
+      let semanticOnly = [] as any[];
+      if (qvec) {
+        const vec = await storage.searchTopicsVectors(qvec, limit, threshold);
+        // Blend: semantic results first, then keyword, dedup by id
+        const seen = new Set<number>();
+        for (const t of [...vec, ...trgm]) {
+          if (!seen.has(t.id)) {
+            topics[seen.size] = t;
+            seen.add(t.id);
+          }
         }
+        topics = topics.filter(Boolean);
+        semanticOnly = vec.filter(v => !trgm.some(t => t.id === v.id));
       }
-      // Set seen for topics too
-      topics.forEach(t => seen.add(t.id));
 
-      res.json({ topics: merged.slice(0, limit), lessons: [] });
+      res.json({
+        topics: topics.slice(0, limit),
+        lessons: lessons.slice(0, limit),
+        mode: qvec ? "hybrid" : "keyword",
+        semanticOnly: semanticOnly.slice(0, 3),
+      });
     } catch (error) {
       console.error("Error searching:", error);
       res.status(500).json({ error: "Search failed" });
