@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -298,6 +298,18 @@ export const openScienceComments = pgTable("open_science_comments", {
   authorName: text("author_name").notNull(),
   content: text("content").notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// 3D knowledge-axis coordinates (PCA over embeddings) for the relational map
+export const topicCoordinates = pgTable("topic_coordinates", {
+  topicId: integer("topic_id").primaryKey().references(() => topics.id, { onDelete: "cascade" }),
+  x: doublePrecision("x").notNull(),
+  y: doublePrecision("y").notNull(),
+  z: doublePrecision("z").notNull(),
+  axis0Label: text("axis_0_label"),
+  axis1Label: text("axis_1_label"),
+  axis2Label: text("axis_2_label"),
+  computedAt: timestamp("computed_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Achievements System

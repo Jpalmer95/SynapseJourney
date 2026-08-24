@@ -1,5 +1,6 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { BookOpen, Target, Sparkles, Play, Library, Trash2 } from "lucide-react";
+import { useState } from "react";
+import { BookOpen, Target, Sparkles, Play, Library, Trash2, ChevronDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
@@ -37,6 +38,7 @@ const sourceLabel: Record<MyCourseItem["source"], string> = {
 };
 
 export function MyCoursesStrip({ onOpen, className, limit = 8 }: MyCoursesStripProps) {
+  const [collapsed, setCollapsed] = useState(() => localStorage.getItem("synapse-courses-collapsed") === "true");
   const { data: items, isLoading } = useQuery<MyCourseItem[]>({
     queryKey: ["/api/learn/my-courses"],
     staleTime: 20_000,
@@ -70,18 +72,35 @@ export function MyCoursesStrip({ onOpen, className, limit = 8 }: MyCoursesStripP
   if (list.length === 0) return null;
 
   return (
-    <section className={cn("w-full px-4 pt-3 pb-1", className)} data-testid="my-courses-strip">
-      <div className="flex items-center justify-between mb-2">
-        <h2 className="text-sm font-semibold tracking-wide text-muted-foreground uppercase inline-flex items-center gap-1.5">
+    <section className={cn("w-full px-4 pt-2 pb-1", className)} data-testid="my-courses-strip">
+      <div className="flex items-center justify-between mb-1">
+        <button
+          type="button"
+          onClick={() => {
+            const next = !collapsed;
+            setCollapsed(next);
+            localStorage.setItem("synapse-courses-collapsed", String(next));
+          }}
+          className="inline-flex items-center gap-1.5 text-sm font-semibold tracking-wide text-muted-foreground uppercase hover:text-foreground transition-colors"
+          aria-expanded={!collapsed}
+          data-testid="button-toggle-courses"
+        >
+          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", collapsed && "-rotate-90")} />
           <Library className="h-3.5 w-3.5" />
           My courses & goals
-        </h2>
-        <Link href="/saved?tab=courses" className="text-xs text-primary hover:underline">
+          {items && items.length > 0 && (
+            <span className="normal-case text-[11px] font-normal text-muted-foreground/70">
+              ({items.length})
+            </span>
+          )}
+        </button>
+        <Link href="/saved?tab=courses" className="text-xs text-primary hover:underline shrink-0">
           View all
         </Link>
       </div>
-      <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
-        {list.map((item) => (
+      {!collapsed && (
+        <div className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+          {list.map((item) => (
           <Card
             key={item.topic.id}
             className="group min-w-[270px] max-w-[290px] snap-start border-border/60 bg-card/80 shrink-0 relative"
@@ -153,8 +172,9 @@ export function MyCoursesStrip({ onOpen, className, limit = 8 }: MyCoursesStripP
               </Button>
             </CardContent>
           </Card>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

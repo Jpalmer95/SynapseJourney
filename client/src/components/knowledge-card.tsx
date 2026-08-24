@@ -91,7 +91,7 @@ export function KnowledgeCard({
         )}
       />
       
-      <div className="relative flex flex-col h-full px-6 pt-12 pb-24 md:px-12 md:pt-16 md:pb-28">
+      <div className="relative flex flex-col h-full px-6 pt-12 pb-6 md:px-12 md:pt-16">
         <div className="flex items-center gap-2 mb-6">
           {category && (
             <Badge variant="secondary" className="text-xs">
@@ -103,9 +103,9 @@ export function KnowledgeCard({
           </Badge>
         </div>
 
-        <div className="flex-1 flex flex-col justify-center max-w-2xl mx-auto w-full">
+        <div className="flex-1 flex flex-col justify-center max-w-2xl mx-auto w-full min-h-0">
           <motion.h1
-            className="text-4xl md:text-5xl lg:text-6xl font-bold mb-6 leading-tight"
+            className="text-3xl md:text-4xl lg:text-5xl font-bold mb-6 leading-tight"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.1 }}
@@ -114,7 +114,7 @@ export function KnowledgeCard({
           </motion.h1>
           
           <motion.p
-            className="text-lg md:text-xl text-muted-foreground mb-8 leading-relaxed"
+            className="text-base md:text-lg text-muted-foreground mb-6 leading-relaxed line-clamp-4"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
@@ -141,47 +141,51 @@ export function KnowledgeCard({
           )}
         </div>
 
-        <motion.div
-          className="flex items-center justify-center gap-4 mt-8"
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <Button
-            variant="outline"
-            size="lg"
-            onClick={() => {
-              playClick("light");
-              onSave?.();
-            }}
-            className={cn(
-              "gap-2 backdrop-blur-md",
-              isSaved && "text-red-500 border-red-500/50"
-            )}
-            data-testid="button-save-card"
+        {/* Action bar: pinned below the content so it's always visible without
+            scrolling; "Swipe for next" sits above it, never overlapping. */}
+        <div className="shrink-0 mt-6 flex flex-col items-center gap-3">
+          <motion.div
+            className="flex items-center justify-center gap-4"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.4 }}
           >
-            <Heart className={cn("h-5 w-5", isSaved && "fill-current")} />
-            {isSaved ? "Saved" : "Save"}
-          </Button>
-          
-          <Button
-            size="lg"
-            onClick={() => {
-              playClick("deep");
-              onDive?.();
-            }}
-            className="gap-2"
-            data-testid="button-dive"
-          >
-            <BookOpen className="h-5 w-5" />
-            Dive Deep
-            <ChevronRight className="h-4 w-4" />
-          </Button>
-        </motion.div>
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => {
+                playClick("light");
+                onSave?.();
+              }}
+              className={cn(
+                "gap-2 backdrop-blur-md",
+                isSaved && "text-red-500 border-red-500/50"
+              )}
+              data-testid="button-save-card"
+            >
+              <Heart className={cn("h-5 w-5", isSaved && "fill-current")} />
+              {isSaved ? "Saved" : "Save"}
+            </Button>
+            
+            <Button
+              size="lg"
+              onClick={() => {
+                playClick("deep");
+                onDive?.();
+              }}
+              className="gap-2"
+              data-testid="button-dive"
+            >
+              <BookOpen className="h-5 w-5" />
+              Dive Deep
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </motion.div>
 
-        <div className="absolute bottom-20 left-1/2 -translate-x-1/2 flex flex-col items-center text-muted-foreground/50">
-          <ArrowDown className="h-5 w-5 animate-bounce" />
-          <span className="text-xs mt-1">Swipe for next</span>
+          <div className="flex flex-col items-center text-muted-foreground/50">
+            <ArrowDown className="h-4 w-4 animate-bounce" />
+            <span className="text-xs mt-0.5">Swipe for next</span>
+          </div>
         </div>
       </div>
     </motion.div>
