@@ -89,6 +89,7 @@ import {
 } from "@shared/schema";
 import { db } from "./db";
 import { eq, desc, and, sql, inArray, isNotNull, gte } from "drizzle-orm";
+import { PREPAID_MAX_BALANCE_CENTS } from "./prepaid";
 
 export interface IStorage {
   // Categories
@@ -336,6 +337,7 @@ export interface IStorage {
     }
   ): Promise<{ balanceCents: number }>;
   getInferenceLedger(userId: string, limit?: number): Promise<InferenceCharge[]>;
+  getPrepaidDailyOperatorCost(): Promise<number>;
 
   // TTS Settings
   getTtsSettings(userId: string): Promise<{
@@ -2215,7 +2217,20 @@ export class DatabaseStorage implements IStorage {
       const [row] = await tx.select({ balanceCents: userCredits.balanceCents })
         .from(userCredits)
         .where(eq(userCredits.userId, userId));
-      const newBalance = row?.balanceCents ?? amountCents;
+      let newBalance = row?.balanceCents ?? amountCents;
+
+      // Defense-in-depth: clamp to a hard ceiling so a config bug or a
+      // mis-processed credit can never create an absurd balance. Legit
+      // purchases are $5–$20 and will never approach the ceiling.
+      if (newBalance > PREPAID_MAX_BALANCE_CENTS) {
+        await tx.update(userCredits)
+          .set({ balanceCents: PREPAID_MAX_BALANCE_CENTS, updatedAt: sql`CURRENT_TIMESTAMP` })
+          .where(eq(userCredits.userId, userId));
+        console.warn(
+          `[Credits] balance for ${userId} clamped to ${PREPAID_MAX_BALANCE_CENTS}¢ (was ${newBalance}¢)`
+        );
+        newBalance = PREPAID_MAX_BALANCE_CENTS;
+      }
 
       await tx.insert(inferenceCharges).values({
         userId,
@@ -2284,6 +2299,20 @@ export class DatabaseStorage implements IStorage {
       .where(eq(inferenceCharges.userId, userId))
       .orderBy(desc(inferenceCharges.createdAt))
       .limit(Math.min(limit, 200));
+  }
+
+  async getPrepaidDailyOperatorCost(): Promise<number> {
+    const [row] = await db.select({
+      total: sql<number>`COALESCE(SUM(${inferenceCharges.costCents}), 0)`,
+    })
+      .from(inferenceCharges)
+      .where(
+        and(
+          eq(inferenceCharges.kind, "debit"),
+          gte(inferenceCharges.createdAt, sql`date_trunc('day', CURRENT_TIMESTAMP)`)
+        )
+      );
+    return row?.total ?? 0;
   }
 
   async getTtsSettings(userId: string): Promise<{

@@ -17,9 +17,12 @@ import {
   computeSellCents,
   costCentsForUsage,
   estimateMaxSellCents,
+  estimateMaxCostCents,
   PREPAID_MARGIN,
   PREPAID_MIN_SELL_CENTS,
+  PREPAID_MAX_TOKENS,
 } from "../server/prepaid";
+import { rateLimit, resetRateLimits } from "../server/rate-limit";
 
 test("costCentsForUsage uses pinned per-token prices and rounds UP", () => {
   // Defaults: input $0.50/M, output $2.00/M.
@@ -73,6 +76,30 @@ test("balance-guard semantics: a debit cannot overdraw (mirrors the SQL guard)",
   assert.strictEqual(debit(4, 5), null, "insufficient balance must block");
   assert.strictEqual(debit(100, 30), 70, "sufficient balance debits exactly");
   assert.strictEqual(debit(30, 30), 0, "exact-balance hits zero but never negative");
+});
+
+test("estimateMaxCostCents clamps output to PREPAID_MAX_TOKENS", () => {
+  // A caller asking for a giant cap must not blow past the hard token clamp.
+  const capped = estimateMaxCostCents([{ role: "user", content: "hi" }], { maxTokens: 1_000_000 });
+  const expected = costCentsForUsage(Math.ceil(2 / 3), PREPAID_MAX_TOKENS);
+  assert.strictEqual(capped, expected);
+});
+
+test("max-tokens clamp is enforced even when options.maxTokens is huge", () => {
+  assert.ok(PREPAID_MAX_TOKENS > 0 && PREPAID_MAX_TOKENS <= 8192 + 1);
+});
+
+test("rate limiter enforces max requests per window and resets", () => {
+  resetRateLimits();
+  const key = "test:user";
+  let allowed = 0;
+  // Fire 20 requests at max=5.
+  for (let i = 0; i < 20; i++) {
+    if (rateLimit(key, 5, 60_000).allowed) allowed++;
+  }
+  assert.strictEqual(allowed, 5, "only the first 5 within the window are allowed");
+  // A different key is unaffected.
+  assert.strictEqual(rateLimit("test:other", 5, 60_000).allowed, true);
 });
 
 console.log("All prepaid pure-logic tests passed.");

@@ -271,6 +271,12 @@ export function registerLearnRoutes(app: Express) {
                 "Platform free AI is disabled. Add API keys in Settings, buy prepaid credits, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
             });
           }
+          if (msg.includes("RATE_LIMITED")) {
+            return res.status(429).json({ error: "RATE_LIMITED", message: "Too many requests — slow down and try again." });
+          }
+          if (msg.includes("PREPAID_CAPACITY")) {
+            return res.status(503).json({ error: "PREPAID_CAPACITY", message: "Prepaid inference daily capacity reached — add your own key or try tomorrow." });
+          }
           throw genErr;
         }
       }
@@ -880,6 +886,12 @@ export function registerLearnRoutes(app: Express) {
                 "Platform free AI is disabled. Add API keys in Settings, buy prepaid credits, or author this course with Hermes Agent and upload via Personal Access Token.",
             });
           }
+          if (msg.includes("RATE_LIMITED")) {
+            return res.status(429).json({ error: "RATE_LIMITED", message: "Too many requests — slow down and try again." });
+          }
+          if (msg.includes("PREPAID_CAPACITY")) {
+            return res.status(503).json({ error: "PREPAID_CAPACITY", message: "Prepaid inference daily capacity reached — add your own key or try tomorrow." });
+          }
           throw genErr;
         }
       }
@@ -974,6 +986,12 @@ Respond with ONLY a JSON array of 10 objects:
             message: "Add an AI key in Settings (or LM Studio URL), or buy prepaid credits, to get personalized subject suggestions.",
           });
         }
+        if (msg.includes("RATE_LIMITED")) {
+          return res.status(429).json({ error: "RATE_LIMITED", message: "Too many requests — slow down and try again." });
+        }
+        if (msg.includes("PREPAID_CAPACITY")) {
+          return res.status(503).json({ error: "PREPAID_CAPACITY", message: "Prepaid inference daily capacity reached — add your own key or try tomorrow." });
+        }
         console.warn("[Explore] AI suggestions failed, using fallback:", msg);
       }
 
@@ -1053,6 +1071,12 @@ Respond with ONLY a JSON array of 10 objects:
             error: "BYOC_REQUIRED",
             message: "Add an AI key in Settings, buy prepaid credits, or ask Hermes Agent to author the fusion and upload it.",
           });
+        }
+        if (msg.includes("RATE_LIMITED")) {
+          return res.status(429).json({ error: "RATE_LIMITED", message: "Too many requests — slow down and try again." });
+        }
+        if (msg.includes("PREPAID_CAPACITY")) {
+          return res.status(503).json({ error: "PREPAID_CAPACITY", message: "Prepaid inference daily capacity reached — add your own key or try tomorrow." });
         }
         throw err;
       }

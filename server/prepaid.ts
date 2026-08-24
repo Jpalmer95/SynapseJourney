@@ -33,6 +33,44 @@ export const PREPAID_MIN_SELL_CENTS = (() => {
   return Number.isFinite(raw) && raw > 0 ? raw : 5;
 })();
 
+// ── Hardening limits ─────────────────────────────────────────────────────────
+// Hard ceiling on a single balance (defense-in-depth against a config bug or a
+// mis-processed credit creating an absurd balance). Legit flows credit $5–$20
+// at a time, so a $200 ceiling is generous.
+export const PREPAID_MAX_BALANCE_CENTS = (() => {
+  const raw = parseInt(process.env.PREPAID_MAX_BALANCE_CENTS || "20000", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 20000;
+})();
+
+// Operator-side daily spend ceiling (in cents of OPERATOR cost, independent of
+// user balances). Once the prepaid lane has spent this much today serving
+// generations, further paid generations are refused until tomorrow. This is the
+// server-side backstop for the master-plan item "operator spend ceiling".
+export const PREPAID_DAILY_SPEND_LIMIT_CENTS = (() => {
+  const raw = parseInt(process.env.PREPAID_DAILY_SPEND_LIMIT_CENTS || "5000", 10);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 5000;
+})();
+
+// Per-user generation rate limit (requests / minute) — bounds a tight loop.
+export const PREPAID_RATE_LIMIT_PER_MIN = (() => {
+  const raw = parseInt(process.env.PREPAID_RATE_LIMIT_PER_MIN || "10", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 10;
+})();
+
+// Global generation rate limit (requests / minute) across ALL users — protects
+// the shared OpenRouter key from aggregate flooding.
+export const PREPAID_GLOBAL_RATE_LIMIT_PER_MIN = (() => {
+  const raw = parseInt(process.env.PREPAID_GLOBAL_RATE_LIMIT_PER_MIN || "100", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 100;
+})();
+
+// Hard clamp on output tokens per paid request, regardless of what any caller
+// passes (prevents a buggy caller from requesting a 64k-token completion).
+export const PREPAID_MAX_TOKENS = (() => {
+  const raw = parseInt(process.env.PREPAID_MAX_TOKENS || "8192", 10);
+  return Number.isFinite(raw) && raw > 0 ? raw : 8192;
+})();
+
 // Operator cost-per-token (USD per 1M tokens) for the pinned model.
 // DEFAULTS ARE INTENTIONALLY CONSERVATIVE (upper-bound). Tune DOWN after you
 // verify current OpenRouter pricing — never tune below the published price,
@@ -69,6 +107,21 @@ export function computeSellCents(costCents: number): number {
 }
 
 /**
+ * Conservative upper-bound COST estimate (in cents, operator cost) for a
+ * request — the pre-margin cost of the worst case. Over-estimates on purpose.
+ */
+export function estimateMaxCostCents(
+  messages: { role: string; content: string }[],
+  options?: ChatOptions
+): number {
+  const promptChars = messages.reduce((n, m) => n + (m.content?.length || 0), 0);
+  // ~3 chars/token is a conservative upper bound (English averages ~4).
+  const promptTokens = Math.ceil(promptChars / 3);
+  const outputTokens = Math.min(options?.maxTokens || 4096, PREPAID_MAX_TOKENS);
+  return costCentsForUsage(promptTokens, outputTokens);
+}
+
+/**
  * Conservative upper-bound SELL estimate (in cents) for a request, used to
  * pre-authorize BEFORE generation so a near-empty balance can't trigger a
  * paid call the user can't cover. Over-estimates on purpose.
@@ -77,12 +130,7 @@ export function estimateMaxSellCents(
   messages: { role: string; content: string }[],
   options?: ChatOptions
 ): number {
-  const promptChars = messages.reduce((n, m) => n + (m.content?.length || 0), 0);
-  // ~3 chars/token is a conservative upper bound (English averages ~4).
-  const promptTokens = Math.ceil(promptChars / 3);
-  const outputTokens = options?.maxTokens || 4096;
-  const cost = costCentsForUsage(promptTokens, outputTokens);
-  return computeSellCents(cost);
+  return computeSellCents(estimateMaxCostCents(messages, options));
 }
 
 export interface PrepaidGenerationResult {
@@ -122,7 +170,8 @@ export async function generatePrepaid(
       temperature: options?.temperature ?? 0.7,
       // Always pass an explicit cap — OpenRouter defaults to 65536 otherwise
       // (the 402 gotcha), which would blow past any sane per-request spend.
-      max_tokens: options?.maxTokens ?? 4096,
+      // Also hard-clamped to PREPAID_MAX_TOKENS as defense-in-depth.
+      max_tokens: Math.min(options?.maxTokens ?? 4096, PREPAID_MAX_TOKENS),
     }),
   });
 

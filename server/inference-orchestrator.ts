@@ -14,8 +14,13 @@ import {
   generatePrepaid,
   computeSellCents,
   estimateMaxSellCents,
+  estimateMaxCostCents,
   prepaidIsConfigured,
+  PREPAID_DAILY_SPEND_LIMIT_CENTS,
+  PREPAID_RATE_LIMIT_PER_MIN,
+  PREPAID_GLOBAL_RATE_LIMIT_PER_MIN,
 } from "./prepaid";
+import { rateLimit } from "./rate-limit";
 
 export interface GeneratedContent {
   content: string;
@@ -48,7 +53,7 @@ export async function generateByokOrPrepaid(
     }
   }
 
-  // 2) Prepaid fallback — gated, pre-authorized, atomically debited.
+  // 2) Prepaid fallback — gated, pre-authorized, rate-limited, atomically debited.
   const { storage } = await import("./storage");
 
   if (!prepaidIsConfigured()) {
@@ -56,6 +61,33 @@ export async function generateByokOrPrepaid(
       "BYOC_REQUIRED: Add your own AI key in Settings, or use Hermes Agent to author and upload. " +
         "Prepaid credits are not enabled on this server yet."
     );
+  }
+
+  // Rate limit a single user's paid generation loop (bounds a tight loop).
+  const userRl = rateLimit(`prepaid:${userId}`, PREPAID_RATE_LIMIT_PER_MIN, 60_000);
+  if (!userRl.allowed) {
+    throw new Error(
+      `RATE_LIMITED: too many paid generations in a row. Try again in ~${userRl.retryAfterSec}s.`
+    );
+  }
+  // Global ceiling protects the shared OpenRouter key from aggregate flooding.
+  const globalRl = rateLimit(`prepaid:global`, PREPAID_GLOBAL_RATE_LIMIT_PER_MIN, 60_000);
+  if (!globalRl.allowed) {
+    throw new Error("RATE_LIMITED: prepaid inference is temporarily busy. Try again shortly.");
+  }
+
+  // Operator-side daily spend ceiling (independent of user balances). Backstop
+  // so even a coordinated drainer can't push operator cost past a fixed cap.
+  // Estimate-aware: blocks a generation whose projected cost would breach it.
+  if (PREPAID_DAILY_SPEND_LIMIT_CENTS > 0) {
+    const spentToday = await storage.getPrepaidDailyOperatorCost();
+    const projected = spentToday + estimateMaxCostCents(messages, options);
+    if (projected >= PREPAID_DAILY_SPEND_LIMIT_CENTS) {
+      throw new Error(
+        "PREPAID_CAPACITY: prepaid inference has reached its daily capacity. " +
+          "Add your own AI key, or try again tomorrow."
+      );
+    }
   }
 
   const estimateSell = estimateMaxSellCents(messages, options);

@@ -14,6 +14,7 @@ import Stripe from "stripe";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { PREPAID_MODEL, prepaidIsConfigured } from "../prepaid";
+import { rateLimit } from "../rate-limit";
 
 // Whitelisted credit packages (cents). The client may only request these.
 const CREDIT_PACKAGES = [
@@ -21,6 +22,10 @@ const CREDIT_PACKAGES = [
   { id: "standard", label: "$10", amountCents: 1000 },
   { id: "plus", label: "$20", amountCents: 2000 },
 ];
+
+// Hard sanity cap on any single credited amount (defense-in-depth: even a valid
+// signature can't create a more-than-$500 credit from our $5/$10/$20 packages).
+const MAX_SINGLE_CREDIT_CENTS = Math.max(...CREDIT_PACKAGES.map((p) => p.amountCents)) * 10;
 
 function getStripe(): Stripe | null {
   const key = process.env.STRIPE_SECRET_KEY;
@@ -67,7 +72,15 @@ export function registerBillingRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid credit package" });
       }
 
-      const base = process.env.APP_BASE_URL || req.headers.origin || "https://synapsejourney.org";
+      // Rate-limit checkout creation (prevents spam sessions).
+      const rl = rateLimit(`checkout:${userId}`, 6, 60_000);
+      if (!rl.allowed) {
+        return res.status(429).json({ error: "RATE_LIMITED", message: "Too many checkout attempts — slow down." });
+      }
+
+      // Never derive the redirect base from the request Origin (open-redirect
+      // vector). Prefer an explicit APP_BASE_URL, else a fixed default.
+      const base = (process.env.APP_BASE_URL || "https://synapsejourney.org").replace(/\/+$/, "");
       const session = await stripe.checkout.sessions.create({
         mode: "payment",
         line_items: [
@@ -128,8 +141,15 @@ export function registerBillingRoutes(app: Express) {
         const userId = session.metadata?.userId;
         const amountTotal = session.amount_total; // already in cents
 
-        if (!userId || !amountTotal || amountTotal <= 0) {
-          console.warn(`[Billing] checkout.session.completed missing userId/amount: ${event.id}`);
+        // Require a genuinely-paid session (not a re-send of a cancelled/expired one).
+        const paid = session.payment_status ?? "paid";
+        if (paid !== "paid" && paid !== "no_payment_required") {
+          console.warn(`[Billing] Ignoring session ${event.id} with payment_status=${paid}`);
+          return;
+        }
+
+        if (!userId || amountTotal == null || !Number.isInteger(amountTotal) || amountTotal <= 0 || amountTotal > MAX_SINGLE_CREDIT_CENTS) {
+          console.warn(`[Billing] checkout.session.completed rejected (bad userId/amount): ${event.id}`);
           return;
         }
 

@@ -105,13 +105,16 @@ their prepaid balance. `generateByokOrPool` already has the right shape — add 
 - [x] Every generation debit is atomic + logged (model, tokens, cost, balance_after) for reconciliation.
   → `storage.debitForInference` runs in a DB transaction with a guarded `UPDATE … WHERE balance >= sell`
   (no overdraft), and always writes a `kind='debit'` ledger row with model, tokens, cost, sell, balance_after.
-- [ ] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
-  → Not yet implemented. The webhook is signature-verified so only genuine Stripe events can credit,
-  and the guarded debit prevents overdraft, but an explicit per-user rate-limit / max-balance ceiling
-  is a follow-up hardening item.
-- [ ] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
-  → Operator-side config (OpenRouter account limits); recommended to set before launch. The margin is
-  locked in regardless of per-request price movement via `PREPAID_MARGIN`.
+- [x] Hard cap: rate-limit + max-balance so a compromised key can't rack up charges.
+  → `server/rate-limit.ts` (in-memory fixed-window) + per-user/global generation limits
+  (`PREPAID_RATE_LIMIT_PER_MIN` / `PREPAID_GLOBAL_RATE_LIMIT_PER_MIN`) + checkout limit,
+  and a hard `PREPAID_MAX_BALANCE_CENTS` ceiling clamped in `creditUserBalance`. Webhook also
+  validates `payment_status` + amount sanity (`MAX_SINGLE_CREDIT_CENTS`). Note: the rate limiter
+  is single-process — move behind Redis/Traefik if the app ever scales horizontally.
+- [x] Daily/monthly operator spend ceiling on the OpenRouter side, independent of user balances.
+  → Server-side backstop `PREPAID_DAILY_SPEND_LIMIT_CENTS` (operator cost, tracked via
+  `storage.getPrepaidDailyOperatorCost` over the debit ledger, estimate-aware). *Also* recommend
+  setting a matching hard limit on the OpenRouter account/API key as a second independent layer.
 
 ### Content Review & Quality Gates
 
