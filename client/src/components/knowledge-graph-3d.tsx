@@ -1,4 +1,4 @@
-import { useRef, useMemo, useState, useEffect, useCallback } from "react";
+import { useRef, useMemo, useState, useEffect, useCallback, type MouseEvent } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -31,10 +31,45 @@ interface GraphEdge {
   strength: number;
 }
 
+// Metadata for the three semantic axes. Colors match the legend; each pole also
+// uses a DISTINCT shape (cube / cone / octahedron) so colorblind users can tell
+// the axes apart without relying on color alone.
+const AXIS_META: Record<
+  "x" | "y" | "z",
+  { color: number; hex: string; label: string; desc: string }
+> = {
+  x: {
+    color: 0x22d3ee,
+    hex: "#22d3ee",
+    label: "Applied ↔ Theoretical",
+    desc: "How you engage the topic: hands-on building and application vs. understanding underlying principles and theory.",
+  },
+  y: {
+    color: 0x34d399,
+    hex: "#34d399",
+    label: "Natural ↔ Synthetic",
+    desc: "What the topic is about: the natural/physical world vs. human-made and synthetic systems (software, tools, language).",
+  },
+  z: {
+    color: 0xfbbf24,
+    hex: "#fbbf24",
+    label: "Micro ↔ Macro",
+    desc: "The scale of the topic: subatomic and microscopic vs. planetary, cosmic, and systemic.",
+  },
+};
+
+interface AxisInfo {
+  key: "x" | "y" | "z";
+  label: string;
+  desc: string;
+  hex: string;
+}
+
 export function KnowledgeGraph3D() {
   const containerRef = useRef<HTMLDivElement>(null);
   const graphRef = useRef<any>();
   const axisGroupRef = useRef<THREE.Group | null>(null);
+  const axisHitRef = useRef<THREE.Mesh[]>([]);
   const [containerSize, setContainerSize] = useState({ width: 800, height: 600 });
   const [hoveredNode, setHoveredNode] = useState<GraphNode | null>(null);
   const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null);
@@ -44,6 +79,7 @@ export function KnowledgeGraph3D() {
   const [timeRange, setTimeRange] = useState([100]);
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisTopicsStr, setSynthesisTopicsStr] = useState("");
+  const [selectedAxis, setSelectedAxis] = useState<AxisInfo | null>(null);
 
   // Narrow-viewport fallback: react-force-graph-3d is WebGL + pointer-event
   // driven and is unusable on touch. Below 768px we render a touch-friendly
@@ -166,8 +202,8 @@ export function KnowledgeGraph3D() {
   // Draw the three semantic-axis reference lines directly in the three.js scene
   // so the relational frame described by the legend is actually visible. Nodes
   // are pinned to these same axes (fx/fy/fz), so the lines cross at the cloud's
-  // origin. Colors match the legend: X cyan, Y emerald, Z amber; a bright sphere
-  // marks each positive pole (+X Applied, +Y Natural, +Z Macro).
+  // origin. Each positive pole is a distinct shape (cube / cone / octahedron)
+  // with an invisible hit-area; clicking it opens the axis definition.
   useEffect(() => {
     if (isMobile) return;
     const fg = graphRef.current;
@@ -186,6 +222,7 @@ export function KnowledgeGraph3D() {
       });
       axisGroupRef.current = null;
     }
+    axisHitRef.current = [];
 
     if (!allNodes.length) return;
 
@@ -212,29 +249,53 @@ export function KnowledgeGraph3D() {
     const group = new THREE.Group();
 
     const axes: {
+      key: "x" | "y" | "z";
       from: [number, number, number];
       to: [number, number, number];
-      color: number;
     }[] = [
-      { from: [minX - padX, 0, 0], to: [maxX + padX, 0, 0], color: 0x22d3ee }, // X: Applied ↔ Theoretical
-      { from: [0, minY - padY, 0], to: [0, maxY + padY, 0], color: 0x34d399 }, // Y: Natural ↔ Synthetic
-      { from: [0, 0, minZ - padZ], to: [0, 0, maxZ + padZ], color: 0xfbbf24 }, // Z: Micro ↔ Macro
+      { key: "x", from: [minX - padX, 0, 0], to: [maxX + padX, 0, 0] },
+      { key: "y", from: [0, minY - padY, 0], to: [0, maxY + padY, 0] },
+      { key: "z", from: [0, 0, minZ - padZ], to: [0, 0, maxZ + padZ] },
     ];
 
     for (const ax of axes) {
+      const meta = AXIS_META[ax.key];
+
       const lineGeo = new THREE.BufferGeometry().setFromPoints([
         new THREE.Vector3(ax.from[0], ax.from[1], ax.from[2]),
         new THREE.Vector3(ax.to[0], ax.to[1], ax.to[2]),
       ]);
-      const lineMat = new THREE.LineBasicMaterial({ color: ax.color, transparent: true, opacity: 0.55 });
+      const lineMat = new THREE.LineBasicMaterial({ color: meta.color, transparent: true, opacity: 0.55 });
       group.add(new THREE.Line(lineGeo, lineMat));
 
-      // Positive-pole marker (indicates direction of the + end of the axis).
-      const poleGeo = new THREE.SphereGeometry(5, 16, 16);
-      const poleMat = new THREE.MeshBasicMaterial({ color: ax.color, transparent: true, opacity: 0.9 });
-      const pole = new THREE.Mesh(poleGeo, poleMat);
+      // Distinct pole shape per axis (cube / cone / octahedron) so colorblind
+      // users can tell the three axes apart without relying on color.
+      const shapeGeo =
+        ax.key === "x"
+          ? new THREE.BoxGeometry(9, 9, 9)
+          : ax.key === "y"
+          ? new THREE.ConeGeometry(6, 13, 5)
+          : new THREE.OctahedronGeometry(7);
+      const shapeMat = new THREE.MeshBasicMaterial({ color: meta.color, transparent: true, opacity: 0.9 });
+      const pole = new THREE.Mesh(shapeGeo, shapeMat);
       pole.position.set(ax.to[0], ax.to[1], ax.to[2]);
       group.add(pole);
+
+      // Invisible, larger hit-area so the pole is easy to click; carries the
+      // axis definition for the click handler.
+      const hitGeo = new THREE.SphereGeometry(16, 12, 12);
+      const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+      const hit = new THREE.Mesh(hitGeo, hitMat);
+      hit.position.copy(pole.position);
+      hit.userData = {
+        type: "axis",
+        key: ax.key,
+        label: graphData?.axes?.[ax.key] || meta.label,
+        desc: meta.desc,
+        hex: meta.hex,
+      };
+      group.add(hit);
+      axisHitRef.current.push(hit);
     }
 
     // Origin marker — the center where the three axes intersect.
@@ -245,7 +306,41 @@ export function KnowledgeGraph3D() {
 
     scene.add(group);
     axisGroupRef.current = group;
-  }, [allNodes, isMobile]);
+  }, [allNodes, isMobile, graphData?.axes]);
+
+  // Raycast a click against the invisible axis pole hit-areas; if one is hit,
+  // open a details card with that axis's definition (colorblind-friendly).
+  const handleAxisClick = useCallback((event: MouseEvent<HTMLDivElement>) => {
+    const fg = graphRef.current;
+    if (!fg || axisHitRef.current.length === 0) return;
+    const scene = fg.scene();
+    const camera = fg.camera();
+    if (!scene || !camera) return;
+
+    scene.updateMatrixWorld(true);
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((event.clientX - rect.left) / rect.width) * 2 - 1,
+      -((event.clientY - rect.top) / rect.height) * 2 + 1
+    );
+    const raycaster = new THREE.Raycaster();
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObjects(axisHitRef.current, false);
+    if (hits.length > 0) {
+      const ud = hits[0].object.userData as {
+        type?: string;
+        key?: AxisInfo["key"];
+        label?: string;
+        desc?: string;
+        hex?: string;
+      };
+      if (ud?.type === "axis" && ud.key && ud.label && ud.desc && ud.hex) {
+        setSelectedNode(null);
+        setSelectedAxis({ key: ud.key, label: ud.label, desc: ud.desc, hex: ud.hex });
+      }
+    }
+  }, []);
 
   const getNodeColor = (status: string) => {
     if (status === "mastered") return "#fbbf24"; // Gold
@@ -450,7 +545,7 @@ export function KnowledgeGraph3D() {
         </Card>
       </div>
 
-      <div ref={containerRef} className="absolute inset-0 z-0">
+      <div ref={containerRef} className="absolute inset-0 z-0" onClick={handleAxisClick}>
         <ForceGraph3D
           ref={graphRef}
           width={containerSize.width}
@@ -535,6 +630,35 @@ export function KnowledgeGraph3D() {
                 <Button size="sm" className="w-full text-white">Explore Topic</Button>
               </Link>
             </div>
+          </Card>
+        </motion.div>
+      )}
+
+      {/* Axis definition popover (opened by clicking an axis pole). */}
+      {selectedAxis && (
+        <motion.div
+          className="absolute top-16 right-4 z-20 w-72 max-w-[calc(100vw-2rem)]"
+          initial={{ opacity: 0, y: -8 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: -8 }}
+        >
+          <Card className="p-4 bg-background/95 backdrop-blur-lg border border-border">
+            <div className="flex items-start justify-between gap-2 mb-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-3 h-3 rounded-full shrink-0"
+                  style={{ backgroundColor: selectedAxis.hex }}
+                />
+                <h3 className="font-semibold text-white uppercase text-sm">
+                  {selectedAxis.key}-axis
+                </h3>
+              </div>
+              <Button variant="ghost" size="icon" onClick={() => setSelectedAxis(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="text-sm font-medium text-white mb-1">{selectedAxis.label}</p>
+            <p className="text-xs text-muted-foreground leading-relaxed">{selectedAxis.desc}</p>
           </Card>
         </motion.div>
       )}
