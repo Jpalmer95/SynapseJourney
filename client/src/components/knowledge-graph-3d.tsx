@@ -63,6 +63,8 @@ interface AxisInfo {
   label: string;
   desc: string;
   hex: string;
+  end?: "positive" | "negative";
+  poleLabel?: string;
 }
 
 export function KnowledgeGraph3D() {
@@ -202,8 +204,10 @@ export function KnowledgeGraph3D() {
   // Draw the three semantic-axis reference lines directly in the three.js scene
   // so the relational frame described by the legend is actually visible. Nodes
   // are pinned to these same axes (fx/fy/fz), so the lines cross at the cloud's
-  // origin. Each positive pole is a distinct shape (cube / cone / octahedron)
-  // with an invisible hit-area; clicking it opens the axis definition.
+  // origin. Each axis carries its distinct shape (cube / cone / octahedron) at
+  // BOTH ends — a smaller marker on the left-term end (e.g. "Applied") and a
+  // larger one on the right-term end (e.g. "Theoretical") — and each end has an
+  // invisible hit-area that opens the axis definition on click.
   useEffect(() => {
     if (isMobile) return;
     const fg = graphRef.current;
@@ -269,33 +273,54 @@ export function KnowledgeGraph3D() {
       group.add(new THREE.Line(lineGeo, lineMat));
 
       // Distinct pole shape per axis (cube / cone / octahedron) so colorblind
-      // users can tell the three axes apart without relying on color.
-      const shapeGeo =
+      // users can tell the three axes apart without relying on color. Placed at
+      // BOTH ends: smaller on the left-term end ("Applied"), larger on the
+      // right-term end ("Theoretical").
+      const [leftTerm, rightTerm] = meta.label.split("↔").map((s) => s.trim());
+      const makeShape = () =>
         ax.key === "x"
           ? new THREE.BoxGeometry(9, 9, 9)
           : ax.key === "y"
           ? new THREE.ConeGeometry(6, 13, 5)
           : new THREE.OctahedronGeometry(7);
-      const shapeMat = new THREE.MeshBasicMaterial({ color: meta.color, transparent: true, opacity: 0.9 });
-      const pole = new THREE.Mesh(shapeGeo, shapeMat);
-      pole.position.set(ax.to[0], ax.to[1], ax.to[2]);
-      group.add(pole);
+      const label = graphData?.axes?.[ax.key] || meta.label;
 
-      // Invisible, larger hit-area so the pole is easy to click; carries the
-      // axis definition for the click handler.
-      const hitGeo = new THREE.SphereGeometry(16, 12, 12);
-      const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
-      const hit = new THREE.Mesh(hitGeo, hitMat);
-      hit.position.copy(pole.position);
-      hit.userData = {
-        type: "axis",
-        key: ax.key,
-        label: graphData?.axes?.[ax.key] || meta.label,
-        desc: meta.desc,
-        hex: meta.hex,
-      };
-      group.add(hit);
-      axisHitRef.current.push(hit);
+      const poles: {
+        pos: [number, number, number];
+        scale: number;
+        end: "positive" | "negative";
+        poleLabel: string;
+      }[] = [
+        { pos: ax.from, scale: 1.0, end: "negative", poleLabel: rightTerm }, // larger (right term)
+        { pos: ax.to, scale: 0.6, end: "positive", poleLabel: leftTerm },    // smaller (left term)
+      ];
+
+      for (const p of poles) {
+        const shapeGeo = makeShape();
+        const shapeMat = new THREE.MeshBasicMaterial({ color: meta.color, transparent: true, opacity: 0.9 });
+        const marker = new THREE.Mesh(shapeGeo, shapeMat);
+        marker.scale.setScalar(p.scale);
+        marker.position.set(p.pos[0], p.pos[1], p.pos[2]);
+        group.add(marker);
+
+        // Invisible hit-area so either end is easy to click; carries the axis
+        // definition + which end was clicked.
+        const hitGeo = new THREE.SphereGeometry(16, 12, 12);
+        const hitMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+        const hit = new THREE.Mesh(hitGeo, hitMat);
+        hit.position.set(p.pos[0], p.pos[1], p.pos[2]);
+        hit.userData = {
+          type: "axis",
+          key: ax.key,
+          label,
+          desc: meta.desc,
+          hex: meta.hex,
+          end: p.end,
+          poleLabel: p.poleLabel,
+        };
+        group.add(hit);
+        axisHitRef.current.push(hit);
+      }
     }
 
     // Origin marker — the center where the three axes intersect.
@@ -334,10 +359,19 @@ export function KnowledgeGraph3D() {
         label?: string;
         desc?: string;
         hex?: string;
+        end?: AxisInfo["end"];
+        poleLabel?: string;
       };
       if (ud?.type === "axis" && ud.key && ud.label && ud.desc && ud.hex) {
         setSelectedNode(null);
-        setSelectedAxis({ key: ud.key, label: ud.label, desc: ud.desc, hex: ud.hex });
+        setSelectedAxis({
+          key: ud.key,
+          label: ud.label,
+          desc: ud.desc,
+          hex: ud.hex,
+          end: ud.end,
+          poleLabel: ud.poleLabel,
+        });
       }
     }
   }, []);
@@ -658,6 +692,12 @@ export function KnowledgeGraph3D() {
               </Button>
             </div>
             <p className="text-sm font-medium text-white mb-1">{selectedAxis.label}</p>
+            {selectedAxis.poleLabel && (
+              <p className="text-[11px] text-muted-foreground mb-1">
+                You clicked the{" "}
+                <span className="text-foreground font-medium">{selectedAxis.poleLabel}</span> end.
+              </p>
+            )}
             <p className="text-xs text-muted-foreground leading-relaxed">{selectedAxis.desc}</p>
           </Card>
         </motion.div>
