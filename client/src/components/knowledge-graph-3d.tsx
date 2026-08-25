@@ -301,6 +301,13 @@ export function KnowledgeGraph3D() {
         const marker = new THREE.Mesh(shapeGeo, shapeMat);
         marker.scale.setScalar(p.scale);
         marker.position.set(p.pos[0], p.pos[1], p.pos[2]);
+
+        // Orient the cone (Y axis only) so its apex points OUTWARD, away from
+        // the map's center, on both ends (cube/octahedron are symmetric).
+        if (ax.key === "y") {
+          const outward = new THREE.Vector3(p.pos[0], p.pos[1], p.pos[2]).normalize();
+          marker.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), outward);
+        }
         group.add(marker);
 
         // Invisible hit-area so either end is easy to click; carries the axis
@@ -534,6 +541,9 @@ export function KnowledgeGraph3D() {
             </div>
             <p className="text-[10px] text-muted-foreground/70 mt-2">
               The three colored axis lines cross at the map's center — each node sits where its topic lands on all three axes. Hover an axis for its meaning.
+            </p>
+            <p className="text-[10px] text-muted-foreground/70 mt-1.5 leading-tight">
+              Marker size marks the direction: the <span className="font-semibold">smaller</span> shape is the first term (e.g. Applied), the <span className="font-semibold">larger</span> shape is the second term (e.g. Theoretical).
             </p>
           </Card>
         )}
