@@ -5,6 +5,7 @@ import { authStorage } from "../replit_integrations/auth/storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "../storage";
+import { sendPasswordResetEmail } from "../email";
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
@@ -113,6 +114,64 @@ export async function setupAuth(app: Express) {
     } catch (error: any) {
       console.error("[Auth] Login error:", error);
       res.status(500).json({ message: error.message || "Login failed" });
+    }
+  });
+
+  // Forgot password: generate a reset token and email a link (1h expiry).
+  // Always returns the same generic message to avoid account enumeration.
+  app.post("/api/auth/forgot-password", async (req: any, res: any) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!email) {
+      return res.status(400).json({ message: "Email required" });
+    }
+    try {
+      const user = await authStorage.getUserByEmail(email);
+      if (user?.passwordHash) {
+        const token = crypto.randomBytes(32).toString("hex");
+        const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+        // Invalidate any previous outstanding tokens for this user (single active link).
+        await authStorage.clearPasswordResetTokensForUser(user.id);
+        await authStorage.createPasswordResetToken(user.id, tokenHash, expiresAt);
+        const baseUrl = (process.env.APP_URL || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
+        const resetUrl = `${baseUrl}/reset-password?token=${token}`;
+        // user.email may be null on some legacy rows; email is the normalized submitted address.
+        await sendPasswordResetEmail(email, resetUrl);
+      }
+    } catch (error) {
+      console.error("[Auth] forgot-password error:", error);
+    }
+    return res.json({
+      message: "If an account exists for that email, a password reset link has been sent.",
+    });
+  });
+
+  // Reset password using a token from the emailed link.
+  app.post("/api/auth/reset-password", async (req: any, res: any) => {
+    const token = typeof req.body?.token === "string" ? req.body.token : "";
+    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    if (!token) {
+      return res.status(400).json({ message: "Reset token required" });
+    }
+    if (!password || password.length < 8) {
+      return res.status(400).json({ message: "Password must be at least 8 characters" });
+    }
+    try {
+      const tokenHash = crypto.createHash("sha256").update(token).digest("hex");
+      const record = await authStorage.findPasswordResetTokenByHash(tokenHash);
+      if (!record || record.usedAt || record.expiresAt.getTime() < Date.now()) {
+        return res
+          .status(400)
+          .json({ message: "This reset link is invalid or has expired. Please request a new one." });
+      }
+      const passwordHash = await bcrypt.hash(password, 12);
+      await authStorage.updatePasswordHash(record.userId, passwordHash);
+      await authStorage.markPasswordResetTokenUsed(record.id);
+      await authStorage.clearPasswordResetTokensForUser(record.userId);
+      return res.json({ message: "Password reset successful. You can now log in." });
+    } catch (error) {
+      console.error("[Auth] reset-password error:", error);
+      return res.status(500).json({ message: "Failed to reset password" });
     }
   });
 

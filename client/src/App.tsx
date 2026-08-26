@@ -8,6 +8,7 @@ import { useAuth } from "@/hooks/use-auth";
 import { ErrorBoundary } from "@/components/error-boundary";
 import NotFound from "@/pages/not-found";
 import { LandingPage } from "@/pages/landing";
+import { ResetPasswordPage } from "@/pages/reset-password";
 import { HomePage } from "@/pages/home";
 import { MapPage } from "@/pages/map";
 import { SavedPage } from "@/pages/saved";
@@ -42,6 +43,11 @@ function AppContent() {
         </div>
       </div>
     );
+  }
+
+  // Password reset page renders for unauthenticated visitors too (they have no session).
+  if (location.startsWith("/reset-password")) {
+    return <ResetPasswordPage />;
   }
 
   if (!isAuthenticated) {
