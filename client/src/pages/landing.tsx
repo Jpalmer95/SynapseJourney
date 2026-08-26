@@ -30,13 +30,14 @@ const features = [
 ];
 
 export function LandingPage() {
-  const [mode, setMode] = useState<"login" | "register">("login");
+  const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [forgotSent, setForgotSent] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -44,6 +45,23 @@ export function LandingPage() {
     setLoading(true);
 
     try {
+      if (mode === "forgot") {
+        const res = await fetch("/api/auth/forgot-password", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(data.message || "Something went wrong");
+          setLoading(false);
+          return;
+        }
+        setForgotSent(true);
+        setLoading(false);
+        return;
+      }
+
       const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
       const body: any = { email, password };
       if (mode === "register") {
@@ -110,8 +128,26 @@ export function LandingPage() {
           <div className="max-w-md mx-auto">
             <Card className="p-6">
               <h2 className="text-2xl font-bold mb-4 text-center">
-                {mode === "login" ? "Welcome Back" : "Create Account"}
+                {mode === "login" ? "Welcome Back" : mode === "register" ? "Create Account" : "Reset Password"}
               </h2>
+              {mode === "forgot" && forgotSent ? (
+                <div className="text-center space-y-4">
+                  <p className="text-sm text-muted-foreground">
+                    If an account exists for <span className="font-medium text-foreground">{email}</span>, we've sent a
+                    password reset link. Check your inbox (and spam folder) — the link expires in 1 hour.
+                  </p>
+                  <Button
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => {
+                      setMode("login");
+                      setForgotSent(false);
+                    }}
+                  >
+                    Back to Login
+                  </Button>
+                </div>
+              ) : (
               <form onSubmit={handleSubmit} className="space-y-4">
                 <div>
                   <Label htmlFor="email">Email</Label>
@@ -124,6 +160,7 @@ export function LandingPage() {
                     placeholder="you@example.com"
                   />
                 </div>
+                {mode !== "forgot" && (
                 <div>
                   <Label htmlFor="password">Password</Label>
                   <Input
@@ -135,6 +172,22 @@ export function LandingPage() {
                     placeholder="••••••••"
                   />
                 </div>
+                )}
+                {mode === "login" && (
+                  <div className="text-right">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode("forgot");
+                        setForgotSent(false);
+                        setError("");
+                      }}
+                      className="text-sm text-primary hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                )}
                 {mode === "register" && (
                   <>
                     <div>
@@ -162,9 +215,10 @@ export function LandingPage() {
                 )}
                 <Button type="submit" className="w-full" disabled={loading}>
                   {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {mode === "login" ? "Log In" : "Create Account"}
+                  {mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Send Reset Link"}
                 </Button>
               </form>
+              )}
               <div className="mt-4 text-center text-sm">
                 {mode === "login" ? (
                   <span>
@@ -177,9 +231,20 @@ export function LandingPage() {
                       Sign up
                     </button>
                   </span>
-                ) : (
+                ) : mode === "register" ? (
                   <span>
                     Already have an account?{" "}
+                    <button
+                      type="button"
+                      onClick={() => setMode("login")}
+                      className="text-primary hover:underline"
+                    >
+                      Log in
+                    </button>
+                  </span>
+                ) : (
+                  <span>
+                    Remembered your password?{" "}
                     <button
                       type="button"
                       onClick={() => setMode("login")}
