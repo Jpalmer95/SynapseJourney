@@ -286,21 +286,21 @@ export async function planCourseWithAI(
     .replace("{includeAgentContext}", includeAgentContext ? "yes" : "no");
 
   try {
-    let content: string;
     // Always BYOC-or-fail for dynamic plans — never silent platform spend
-    if (options?.userConfig) {
-      const result = await generateByokOrPool(
-        [{ role: "user", content: prompt }],
-        options.userConfig,
-        { responseFormat: "json", temperature: 0.7, maxTokens: 2048 }
+    let content: string;
+    if (!options?.userConfig) {
+      throw new Error(
+        "BYOC_REQUIRED: Add your own AI key in Settings (xAI, Gemini, OpenRouter, Anthropic, Hugging Face, Ollama, LM Studio) " +
+        "or author this course with Hermes Agent and upload via Personal Access Token."
       );
-      content = result.content || "{}";
-      console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
-    } else {
-      // No user config → heuristic only (no platform AI)
-      console.warn(`[CoursePlanner] No userConfig for "${topicTitle}" — using heuristic (BYOC-only mode)`);
-      return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
     }
+    const result = await generateByokOrPool(
+      [{ role: "user", content: prompt }],
+      options.userConfig,
+      { responseFormat: "json", temperature: 0.7, maxTokens: 2048 }
+    );
+    content = result.content || "{}";
+    console.log(`[CoursePlanner] plan via ${result.source}/${result.provider} for "${topicTitle}"`);
 
     const parsed = JSON.parse(stripCodeFences(content));
 
@@ -415,7 +415,10 @@ export async function planCourseWithAI(
     );
 
     return plan;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("BYOC_REQUIRED")) {
+      throw error;
+    }
     console.warn(`[CoursePlan] AI planning failed for "${topicTitle}", falling back to heuristic:`, error);
     return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
   }

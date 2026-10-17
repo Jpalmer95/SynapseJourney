@@ -8,6 +8,9 @@ import {
   getUserChatProvider,
   validateUserChatCredentials,
   generateCourseContent,
+  generateByokOrPool,
+  providerConfigFromProfile,
+  validateByokCredentials,
   type ProviderConfig
 } from "../ai-providers";
 import { SYLLABI_MAP } from "../syllabi";
@@ -57,15 +60,9 @@ app.post("/api/ai/chat", isAuthenticated, async (req: any, res: Response) => {
 
     const { message, topicId, history, socraticMode, feynmanMode, feynmanGraded, synthesisQuest } = validationResult.data;
 
-    // Get user's preferred AI provider
+    // Get user's preferred AI provider (including BYOK keys for xAI, Gemini, Anthropic, LM Studio, custom OpenAI)
     const userProfile = await storage.getUserProfile(userId);
-    const providerConfig: ProviderConfig = {
-      provider: (userProfile?.preferredAiProvider as "openai" | "huggingface" | "ollama" | "openrouter") || "openai",
-      huggingFaceToken: userProfile?.huggingFaceToken || undefined,
-      ollamaUrl: userProfile?.ollamaUrl || undefined,
-      openRouterKey: userProfile?.openRouterKey || undefined,
-      preferredModel: userProfile?.preferredModel || undefined,
-    };
+    const providerConfig: ProviderConfig = providerConfigFromProfile(userProfile);
 
     // Validate user has configured their own chat provider credentials
     const credentialCheck = validateUserChatCredentials(providerConfig);
@@ -571,10 +568,16 @@ export async function predictivelyGenerateNextUnit(
     let content = nextUnit.contentJson;
 
     if (!content) {
+      const userProfile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(userProfile);
+      if (!validateByokCredentials(userConfig).valid) {
+        // Skip predictive pre-generation when learner has no BYOC key configured
+        return;
+      }
       console.log(`[Predictive] Pre-generating content for unit ${nextUnit.id} "${nextUnit.title}" (${nextUnit.difficulty} ${nextUnitContext.position}/${nextUnitContext.total})`);
       const generated = isNextGen
-        ? await generateNextGenContent(topic, nextUnit, masteredTopics, categoryName)
-        : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName, nextUnitContext);
+        ? await generateNextGenContent(topic, nextUnit, masteredTopics, categoryName, userConfig)
+        : await generateLessonContent(topic, nextUnit, masteredTopics, categoryName, nextUnitContext, userConfig);
 
       const isPlaceholder = typeof generated === "object" && generated !== null &&
         "_isPlaceholder" in generated && Boolean((generated as Record<string, unknown>)._isPlaceholder);
@@ -642,20 +645,30 @@ export async function preTTSForUnit(userId: string, unitId: number, content: unk
   }
 }
 
-// Generate custom topic content using AI
+// Generate custom topic content using AI (BYOC required)
 export async function generateCustomTopicContent(customTopicId: number, title: string, description: string, userId?: string) {
   try {
     await storage.updateCustomTopicStatus(customTopicId, "generating");
+    const userProfile = userId ? await storage.getUserProfile(userId) : undefined;
+    const userConfig = providerConfigFromProfile(userProfile);
+
+    if (!validateByokCredentials(userConfig).valid) {
+      console.warn(`[CustomTopic] User ${userId} has no BYOC key — marking custom topic ${customTopicId} failed`);
+      await storage.updateCustomTopicStatus(customTopicId, "failed");
+      return;
+    }
     
-    // Generate a category for this topic
+    // Generate a category for this topic using user's BYOC provider
     const categoryPrompt = `Given the learning topic "${title}" (${description}), suggest the best category name, color (purple, blue, green, orange, pink, or teal), and icon (Brain, Code, Calculator, Beaker, Atom, Book, Music, Wrench, Rocket, Leaf, Flask, or Lightbulb) for this topic. Return JSON: { "name": "Category Name", "color": "blue", "icon": "Code" }`;
     
-    const categoryContent = await generateCourseContent(
+    const { content: categoryContent } = await generateByokOrPool(
       [{ role: "user", content: categoryPrompt }],
+      userConfig,
       { responseFormat: "json" }
-    ) || "{}";
+    );
     
-    const categoryData = JSON.parse(categoryContent);
+    const fenceMatch = categoryContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const categoryData = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (categoryContent || "{}"));
     
     // Create or find category
     let category;
@@ -680,7 +693,10 @@ export async function generateCustomTopicContent(customTopicId: number, title: s
     });
     
     // Generate lesson outline (also saves units to DB internally)
-    const units = await generateLessonOutline(topic.id, title, description);
+    const units = await generateLessonOutline(topic.id, title, description, {
+      createdByUserId: userId,
+      userConfig,
+    });
 
     // Mark topic as ready before batch pre-generation so frontend can show the outline
     await storage.updateCustomTopicStatus(customTopicId, "ready", topic.id, category.id);
@@ -739,14 +755,20 @@ export async function batchPregenerateUnits(
       }
     }
 
-    // ── Fall back to AI for any units without seed content ──────────────────
+    // ── Fall back to AI for any units without seed content (BYOC only) ──────
     const aiUnits = unitsToGenerate.filter(u => !contentMap.has(u.id));
     if (aiUnits.length > 0) {
-      console.log(`[BatchPregen] ${aiUnits.length} units need AI generation for "${topic.title}"`);
-      const masteredTopics = await storage.getUserMasteredTopics(userId);
-      const aiContentMap = await generateBatchLessonContent(topic, aiUnits, masteredTopics);
-      for (const [unitId, content] of Array.from(aiContentMap.entries())) {
-        contentMap.set(unitId, content);
+      const userProfile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(userProfile);
+      if (validateByokCredentials(userConfig).valid) {
+        console.log(`[BatchPregen] ${aiUnits.length} units need AI generation for "${topic.title}"`);
+        const masteredTopics = await storage.getUserMasteredTopics(userId);
+        const aiContentMap = await generateBatchLessonContent(topic, aiUnits, masteredTopics, userConfig);
+        for (const [unitId, content] of Array.from(aiContentMap.entries())) {
+          contentMap.set(unitId, content);
+        }
+      } else {
+        console.log(`[BatchPregen] Skipping AI batch pre-generation for "${topic.title}" — user has no BYOC key`);
       }
     }
 
@@ -1057,146 +1079,12 @@ export async function generateLessonOutline(
       `(intent=${learningIntent}, scope=${plan.scope}, oer=${plan.recommendedOER?.length || 0})`
     );
     return createdUnits;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("BYOC_REQUIRED")) {
+      throw error;
+    }
     console.error("Error generating lesson outline via course planner:", error);
-    // Fall through to legacy path below
-  }
-
-  // ── Legacy heuristic fallback (if planner path fully fails) ─────────────────
-  const profile = classifyTopicByKeywords(topicTitle, topicDescription);
-  const tierInfo = profile.unitsPerTier;
-
-  const contentTypeGuidance = profile.contentType === "code_heavy"
-    ? `This is a CODE-HEAVY topic. Include runnable code examples in most units. Beginner units should show simple one-liners; intermediate should show functions/classes; advanced should show architecture patterns.`
-    : profile.contentType === "formula_heavy"
-    ? `This is a FORMULA-HEAVY topic. Include mathematical notation and derivations. Beginner units should use intuition-first explanations; intermediate should introduce equations with plain-English glosses and worked numerical examples; advanced should use formal mathematical arguments.`
-    : profile.contentType === "theory_heavy"
-    ? `This is a THEORY-HEAVY topic. Every unit must define technical terms precisely on first use, include key equations with LaTeX and plain-English variable explanations, provide intuitive derivations step-by-step, and connect abstract theory to observable phenomena. Beginner: analogy-first, then introduce the minimal equation; Intermediate: full derivations with physical interpretation at each step; Advanced: compare competing theoretical frameworks and discuss their regimes of validity.`
-    : profile.contentType === "visual_heavy"
-    ? `This is a VISUAL-HEAVY topic. Describe diagrams, graphs, and spatial relationships in detail. Include Mermaid.js diagrams where helpful. Beginner: concrete visual analogies; Intermediate: structured diagrams with labeled components; Advanced: complex visual proofs or multi-scale visualizations.`
-    : `This is a CONCEPT-HEAVY topic. Focus on clear explanations, analogies, and thought experiments. Code and formulas are optional — use them only when they genuinely clarify the concept.`;
-
-  const prompt = `You are an expert curriculum designer. Create a structured learning outline for the topic "${topicTitle}".
-
-Topic Description: ${topicDescription}
-
-Topic Classification: ${profile.category} (${profile.contentType})
-${contentTypeGuidance}
-
-Create a course outline with units across FOUR difficulty levels. The target unit counts for THIS specific topic are:
-- Beginner: ${tierInfo.beginner} units
-- Intermediate: ${tierInfo.intermediate} units
-- Advanced: ${tierInfo.advanced} units
-- Next Gen: ${tierInfo.nextgen} units
-
-Every unit must have a UNIQUE title covering DISTINCT material — no two units in the same tier may overlap in content.
-
-Respond with a JSON object in this exact format (replace with real content for "${topicTitle}"):
-{
-  "units": [
-    {"difficulty": "beginner", "unitIndex": 0, "title": "...", "outline": "..."},
-    {"difficulty": "beginner", "unitIndex": 1, "title": "...", "outline": "..."},
-    ...
-    {"difficulty": "intermediate", "unitIndex": 0, "title": "...", "outline": "..."},
-    ...
-    {"difficulty": "advanced", "unitIndex": 0, "title": "...", "outline": "..."},
-    ...
-    {"difficulty": "nextgen", "unitIndex": 0, "title": "...", "outline": "..."},
-    ...
-  ]
-}
-
-CRITICAL RULES:
-- Produce EXACTLY ${tierInfo.beginner} beginner, ${tierInfo.intermediate} intermediate, ${tierInfo.advanced} advanced, and ${tierInfo.nextgen} nextgen units (${tierInfo.beginner + tierInfo.intermediate + tierInfo.advanced + tierInfo.nextgen} total).
-- Every unit title must be UNIQUE and cover a DIFFERENT aspect of "${topicTitle}" — no overlapping content within a tier.
-- unitIndex MUST be sequential starting from 0 within each difficulty (0, 1, 2, ...).
-- Titles must be specific to "${topicTitle}", not generic placeholders.
-- Outlines must describe exactly what that specific unit covers (1-2 sentences).
-- Beginner: everyday language, no jargon, spark curiosity. Focus on "what is it?" and "why does this matter?"
-- Intermediate: mechanisms, frameworks, how things work under the hood.
-- Advanced: current research, edge cases, expert-level nuances, competing paradigms.
-- Next Gen: unsolved problems, active research questions, frontier exploration, cross-domain connections.`;
-
-  try {
-    const content = await generateCourseContent(
-      [{ role: "user", content: prompt }],
-      { responseFormat: "json", temperature: 0.7 }
-    ) || "{}";
-
-    const parsed = JSON.parse(content);
-    
-    if (!parsed.units || !Array.isArray(parsed.units)) {
-      throw new Error("Invalid AI response format");
-    }
-
-    // Normalize unitIndex values and enforce per-tier counts matching the topic profile.
-    const DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"];
-    const tierTargets: Record<string, number> = {
-      beginner: tierInfo.beginner,
-      intermediate: tierInfo.intermediate,
-      advanced: tierInfo.advanced,
-      nextgen: tierInfo.nextgen,
-    };
-    // Generic fallback per difficulty when the AI returns wrong count
-    const tierDefaults: Record<string, any[]> = {
-      beginner: Array.from({ length: tierInfo.beginner }, (_, i) => ({
-        difficulty: "beginner", title: i === 0 ? "Introduction & Basics" : i === 1 ? "Core Concepts" : `Foundations Part ${i}`,
-        outline: i === 0 ? `Get started with the fundamentals of ${topicTitle}` : "Learn the essential terms and ideas",
-      })),
-      intermediate: Array.from({ length: tierInfo.intermediate }, (_, i) => ({
-        difficulty: "intermediate", title: i === 0 ? "Deeper Mechanisms" : i === 1 ? "Practical Applications" : `Advanced Patterns Part ${i}`,
-        outline: i === 0 ? "Understand how things work under the hood" : "Apply your knowledge to real scenarios",
-      })),
-      advanced: Array.from({ length: tierInfo.advanced }, (_, i) => ({
-        difficulty: "advanced", title: i === 0 ? "Edge Cases" : i === 1 ? "Current Research" : `Expert Topics Part ${i}`,
-        outline: i === 0 ? "Explore unusual situations and exceptions" : "Discover what experts are working on today",
-      })),
-      nextgen: Array.from({ length: tierInfo.nextgen }, (_, i) => ({
-        difficulty: "nextgen", title: i === 0 ? "Open Research Questions" : i === 1 ? "Industry Frontiers" : `Frontier Exploration Part ${i}`,
-        outline: i === 0 ? "Explore unsolved problems and cutting-edge questions" : "Discover active challenges and emerging opportunities",
-      })),
-    };
-
-    const unitsByDiff: Record<string, any[]> = {};
-    for (const u of parsed.units) {
-      if (!unitsByDiff[u.difficulty]) unitsByDiff[u.difficulty] = [];
-      unitsByDiff[u.difficulty].push(u);
-    }
-    const normalizedUnits: any[] = [];
-    for (const diff of DIFFICULTIES) {
-      let diffUnits = unitsByDiff[diff] || [];
-      const target = tierTargets[diff];
-      if (diffUnits.length !== target) {
-        const originalCount = diffUnits.length;
-        diffUnits = tierDefaults[diff] || tierDefaults["beginner"];
-        console.warn(`[Outline] Tier "${diff}" had ${originalCount} units (expected ${target}); defaulted to ${diffUnits.length} units`);
-      }
-      // Re-assign sequential unitIndex regardless of what the AI returned
-      diffUnits.forEach((u, i) => {
-        normalizedUnits.push({ ...u, difficulty: diff, unitIndex: i });
-      });
-    }
-    console.log(`[Outline] Topic "${topicTitle}" (${profile.category}/${profile.contentType}): ` +
-      DIFFICULTIES.map(d => `${d}=${normalizedUnits.filter(u => u.difficulty === d).length}`).join(", ") +
-      ` (${normalizedUnits.length} total)`);
-
-    // Save units to database
-    const createdUnits = await Promise.all(
-      normalizedUnits.map((u: any) => storage.createLessonUnit({
-        topicId,
-        difficulty: u.difficulty,
-        contentType: profile.contentType,
-        unitIndex: u.unitIndex,
-        title: u.title,
-        outline: u.outline,
-      }))
-    );
-
-    console.log(`[Outline] Created ${createdUnits.length} units for topic "${topicTitle}"`);
-    return createdUnits;
-  } catch (error) {
-    console.error("Error generating lesson outline:", error);
-    // Return default outline on failure
+    // Return deterministic default outline on failure (zero platform AI spend)
     return getDefaultLessonUnits(topicId, topicTitle);
   }
 }
@@ -1206,7 +1094,8 @@ CRITICAL RULES:
 export async function generateBatchLessonContent(
   topic: { title: string; description: string },
   units: { id: number; title: string; difficulty: string; outline?: string | null }[],
-  masteredTopics: { topicId: number; topicTitle: string }[]
+  masteredTopics: { topicId: number; topicTitle: string }[],
+  userConfig?: ProviderConfig
 ): Promise<Map<number, any>> {
   const profile = classifyTopicByKeywords(topic.title, topic.description);
   const crossTopicContext = masteredTopics.length > 0
@@ -1372,14 +1261,20 @@ IMPORTANT: Do NOT generate quiz questions. Quizzes are generated on-demand when 
 The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, etc).`;
 
   try {
-    console.log(`[BatchContent] Generating batch content for ${unitsList.length} units of topic "${topic.title}"`);
+    if (!userConfig || !validateByokCredentials(userConfig).valid) {
+      console.log(`[BatchContent] Skipping batch content generation for "${topic.title}" — BYOC key required`);
+      return new Map();
+    }
+    console.log(`[BatchContent] Generating batch content for ${unitsList.length} units of topic "${topic.title}" via BYOC`);
     
-    const content = await generateCourseContent(
+    const { content } = await generateByokOrPool(
       [{ role: "user", content: prompt }],
+      userConfig,
       { responseFormat: "json", temperature: 0.7 }
-    ) || "{}";
+    );
 
-    const parsed = JSON.parse(content);
+    const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const parsed = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (content || "{}"));
     const resultMap = new Map<number, any>();
     
     // Map the response back to unit IDs
@@ -1398,13 +1293,14 @@ The externalResources URLs must be real, working URLs (ocw.mit.edu, arxiv.org, k
   }
 }
 
-// Generate lesson content using AI
+// Generate lesson content using AI (BYOC required)
 export async function generateLessonContent(
   topic: { title: string; description: string },
   unit: { title: string; difficulty: string; outline?: string | null },
   masteredTopics: { topicId: number; topicTitle: string }[],
   categoryName?: string,
-  unitContext?: { position: number; total: number; siblingTitles: string[] }
+  unitContext?: { position: number; total: number; siblingTitles: string[] },
+  userConfig?: ProviderConfig
 ): Promise<any> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
@@ -1557,12 +1453,17 @@ ${masteredTopics.length > 0 ? "Include 1-2 cross-links to mastered topics if rel
 The externalResources URLs must be real, specific, and working (ocw.mit.edu, arxiv.org, khanacademy.org, youtube.com, grokipedia.com, etc). Do not invent URLs.`;
 
   try {
-    const content = await generateCourseContent(
+    if (!userConfig || !validateByokCredentials(userConfig).valid) {
+      throw new Error("BYOC_REQUIRED: Connect an AI key in Settings or upload content via Hermes Agent.");
+    }
+    const { content } = await generateByokOrPool(
       [{ role: "user", content: prompt }],
+      userConfig,
       { responseFormat: "json", temperature: 0.7 }
-    ) || "{}";
+    );
 
-    const parsed = JSON.parse(content);
+    const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const parsed = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (content || "{}"));
 
     // Validate and clean up external resource URLs
     if (parsed.externalResources?.length) {
@@ -1576,11 +1477,13 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
           const retryPrompt = `The following URLs for the lesson "${unit.title}" on topic "${topic.title}" (${categoryName || "general"}, ${unit.difficulty} level) failed validation. Generate ${count} alternative external resource links that are real, live, and specific to this exact topic and difficulty level. Return JSON array only:
 [{"title":"...","url":"https://...","type":"video|course|paper|book|forum|tool|encyclopedia","description":"..."}]`;
           try {
-            const alt = await generateCourseContent(
+            const { content: alt } = await generateByokOrPool(
               [{ role: "user", content: retryPrompt }],
+              userConfig,
               { responseFormat: "json", temperature: 0.5 }
-            ) || "[]";
-            const altParsed = JSON.parse(alt);
+            );
+            const altFence = alt.match(/```(?:json)?\s*([\s\S]*?)```/);
+            const altParsed = JSON.parse(altFence ? altFence[1].trim() : (alt || "[]"));
             return Array.isArray(altParsed) ? altParsed : (altParsed.externalResources || []);
           } catch {
             return [];
@@ -1590,7 +1493,10 @@ The externalResources URLs must be real, specific, and working (ocw.mit.edu, arx
     }
 
     return parsed;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("BYOC_REQUIRED")) {
+      throw error;
+    }
     console.error("Error generating lesson content:", error);
     // Return placeholder content with marker - DO NOT save this to DB
     return {
@@ -1617,7 +1523,8 @@ export async function generateOnDemandQuiz(
   topic: { title: string; description: string },
   unit: { title: string; difficulty: string; outline?: string | null },
   lessonContent: unknown,
-  questionCount: number = 3
+  questionCount: number = 3,
+  userConfig?: ProviderConfig
 ): Promise<any> {
   const contentStr = typeof lessonContent === "string"
     ? lessonContent
@@ -1662,12 +1569,18 @@ CRITICAL QUIZ RULES:
 - Questions should test understanding of THIS specific lesson's content, not generic knowledge`;
 
   try {
-    const content = await generateCourseContent(
+    if (!userConfig || !validateByokCredentials(userConfig).valid) {
+      throw new Error("BYOC_REQUIRED: Add an AI key in Settings to generate on-demand quizzes.");
+    }
+    const { content } = await generateByokOrPool(
       [{ role: "user", content: prompt }],
+      userConfig,
       { responseFormat: "json", temperature: 0.7 }
-    ) || "[]";
+    );
 
-    const parsed = JSON.parse(content);
+    const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const parsedRaw = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (content || "[]"));
+    const parsed = Array.isArray(parsedRaw) ? parsedRaw : (parsedRaw.questions || parsedRaw.quiz || []);
 
     if (!Array.isArray(parsed) || parsed.length === 0) {
       throw new Error("Invalid quiz response: expected non-empty array");
@@ -1682,7 +1595,10 @@ CRITICAL QUIZ RULES:
     }
 
     return parsed;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("BYOC_REQUIRED")) {
+      throw error;
+    }
     console.error("[OnDemandQuiz] Error generating quiz:", error);
     return [];
   }
@@ -1709,12 +1625,13 @@ export async function getDefaultLessonUnits(topicId: number, topicTitle: string)
   return Promise.all(defaultUnits.map(u => storage.createLessonUnit({ topicId, ...u })));
 }
 
-// Generate Next Gen content using AI (frontier research and creative challenges)
+// Generate Next Gen content using AI (frontier research and creative challenges, BYOC required)
 export async function generateNextGenContent(
   topic: { title: string; description: string },
   unit: { title: string; outline?: string | null },
   masteredTopics: { topicId: number; topicTitle: string }[],
-  categoryName?: string
+  categoryName?: string,
+  userConfig?: ProviderConfig
 ): Promise<unknown> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has mastered these topics and can draw connections: ${masteredTopics.map(t => t.topicTitle).join(", ")}.`
@@ -1836,12 +1753,17 @@ Requirements:
 
 
   try {
-    const content = await generateCourseContent(
+    if (!userConfig || !validateByokCredentials(userConfig).valid) {
+      throw new Error("BYOC_REQUIRED: Connect an AI key in Settings or upload content via Hermes Agent.");
+    }
+    const { content } = await generateByokOrPool(
       [{ role: "user", content: prompt }],
+      userConfig,
       { responseFormat: "json", temperature: 0.8 }
-    ) || "{}";
+    );
 
-    const parsed = JSON.parse(content) as Record<string, unknown>;
+    const fenceMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/);
+    const parsed = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (content || "{}")) as Record<string, unknown>;
 
     // Validate and filter resources + communityForums for dead links
     const { validateResources } = await import("../link-validator");
@@ -1865,7 +1787,10 @@ Requirements:
     }
 
     return parsed;
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.message?.includes("BYOC_REQUIRED")) {
+      throw error;
+    }
     console.error("Error generating Next Gen content:", error);
     // Return placeholder content with marker - DO NOT save this to DB
     return {

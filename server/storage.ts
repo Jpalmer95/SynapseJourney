@@ -10,6 +10,7 @@ import {
   ideaContributions, novaCoins,
   ttsAudioCache, flashcards, flashcardReviews,
   openScienceIdeas, openScienceComments,
+  sotaBottlenecks, knowledgeResources,
   contentVersions, contentReviews, userApiKeys, communityPoolUsage,
   coursePlans, learningGoals, learningTimeline, topicLearningPrefs,
   coursePosters, userAccessTokens,
@@ -65,6 +66,10 @@ import {
   type InsertOpenScienceIdea,
   type OpenScienceComment,
   type InsertOpenScienceComment,
+  type SotaBottleneck,
+  type InsertSotaBottleneck,
+  type KnowledgeResource,
+  type InsertKnowledgeResource,
   type ContentVersion,
   type InsertContentVersion,
   type ContentReview,
@@ -230,11 +235,22 @@ export interface IStorage {
   updateCustomTopicStatus(id: number, status: string, generatedTopicId?: number, generatedCategoryId?: number): Promise<CustomTopic>;
 
   // Open Science
-  getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic })[]>;
+  getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic; bottleneck?: SotaBottleneck })[]>;
+  getOpenScienceIdeaById(id: number): Promise<OpenScienceIdea | undefined>;
   createOpenScienceIdea(idea: InsertOpenScienceIdea): Promise<OpenScienceIdea>;
+  updateOpenScienceIdea(id: number, updates: Partial<OpenScienceIdea>): Promise<OpenScienceIdea | undefined>;
   upvoteOpenScienceIdea(id: number): Promise<OpenScienceIdea>;
   getOpenScienceComments(ideaId: number): Promise<OpenScienceComment[]>;
   createOpenScienceComment(comment: InsertOpenScienceComment): Promise<OpenScienceComment>;
+
+  // SOTA Bottlenecks & Knowledge Resources Commons
+  getSotaBottlenecks(filters?: { topicId?: number; domain?: string; limit?: number }): Promise<(SotaBottleneck & { topicTitle?: string })[]>;
+  getSotaBottleneckById(id: number): Promise<SotaBottleneck | undefined>;
+  upsertSotaBottleneck(data: InsertSotaBottleneck): Promise<SotaBottleneck>;
+  upvoteSotaBottleneck(id: number): Promise<SotaBottleneck>;
+  getKnowledgeResources(filters?: { topicId?: number; resourceType?: string; query?: string; limit?: number }): Promise<(KnowledgeResource & { topicTitle?: string })[]>;
+  upsertKnowledgeResource(data: InsertKnowledgeResource): Promise<KnowledgeResource>;
+  upsertTopicCoordinate(data: { topicId: number; x: number; y: number; z: number; axis0Label?: string; axis1Label?: string; axis2Label?: string }): Promise<void>;
 
   // User Infographics
   createUserInfographic(infographic: InsertUserInfographic): Promise<UserInfographic>;
@@ -660,6 +676,7 @@ export class DatabaseStorage implements IStorage {
     stats: { total: number; mastered: number; learning: number };
     axes?: { x: string; y: string; z: string };
   }> {
+    //Knowledge Graph
     const allTopics = await this.getTopics();
     const progress = await this.getUserProgress(userId);
     const connections = await db.select().from(topicConnections);
@@ -680,18 +697,18 @@ export class DatabaseStorage implements IStorage {
       red: "#ef4444",
     };
 
-    const nodes = allTopics.map((topic, index) => {
+    const nodes = allTopics.map((topic) => {
       const category = topic.categoryId ? categoryMap.get(topic.categoryId) : undefined;
       const userProgressItem = progressMap.get(topic.id);
       const c = coordMap.get(topic.id);
-      // Use relational PCA coordinates when present, else deterministic fallback
-      // (seeded by id so it's stable, NOT Math.random()).
+      // Use relational PCA coordinates when present, else deterministic origin-centered
+      // placement inside [-120, 120] so new topics sit cleanly inside the 3D axis frame.
       const seeded = (topic.id * 2654435761) % 1000;
       const angle = (seeded / 1000) * 2 * Math.PI;
-      const radius = 120 + (seeded % 80);
-      const x = c ? c.x * 200 : 400 + Math.cos(angle) * radius;
-      const y = c ? c.y * 200 : 300 + Math.sin(angle) * radius;
-      const z = c ? c.z * 200 : (seeded % 200) - 100;
+      const radius = 50 + (seeded % 70);
+      const x = c ? c.x * 200 : Math.cos(angle) * radius;
+      const y = c ? c.y * 200 : Math.sin(angle) * radius;
+      const z = c ? c.z * 200 : ((seeded * 7) % 160) - 80;
 
       return {
         id: topic.id,
@@ -703,6 +720,7 @@ export class DatabaseStorage implements IStorage {
         z,
         mastery: userProgressItem?.mastery || 0,
         status: userProgressItem?.status || "unexplored",
+        lastAccessedAt: userProgressItem?.lastAccessedAt || null,
       };
     });
 
@@ -1053,6 +1071,7 @@ export class DatabaseStorage implements IStorage {
 
   async completeLesson(userId: string, unitId: number, quizScore?: number): Promise<LessonProgress> {
     const existing = await this.getLessonProgress(userId, unitId);
+    let result: LessonProgress;
     if (existing) {
       const [updated] = await db.update(lessonProgress)
         .set({ 
@@ -1063,12 +1082,77 @@ export class DatabaseStorage implements IStorage {
         })
         .where(eq(lessonProgress.id, existing.id))
         .returning();
-      return updated;
+      result = updated;
+    } else {
+      const [created] = await db.insert(lessonProgress)
+        .values({ userId, unitId, status: "completed", quizScore })
+        .returning();
+      result = created;
     }
-    const [created] = await db.insert(lessonProgress)
-      .values({ userId, unitId, status: "completed", quizScore })
-      .returning();
-    return created;
+
+    // Sync overall topic mastery % and status into user_progress + learning_timeline
+    try {
+      const unit = await this.getLessonUnit(unitId);
+      if (unit) {
+        const allUnits = await this.getLessonUnits(unit.topicId);
+        let completedCount = 0;
+        let coreTotal = 0;
+        let coreCompleted = 0;
+        for (const u of allUnits) {
+          const isCore = u.difficulty !== "nextgen";
+          if (isCore) coreTotal++;
+          const lp = u.id === unitId ? result : await this.getLessonProgress(userId, u.id);
+          if (lp?.status === "completed") {
+            completedCount++;
+            if (isCore) coreCompleted++;
+          }
+        }
+        const masteryPct = allUnits.length > 0 ? Math.min(100, Math.round((completedCount / allUnits.length) * 100)) : 0;
+        const isMastered = masteryPct >= 80 || (coreTotal > 0 && coreCompleted >= coreTotal);
+        const existingTopicProg = await this.getProgressForTopic(userId, unit.topicId);
+        const wasMastered = existingTopicProg?.status === "mastered";
+        const newStatus = isMastered ? "mastered" : "learning";
+
+        if (existingTopicProg) {
+          await db.update(userProgress)
+            .set({
+              mastery: masteryPct,
+              status: newStatus,
+              lastUnitId: unitId,
+              lastAccessedAt: new Date(),
+            })
+            .where(eq(userProgress.id, existingTopicProg.id));
+        } else {
+          await db.insert(userProgress).values({
+            userId,
+            topicId: unit.topicId,
+            mastery: masteryPct,
+            status: newStatus,
+            lastUnitId: unitId,
+          });
+        }
+
+        await this.recordTimelineEvent({
+          userId,
+          topicId: unit.topicId,
+          eventType: "completed",
+          metadata: { unitId, unitTitle: unit.title, quizScore: quizScore ?? null, masteryPct },
+        });
+
+        if (isMastered && !wasMastered) {
+          await this.recordTimelineEvent({
+            userId,
+            topicId: unit.topicId,
+            eventType: "mastered",
+            metadata: { masteryPct, completedUnits: completedCount, totalUnits: allUnits.length },
+          });
+        }
+      }
+    } catch (syncErr) {
+      console.warn("[Storage] Failed to sync userProgress on lesson completion:", syncErr);
+    }
+
+    return result;
   }
 
   // Topic Mastery
@@ -1167,16 +1251,32 @@ export class DatabaseStorage implements IStorage {
   }
 
   async getUserMasteredTopics(userId: string): Promise<{ topicId: number; topicTitle: string }[]> {
+    const seen = new Set<number>();
+    const masteredTopics: { topicId: number; topicTitle: string }[] = [];
+
+    // 1. Check user_progress rows marked "mastered" or >= 80%
+    const progRows = await this.getUserProgress(userId);
+    for (const p of progRows) {
+      if (p.status === "mastered" || (p.mastery ?? 0) >= 80) {
+        const topic = await this.getTopicById(p.topicId);
+        if (topic && !seen.has(topic.id)) {
+          seen.add(topic.id);
+          masteredTopics.push({ topicId: topic.id, topicTitle: topic.title });
+        }
+      }
+    }
+
+    // 2. Also check legacy topic_mastery rows
     const masteries = await db.select().from(topicMastery)
       .where(eq(topicMastery.userId, userId));
     
-    const masteredTopics = [];
     for (const m of masteries) {
-      // Consider a topic "mastered" if beginner is fully completed
+      if (seen.has(m.topicId)) continue;
       const units = await this.getLessonUnits(m.topicId, "beginner");
       if (units.length > 0 && m.beginnerCompleted >= units.length) {
         const topic = await this.getTopicById(m.topicId);
         if (topic) {
+          seen.add(topic.id);
           masteredTopics.push({ topicId: topic.id, topicTitle: topic.title });
         }
       }
@@ -1593,19 +1693,27 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Open Science
-  async getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic })[]> {
+  async getOpenScienceIdeas(): Promise<(OpenScienceIdea & { topic?: Topic; bottleneck?: SotaBottleneck })[]> {
     const ideas = await db.select({
       idea: openScienceIdeas,
       topic: topics,
+      bottleneck: sotaBottlenecks,
     })
     .from(openScienceIdeas)
     .leftJoin(topics, eq(openScienceIdeas.topicId, topics.id))
+    .leftJoin(sotaBottlenecks, eq(openScienceIdeas.bottleneckId, sotaBottlenecks.id))
     .orderBy(desc(openScienceIdeas.createdAt));
 
     return ideas.map(row => ({
       ...row.idea,
-      ...(row.topic ? { topic: row.topic } : {})
+      ...(row.topic ? { topic: row.topic } : {}),
+      ...(row.bottleneck ? { bottleneck: row.bottleneck } : {}),
     }));
+  }
+
+  async getOpenScienceIdeaById(id: number): Promise<OpenScienceIdea | undefined> {
+    const [idea] = await db.select().from(openScienceIdeas).where(eq(openScienceIdeas.id, id));
+    return idea;
   }
 
   async createOpenScienceIdea(idea: InsertOpenScienceIdea): Promise<OpenScienceIdea> {
@@ -1613,8 +1721,15 @@ export class DatabaseStorage implements IStorage {
     return created;
   }
 
+  async updateOpenScienceIdea(id: number, updates: Partial<OpenScienceIdea>): Promise<OpenScienceIdea | undefined> {
+    const [updated] = await db.update(openScienceIdeas)
+      .set(updates)
+      .where(eq(openScienceIdeas.id, id))
+      .returning();
+    return updated;
+  }
+
   async upvoteOpenScienceIdea(id: number): Promise<OpenScienceIdea> {
-    // We increment by 1
     const [updated] = await db.update(openScienceIdeas)
       .set({ upvotes: sql`${openScienceIdeas.upvotes} + 1` })
       .where(eq(openScienceIdeas.id, id))
@@ -1632,6 +1747,113 @@ export class DatabaseStorage implements IStorage {
   async createOpenScienceComment(comment: InsertOpenScienceComment): Promise<OpenScienceComment> {
     const [created] = await db.insert(openScienceComments).values(comment).returning();
     return created;
+  }
+
+  // SOTA Bottlenecks & Knowledge Resources Commons
+  async getSotaBottlenecks(filters?: { topicId?: number; domain?: string; limit?: number }): Promise<(SotaBottleneck & { topicTitle?: string })[]> {
+    const limit = filters?.limit || 50;
+    const rows = await db.select({
+      bottleneck: sotaBottlenecks,
+      topicTitle: topics.title,
+    })
+      .from(sotaBottlenecks)
+      .leftJoin(topics, eq(sotaBottlenecks.topicId, topics.id))
+      .orderBy(desc(sotaBottlenecks.upvotes), desc(sotaBottlenecks.createdAt))
+      .limit(limit * 2);
+
+    return rows
+      .filter((r) => {
+        if (filters?.topicId && r.bottleneck.topicId !== filters.topicId) return false;
+        if (filters?.domain && filters.domain !== "all" && r.bottleneck.domain.toLowerCase() !== filters.domain.toLowerCase()) return false;
+        return true;
+      })
+      .slice(0, limit)
+      .map((r) => ({
+        ...r.bottleneck,
+        ...(r.topicTitle ? { topicTitle: r.topicTitle } : {}),
+      }));
+  }
+
+  async getSotaBottleneckById(id: number): Promise<SotaBottleneck | undefined> {
+    const [row] = await db.select().from(sotaBottlenecks).where(eq(sotaBottlenecks.id, id));
+    return row;
+  }
+
+  async upsertSotaBottleneck(data: InsertSotaBottleneck): Promise<SotaBottleneck> {
+    const existing = await db.select().from(sotaBottlenecks)
+      .where(sql`LOWER(${sotaBottlenecks.title}) = LOWER(${data.title})`)
+      .limit(1);
+    if (existing.length > 0) {
+      return existing[0];
+    }
+    const [created] = await db.insert(sotaBottlenecks).values(data).returning();
+    return created;
+  }
+
+  async upvoteSotaBottleneck(id: number): Promise<SotaBottleneck> {
+    const [updated] = await db.update(sotaBottlenecks)
+      .set({ upvotes: sql`${sotaBottlenecks.upvotes} + 1` })
+      .where(eq(sotaBottlenecks.id, id))
+      .returning();
+    return updated;
+  }
+
+  async getKnowledgeResources(filters?: { topicId?: number; resourceType?: string; query?: string; limit?: number }): Promise<(KnowledgeResource & { topicTitle?: string })[]> {
+    const limit = filters?.limit || 60;
+    const rows = await db.select({
+      resource: knowledgeResources,
+      topicTitle: topics.title,
+    })
+      .from(knowledgeResources)
+      .leftJoin(topics, eq(knowledgeResources.topicId, topics.id))
+      .orderBy(desc(knowledgeResources.upvotes), desc(knowledgeResources.createdAt))
+      .limit(limit * 3);
+
+    const q = filters?.query?.trim().toLowerCase();
+    return rows
+      .filter((r) => {
+        if (filters?.topicId && r.resource.topicId !== filters.topicId) return false;
+        if (filters?.resourceType && filters.resourceType !== "all" && r.resource.resourceType !== filters.resourceType) return false;
+        if (q) {
+          const hay = `${r.resource.title} ${r.resource.description} ${r.resource.providerName || ""} ${r.topicTitle || ""}`.toLowerCase();
+          if (!hay.includes(q)) return false;
+        }
+        return true;
+      })
+      .slice(0, limit)
+      .map((r) => ({
+        ...r.resource,
+        ...(r.topicTitle ? { topicTitle: r.topicTitle } : {}),
+      }));
+  }
+
+  async upsertKnowledgeResource(data: InsertKnowledgeResource): Promise<KnowledgeResource> {
+    const existing = await db.select().from(knowledgeResources)
+      .where(eq(knowledgeResources.url, data.url))
+      .limit(1);
+    if (existing.length > 0) {
+      return existing[0];
+    }
+    const [created] = await db.insert(knowledgeResources).values(data).returning();
+    return created;
+  }
+
+  async upsertTopicCoordinate(data: { topicId: number; x: number; y: number; z: number; axis0Label?: string; axis1Label?: string; axis2Label?: string }): Promise<void> {
+    const label0 = data.axis0Label || "Applied <-> Theoretical";
+    const label1 = data.axis1Label || "Natural <-> Synthetic";
+    const label2 = data.axis2Label || "Micro <-> Macro";
+    await db.execute(sql`
+      INSERT INTO topic_coordinates (topic_id, x, y, z, axis_0_label, axis_1_label, axis_2_label, computed_at)
+      VALUES (${data.topicId}, ${data.x}, ${data.y}, ${data.z}, ${label0}, ${label1}, ${label2}, CURRENT_TIMESTAMP)
+      ON CONFLICT (topic_id) DO UPDATE SET
+        x = EXCLUDED.x,
+        y = EXCLUDED.y,
+        z = EXCLUDED.z,
+        axis_0_label = EXCLUDED.axis_0_label,
+        axis_1_label = EXCLUDED.axis_1_label,
+        axis_2_label = EXCLUDED.axis_2_label,
+        computed_at = CURRENT_TIMESTAMP
+    `);
   }
 
   // User Infographics

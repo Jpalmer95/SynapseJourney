@@ -38,6 +38,9 @@ interface UserProfile {
   customOpenaiUrl?: string;
   customOpenaiKey?: string;
   openRouterKey?: string;
+  xaiKey?: string;
+  geminiKey?: string;
+  anthropicKey?: string;
   preferredAiProvider?: string;
   preferredModel?: string;
 }
@@ -74,11 +77,14 @@ const colorMap: Record<string, string> = {
 };
 
 const providerNames: Record<string, string> = {
+  xai: "xAI (Grok)",
+  gemini: "Google Gemini",
+  anthropic: "Anthropic (Claude)",
+  openrouter: "OpenRouter",
   huggingface: "Hugging Face",
   ollama: "Ollama",
   lmstudio: "LM Studio",
   custom_openai: "OpenAI-compatible",
-  openrouter: "OpenRouter",
 };
 
 const ageRanges = [
@@ -277,6 +283,30 @@ function KeysAndSupportSection() {
               ))}
             </ul>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-2">
+            <PlugZap className="h-5 w-5 text-cyan-500" />
+            <CardTitle>Agentic MCP Server (/api/mcp)</CardTitle>
+          </div>
+          <CardDescription>
+            Connect Hermes Agent, Claude Code, Cursor, or any MCP-compatible personal agent directly to your SynapseJourney knowledge graph, courses, and Open Science lab.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3 text-xs">
+          <p className="text-muted-foreground">
+            Your agent can search hybrid vectors, read courses, ingest newly authored lessons using its own compute, and submit SOTA bottlenecks or falsifiable hypotheses.
+          </p>
+          <pre className="p-3 rounded-md bg-black/40 border border-border/60 overflow-x-auto text-[11px] font-mono text-foreground/90">
+{`# Endpoint: POST https://synapsejourney.org/api/mcp
+# Header:   Authorization: Bearer sj_<your_personal_access_token>
+# Tools:    synapse.search_knowledge, synapse.get_course, synapse.ingest_course,
+#           synapse.list_sota_bottlenecks, synapse.propose_sota_bottleneck,
+#           synapse.submit_hypothesis, synapse.get_3d_map`}
+          </pre>
         </CardContent>
       </Card>
 
@@ -1048,8 +1078,60 @@ export default function SettingsPage() {
 
                 {/* AI Provider Selection */}
                 <div className="space-y-2">
-                  <Label>Select Your Chat Provider</Label>
-                  <div className="grid grid-cols-3 gap-2">
+                  <Label>Select Your AI Compute Provider (BYOC)</Label>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <Button
+                      variant={localProfile.preferredAiProvider === "xai" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "xai" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "xai" });
+                      }}
+                      data-testid="btn-provider-xai"
+                    >
+                      <Sparkles className="h-4 w-4 mb-1" />
+                      <span className="font-medium">xAI (Grok)</span>
+                      <span className="text-xs opacity-70">Fast Reasoning</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "gemini" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "gemini" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "gemini" });
+                      }}
+                      data-testid="btn-provider-gemini"
+                    >
+                      <Zap className="h-4 w-4 mb-1" />
+                      <span className="font-medium">Google Gemini</span>
+                      <span className="text-xs opacity-70">Free / Paid API</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "anthropic" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "anthropic" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "anthropic" });
+                      }}
+                      data-testid="btn-provider-anthropic"
+                    >
+                      <Brain className="h-4 w-4 mb-1" />
+                      <span className="font-medium">Anthropic</span>
+                      <span className="text-xs opacity-70">Claude Sonnet/Opus</span>
+                    </Button>
+                    <Button
+                      variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
+                      className="h-auto py-3 flex-col"
+                      onClick={() => {
+                        updateLocalProfile({ preferredAiProvider: "openrouter" });
+                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "openrouter" });
+                      }}
+                      data-testid="btn-provider-openrouter"
+                    >
+                      <Zap className="h-4 w-4 mb-1" />
+                      <span className="font-medium">OpenRouter</span>
+                      <span className="text-xs opacity-70">200+ Models</span>
+                    </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "huggingface" ? "default" : "outline"}
                       className="h-auto py-3 flex-col"
@@ -1061,7 +1143,7 @@ export default function SettingsPage() {
                     >
                       <Zap className="h-4 w-4 mb-1" />
                       <span className="font-medium">Hugging Face</span>
-                      <span className="text-xs opacity-70">Free Tier</span>
+                      <span className="text-xs opacity-70">Inference API</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "ollama" ? "default" : "outline"}
@@ -1074,7 +1156,7 @@ export default function SettingsPage() {
                     >
                       <Server className="h-4 w-4 mb-1" />
                       <span className="font-medium">Ollama</span>
-                      <span className="text-xs opacity-70">Local/Free</span>
+                      <span className="text-xs opacity-70">Local / Free</span>
                     </Button>
                     <Button
                       variant={localProfile.preferredAiProvider === "lmstudio" ? "default" : "outline"}
@@ -1100,23 +1182,106 @@ export default function SettingsPage() {
                     >
                       <Server className="h-4 w-4 mb-1" />
                       <span className="font-medium">OpenAI-Compat</span>
-                      <span className="text-xs opacity-70">llama.cpp / vLLM</span>
-                    </Button>
-                    <Button
-                      variant={localProfile.preferredAiProvider === "openrouter" ? "default" : "outline"}
-                      className="h-auto py-3 flex-col"
-                      onClick={() => {
-                        updateLocalProfile({ preferredAiProvider: "openrouter" });
-                        profileMutation.mutate({ ...localProfile, preferredAiProvider: "openrouter" });
-                      }}
-                      data-testid="btn-provider-openrouter"
-                    >
-                      <Zap className="h-4 w-4 mb-1" />
-                      <span className="font-medium">OpenRouter</span>
-                      <span className="text-xs opacity-70">Many Models</span>
+                      <span className="text-xs opacity-70">vLLM / llama.cpp</span>
                     </Button>
                   </div>
                 </div>
+
+                {/* xAI Configuration */}
+                {localProfile.preferredAiProvider === "xai" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="xai-key" className="flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      xAI (Grok) API Key
+                    </Label>
+                    <Input
+                      id="xai-key"
+                      type="password"
+                      placeholder="xai-..."
+                      value={localProfile.xaiKey || ""}
+                      onChange={(e) => updateLocalProfile({ xaiKey: e.target.value })}
+                      data-testid="input-xai-key"
+                    />
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="xai-model">Model (optional)</Label>
+                      <Input
+                        id="xai-model"
+                        placeholder="grok-3-mini"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                      />
+                    </div>
+                    {hasChanges && (
+                      <Button onClick={saveProfile} disabled={profileMutation.isPending} size="sm" className="mt-2">
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Google Gemini Configuration */}
+                {localProfile.preferredAiProvider === "gemini" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="gemini-key" className="flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      Google Gemini API Key
+                    </Label>
+                    <Input
+                      id="gemini-key"
+                      type="password"
+                      placeholder="AIza..."
+                      value={localProfile.geminiKey || ""}
+                      onChange={(e) => updateLocalProfile({ geminiKey: e.target.value })}
+                      data-testid="input-gemini-key"
+                    />
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="gemini-model">Model (optional)</Label>
+                      <Input
+                        id="gemini-model"
+                        placeholder="gemini-2.5-flash"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                      />
+                    </div>
+                    {hasChanges && (
+                      <Button onClick={saveProfile} disabled={profileMutation.isPending} size="sm" className="mt-2">
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
+
+                {/* Anthropic Configuration */}
+                {localProfile.preferredAiProvider === "anthropic" && (
+                  <div className="space-y-2 p-4 rounded-lg border bg-muted/30">
+                    <Label htmlFor="anthropic-key" className="flex items-center gap-2">
+                      <Key className="h-4 w-4" />
+                      Anthropic (Claude) API Key
+                    </Label>
+                    <Input
+                      id="anthropic-key"
+                      type="password"
+                      placeholder="sk-ant-..."
+                      value={localProfile.anthropicKey || ""}
+                      onChange={(e) => updateLocalProfile({ anthropicKey: e.target.value })}
+                      data-testid="input-anthropic-key"
+                    />
+                    <div className="space-y-2 mt-3">
+                      <Label htmlFor="anthropic-model">Model (optional)</Label>
+                      <Input
+                        id="anthropic-model"
+                        placeholder="claude-sonnet-4-20250514"
+                        value={localProfile.preferredModel || ""}
+                        onChange={(e) => updateLocalProfile({ preferredModel: e.target.value })}
+                      />
+                    </div>
+                    {hasChanges && (
+                      <Button onClick={saveProfile} disabled={profileMutation.isPending} size="sm" className="mt-2">
+                        Save Settings
+                      </Button>
+                    )}
+                  </div>
+                )}
 
                 {/* Hugging Face Token — used for both AI chat (HF models) and Qwen Cloud TTS */}
                 {(localProfile.preferredAiProvider === "huggingface" || localVoicePreset === "qwen" || localVoicePreset === "custom") && (

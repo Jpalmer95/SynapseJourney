@@ -279,14 +279,59 @@ export const userPathways = pgTable("user_pathways", {
   completedAt: timestamp("completed_at"),
 });
 
-// Open Science Global Feed (User submitted research theories)
+// SOTA Bottlenecks & Open Roadblocks Registry (Fixed + Generative SOTA challenges)
+export const sotaBottlenecks = pgTable("sota_bottlenecks", {
+  id: serial("id").primaryKey(),
+  topicId: integer("topic_id").references(() => topics.id),
+  unitId: integer("unit_id").references(() => lessonUnits.id),
+  domain: text("domain").notNull().default("STEM"), // AI/ML, Physics, Biotech, Energy, Software, Mathematics, Interdisciplinary
+  title: text("title").notNull(),
+  description: text("description").notNull(),
+  whyItMatters: text("why_it_matters").notNull(),
+  currentApproaches: jsonb("current_approaches").default('[]'), // string[]
+  openQuestions: jsonb("open_questions").default('[]'), // string[]
+  difficulty: text("difficulty").default("frontier").notNull(), // applied | advanced | frontier
+  status: text("status").default("open").notNull(), // open | active_research | partially_solved | solved
+  source: text("source").default("curated").notNull(), // curated | nextgen_extracted | community | agent
+  createdByUserId: varchar("created_by_user_id"),
+  upvotes: integer("upvotes").default(0).notNull(),
+  embedding: vector("embedding", { dimensions: 768 }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Knowledge Resources Commons (OER, textbooks, papers, videos, wikis, tools — indexed as the system grows)
+export const knowledgeResources = pgTable("knowledge_resources", {
+  id: serial("id").primaryKey(),
+  topicId: integer("topic_id").references(() => topics.id),
+  unitId: integer("unit_id").references(() => lessonUnits.id),
+  title: text("title").notNull(),
+  url: text("url").notNull(),
+  resourceType: text("resource_type").notNull().default("course"), // course | video | paper | book | forum | tool | encyclopedia
+  description: text("description").notNull(),
+  providerName: text("provider_name"), // MIT OCW, arXiv, OpenStax, Khan Academy, LibreTexts, etc.
+  isFreeOer: boolean("is_free_oer").default(true).notNull(),
+  upvotes: integer("upvotes").default(0).notNull(),
+  embedding: vector("embedding", { dimensions: 768 }),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Open Science Global Feed (User & Agent submitted research theories / structured hypotheses)
 export const openScienceIdeas = pgTable("open_science_ideas", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
   authorName: text("author_name").notNull(),
-  topicId: integer("topic_id").references(() => topics.id), // optional relation to existing topic
+  topicId: integer("topic_id").references(() => topics.id), // optional primary topic relation
+  bottleneckId: integer("bottleneck_id").references(() => sotaBottlenecks.id), // optional SOTA bottleneck being tackled
   title: text("title").notNull(),
-  content: text("content").notNull(),
+  content: text("content").notNull(), // general summary / abstract
+  hypothesis: text("hypothesis"), // testable claim or novel approach
+  methodology: text("methodology"), // proposed experiment, derivation, or build
+  falsifiability: text("falsifiability"), // what result would disprove or validate this within 2 weeks
+  crossDomainTopicIds: integer("cross_domain_topic_ids").array(), // multiple topics fused into this hypothesis
+  evidenceLinks: jsonb("evidence_links").default('[]'), // [{ title, url }]
+  confidenceScore: integer("confidence_score"), // 0-100 AI or peer rubric score
+  aiReviewJson: jsonb("ai_review_json"), // { feasibility, novelty, critique, nextStep, modelUsed, reviewedAt }
+  status: text("status").default("submitted").notNull(), // draft | submitted | peer_reviewed | validated
   upvotes: integer("upvotes").default(0).notNull(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
@@ -799,8 +844,15 @@ export const insertTopicLearningPrefsSchema = createInsertSchema(topicLearningPr
 export type Category = typeof categories.$inferSelect;
 export type InsertCategory = z.infer<typeof insertCategorySchema>;
 export type Topic = typeof topics.$inferSelect;
+export const insertSotaBottleneckSchema = createInsertSchema(sotaBottlenecks).omit({ id: true, createdAt: true, upvotes: true });
+export const insertKnowledgeResourceSchema = createInsertSchema(knowledgeResources).omit({ id: true, createdAt: true, upvotes: true });
 export const insertOpenScienceIdeaSchema = createInsertSchema(openScienceIdeas).omit({ id: true, createdAt: true, upvotes: true });
 export const insertOpenScienceCommentSchema = createInsertSchema(openScienceComments).omit({ id: true, createdAt: true });
+
+export type SotaBottleneck = typeof sotaBottlenecks.$inferSelect;
+export type InsertSotaBottleneck = z.infer<typeof insertSotaBottleneckSchema>;
+export type KnowledgeResource = typeof knowledgeResources.$inferSelect;
+export type InsertKnowledgeResource = z.infer<typeof insertKnowledgeResourceSchema>;
 
 export type InsertTopic = z.infer<typeof insertTopicSchema>;
 export type KnowledgeCard = typeof knowledgeCards.$inferSelect;

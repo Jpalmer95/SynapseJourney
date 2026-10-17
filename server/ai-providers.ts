@@ -526,12 +526,34 @@ export function validateUserChatCredentials(config: ProviderConfig): { valid: bo
       }
       return { valid: true, provider: "openrouter" };
 
+    case "xai":
+      if (!config.xaiKey) {
+        return { valid: false, missingCredential: "xAI / Grok API Key", provider: "xai" };
+      }
+      return { valid: true, provider: "xai" };
+
     case "gemini":
+      if (!config.geminiKey) {
+        return { valid: false, missingCredential: "Google Gemini API Key", provider: "gemini" };
+      }
+      return { valid: true, provider: "gemini" };
+
+    case "anthropic":
+      if (!config.anthropicKey) {
+        return { valid: false, missingCredential: "Anthropic API Key", provider: "anthropic" };
+      }
+      return { valid: true, provider: "anthropic" };
+
     case "openai":
-    default:
-      // User selected Gemini/default but hasn't configured their own provider
-      // This is NOT allowed for chat - they must use their own credentials
+    default: {
+      // Fallback: if user didn't switch preferredAiProvider dropdown away from "openai"
+      // but DID paste a BYOK key on their profile, honor that key for chat too.
+      const anyCheck = validateByokCredentials(config);
+      if (anyCheck.valid) {
+        return anyCheck;
+      }
       return { valid: false, missingCredential: "AI provider credentials", provider: "none" };
+    }
   }
 }
 
@@ -541,31 +563,7 @@ export function validateUserChatCredentials(config: ProviderConfig): { valid: bo
  * Returns null if user hasn't configured valid credentials.
  */
 export function getUserChatProvider(config: ProviderConfig): AIProvider | null {
-  const validation = validateUserChatCredentials(config);
-  
-  if (!validation.valid) {
-    return null;
-  }
-
-  switch (config.provider) {
-    case "huggingface":
-      return new HuggingFaceProvider(config.huggingFaceToken!, config.preferredModel);
-
-    case "ollama":
-      return new OllamaProvider(config.ollamaUrl!, config.preferredModel);
-
-    case "lmstudio":
-      return new OpenAICompatibleProvider("lmstudio", config.lmStudioUrl!, "lm-studio", config.preferredModel);
-
-    case "custom_openai":
-      return new OpenAICompatibleProvider("custom_openai", config.customOpenaiUrl!, config.customOpenaiKey || "local", config.preferredModel);
-
-    case "openrouter":
-      return new OpenRouterProvider(config.openRouterKey!, config.preferredModel);
-
-    default:
-      return null;
-  }
+  return getByokProvider(config);
 }
 
 // ── BYOK connection health check (Settings "Test Connection" button) ────────
@@ -661,10 +659,54 @@ export async function testByokConnection(config: ProviderConfig): Promise<Connec
         return done({ ok: false, provider: "openrouter", message: `OpenRouter rejected that key (HTTP ${r.status}).` });
       }
 
+      case "xai": {
+        if (!config.xaiKey) {
+          return done({ ok: false, provider: "xai", message: "Missing xAI API key — paste it above, then test again." });
+        }
+        const r = await fetch("https://api.x.ai/v1/models", {
+          headers: { Authorization: `Bearer ${config.xaiKey}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({ ok: true, provider: "xai", detail: "Key valid — xAI Grok reachable" });
+        }
+        return done({ ok: false, provider: "xai", message: `xAI rejected that key (HTTP ${r.status}).` });
+      }
+
+      case "gemini": {
+        if (!config.geminiKey) {
+          return done({ ok: false, provider: "gemini", message: "Missing Google Gemini API key — paste it above, then test again." });
+        }
+        const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(config.geminiKey)}`, {
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({ ok: true, provider: "gemini", detail: "Key valid — Google Gemini reachable" });
+        }
+        return done({ ok: false, provider: "gemini", message: `Google Gemini rejected that key (HTTP ${r.status}).` });
+      }
+
+      case "anthropic": {
+        if (!config.anthropicKey) {
+          return done({ ok: false, provider: "anthropic", message: "Missing Anthropic API key — paste it above, then test again." });
+        }
+        const r = await fetch("https://api.anthropic.com/v1/models", {
+          headers: {
+            "x-api-key": config.anthropicKey,
+            "anthropic-version": "2023-06-01",
+          },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({ ok: true, provider: "anthropic", detail: "Key valid — Anthropic Claude reachable" });
+        }
+        return done({ ok: false, provider: "anthropic", message: `Anthropic rejected that key (HTTP ${r.status}).` });
+      }
+
       default:
         return done({
           ok: false,
-          message: "Select a chat provider (Hugging Face, Ollama, LM Studio, OpenAI-compatible, or OpenRouter) and add its credentials, then test.",
+          message: "Select an AI provider (xAI, Gemini, Anthropic, OpenRouter, Hugging Face, Ollama, LM Studio, or OpenAI-compatible) and add its credentials, then test.",
         });
     }
   } catch (err: unknown) {
@@ -745,6 +787,52 @@ class ByokGeminiProvider implements AIProvider {
   }
 }
 
+class ByokAnthropicProvider implements AIProvider {
+  name = "anthropic-byok";
+  private apiKey: string;
+  private model: string;
+
+  constructor(apiKey: string, model?: string) {
+    this.apiKey = apiKey;
+    this.model = model || "claude-sonnet-4-20250514";
+  }
+
+  isConfigured(): boolean { return true; }
+
+  async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
+    const systemMsgs = messages.filter(m => m.role === "system").map(m => m.content).join("\n\n");
+    const nonSystem = messages.filter(m => m.role !== "system").map(m => ({
+      role: m.role === "assistant" ? "assistant" : "user",
+      content: m.content,
+    }));
+
+    const response = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": this.apiKey,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: options?.model || this.model,
+        max_tokens: options?.maxTokens || 4096,
+        temperature: options?.temperature ?? 0.7,
+        ...(systemMsgs ? { system: systemMsgs } : {}),
+        messages: nonSystem.length > 0 ? nonSystem : [{ role: "user", content: systemMsgs || "Hello" }],
+      }),
+    });
+
+    if (!response.ok) {
+      const error = await response.text();
+      throw new Error(`Anthropic API error: ${response.status} - ${error.slice(0, 300)}`);
+    }
+
+    const data = await response.json();
+    const block = Array.isArray(data?.content) ? data.content.find((b: any) => b.type === "text") : null;
+    return block?.text || "";
+  }
+}
+
 /**
  * Check if user has any BYOK credentials configured (from profile or api_keys table).
  */
@@ -798,7 +886,8 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
       if (config.geminiKey) return new ByokGeminiProvider(config.geminiKey);
       break;
     case "anthropic":
-      break; // falls through to priority scan (no native client yet)
+      if (config.anthropicKey) return new ByokAnthropicProvider(config.anthropicKey, config.preferredModel);
+      break;
   }
 
   // Fallback priority scan: xAI → Gemini → OpenRouter → Anthropic → HuggingFace → Ollama → LM Studio → custom
@@ -812,8 +901,7 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
     return new OpenRouterProvider(config.openRouterKey, config.preferredModel);
   }
   if (config.anthropicKey) {
-    // Anthropic uses OpenAI-compatible endpoint for now
-    return new OpenAIProvider(); // TODO: implement native Anthropic client
+    return new ByokAnthropicProvider(config.anthropicKey, config.preferredModel);
   }
   if (config.huggingFaceToken) {
     return new HuggingFaceProvider(config.huggingFaceToken, config.preferredModel);

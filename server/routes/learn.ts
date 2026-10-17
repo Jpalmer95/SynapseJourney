@@ -8,6 +8,7 @@ import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { generateLessonOutline } from "./ai";
 import { providerConfigFromProfile } from "../ai-providers";
+import { indexTopicToFlywheel, indexUnitToFlywheel } from "../embeddings";
 
 const depthModes = ["survey", "standard", "deep", "speed_run", "goal"] as const;
 const tutorModes = ["direct", "socratic", "feynman"] as const;
@@ -298,6 +299,12 @@ export function registerLearnRoutes(app: Express) {
         tutorMode: "direct",
       });
 
+      // Ensure topic appears in user's 3D map & index into vector/3D flywheel
+      await storage.upsertProgress({ userId, topicId: topic.id, status: "learning", mastery: 0 });
+      indexTopicToFlywheel(storage, topic.id, {
+        recommendedOER: (plan?.planJson as any)?.recommendedOER,
+      }).catch(() => {});
+
       res.status(201).json({
         goal,
         topic,
@@ -397,13 +404,26 @@ export function registerLearnRoutes(app: Express) {
       if (!topic) return res.status(404).json({ error: "Topic not found" });
 
       const { learningIntent, goalDescription, expandUnits } = body.data;
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
       const { planCourseWithAI } = await import("../course-planner");
 
-      const plan = await planCourseWithAI(
-        topic.title,
-        topic.description || goalDescription || `Learning ${topic.title}`,
-        { learningIntent, goalDescription }
-      );
+      let plan;
+      try {
+        plan = await planCourseWithAI(
+          topic.title,
+          topic.description || goalDescription || `Learning ${topic.title}`,
+          { learningIntent, goalDescription, userConfig }
+        );
+      } catch (replanErr: any) {
+        if (replanErr?.message?.includes("BYOC_REQUIRED")) {
+          return res.status(402).json({
+            error: "BYOC_REQUIRED",
+            message: "Connect an AI key in Settings to reshape this curriculum with AI.",
+          });
+        }
+        throw replanErr;
+      }
 
       await storage.saveCoursePlan({
         topicId,
@@ -747,6 +767,7 @@ export function registerLearnRoutes(app: Express) {
         });
         if (u.contentJson) {
           await storage.updateLessonContent(created.id, u.contentJson);
+          indexUnitToFlywheel(storage, created.id, topic.id, u.contentJson, userId).catch(() => {});
         }
         createdUnits.push(created);
         existingTitles.add(key);
@@ -801,6 +822,12 @@ export function registerLearnRoutes(app: Express) {
           metadata: { source: body.source || "ingest", addedUnits: createdUnits.length },
         });
       }
+
+      // Ensure ingested course is tracked on user's 3D map and indexed into vector/3D flywheel
+      await storage.upsertProgress({ userId, topicId: topic.id, status: "learning", mastery: 0 });
+      indexTopicToFlywheel(storage, topic.id, {
+        recommendedOER: body.plan?.recommendedOER,
+      }).catch(() => {});
 
       res.status(201).json({
         topic,
@@ -884,6 +911,10 @@ export function registerLearnRoutes(app: Express) {
       });
 
       const plan = await storage.getLatestCoursePlan(topic.id);
+      await storage.upsertProgress({ userId, topicId: topic.id, status: "learning", mastery: 0 });
+      indexTopicToFlywheel(storage, topic.id, {
+        recommendedOER: (plan?.planJson as any)?.recommendedOER,
+      }).catch(() => {});
       res.status(201).json({ topic, units, coursePlan: plan || null, nextUnit: units[0] || null });
     } catch (error: any) {
       console.error("Error creating custom course:", error);
@@ -1114,6 +1145,22 @@ Respond with ONLY a JSON array of 10 objects:
         eventType: "started",
         metadata: { source: "fusion", inputs: inputNames, courseLength, technicalLevel },
       });
+
+      // Ensure fused course appears on user's 3D map, links to source topics, and indexes OER
+      await storage.upsertProgress({ userId, topicId: topic.id, status: "learning", mastery: 0 });
+      for (const srcId of topicIds) {
+        if (srcId !== topic.id) {
+          await storage.createConnection({
+            fromTopicId: srcId,
+            toTopicId: topic.id,
+            connectionType: "fused-into",
+            strength: 9,
+          }).catch(() => {});
+        }
+      }
+      indexTopicToFlywheel(storage, topic.id, {
+        recommendedOER: fusion.recommendedOER,
+      }).catch(() => {});
 
       res.status(201).json({
         topic,

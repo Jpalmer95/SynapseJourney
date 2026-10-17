@@ -23,6 +23,7 @@ interface GraphNode {
   z: number;
   mastery: number;
   status: "mastered" | "learning" | "discovered" | "unexplored";
+  lastAccessedAt?: string | null;
 }
 
 interface GraphEdge {
@@ -78,7 +79,8 @@ export function KnowledgeGraph3D() {
   const [centeredNode, setCenteredNode] = useState<GraphNode | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
-  const [timeRange, setTimeRange] = useState([100]);
+  const [timeRange, setTimeRange] = useState([365]);
+  const [viewFilter, setViewFilter] = useState<"all" | "my_web" | "mastered">("all");
   const [showSynthesis, setShowSynthesis] = useState(false);
   const [synthesisTopicsStr, setSynthesisTopicsStr] = useState("");
   const [selectedAxis, setSelectedAxis] = useState<AxisInfo | null>(null);
@@ -150,15 +152,31 @@ export function KnowledgeGraph3D() {
     let filteredNodes = allNodes;
     let filteredEdges = allEdges;
 
+    if (viewFilter === "my_web") {
+      filteredNodes = filteredNodes.filter((n) => n.status !== "unexplored" || n.mastery > 0);
+    } else if (viewFilter === "mastered") {
+      filteredNodes = filteredNodes.filter((n) => n.status === "mastered" || n.mastery >= 80);
+    }
+
+    if (timeRange[0] < 365) {
+      const cutoff = Date.now() - timeRange[0] * 24 * 60 * 60 * 1000;
+      const byTime = filteredNodes.filter((n) => {
+        if (!n.lastAccessedAt) return n.status !== "unexplored";
+        return new Date(n.lastAccessedAt).getTime() >= cutoff;
+      });
+      if (byTime.length > 0) filteredNodes = byTime;
+    }
+
     if (searchQuery.trim()) {
       const query = searchQuery.toLowerCase();
-      filteredNodes = allNodes.filter(n => 
+      filteredNodes = filteredNodes.filter(n => 
         n.title.toLowerCase().includes(query) || 
         n.category?.toLowerCase().includes(query)
       );
-      const nodeIds = new Set(filteredNodes.map(n => n.id));
-      filteredEdges = allEdges.filter(e => nodeIds.has(e.from) && nodeIds.has(e.to));
     }
+
+    const activeIds = new Set(filteredNodes.map((n) => n.id));
+    filteredEdges = allEdges.filter((e) => activeIds.has(e.from) && activeIds.has(e.to));
 
     if (centeredNode) {
       // Show 2 degrees of connections
@@ -183,7 +201,7 @@ export function KnowledgeGraph3D() {
     const links = filteredEdges.map(e => ({ source: e.from, target: e.to, strength: e.strength }));
 
     return { forceNodes: nodes, forceEdges: links };
-  }, [allNodes, allEdges, searchQuery, centeredNode]);
+  }, [allNodes, allEdges, searchQuery, centeredNode, viewFilter, timeRange]);
 
   const searchResults = useMemo(() => {
     if (!searchQuery.trim()) return [];
@@ -580,10 +598,25 @@ export function KnowledgeGraph3D() {
       </div>
 
       <div className="absolute bottom-24 md:bottom-8 left-4 right-4 md:left-20 md:right-20 z-10">
-        <Card className="p-4 bg-background/80 backdrop-blur-lg max-w-md mx-auto">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-muted-foreground">Timeline</span>
-            <span className="text-sm font-medium text-white">Last {timeRange[0]} days</span>
+        <Card className="p-3.5 bg-background/85 backdrop-blur-lg max-w-md mx-auto space-y-2.5">
+          <div className="flex items-center justify-between gap-1">
+            {(["all", "my_web", "mastered"] as const).map((mode) => (
+              <Button
+                key={mode}
+                size="sm"
+                variant={viewFilter === mode ? "default" : "outline"}
+                className="h-7 text-xs flex-1"
+                onClick={() => setViewFilter(mode)}
+              >
+                {mode === "all" ? "Global Atlas" : mode === "my_web" ? "My Web" : "Mastered"}
+              </Button>
+            ))}
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">Time Horizon</span>
+            <span className="text-xs font-medium text-white">
+              {timeRange[0] >= 365 ? "All Time" : `Last ${timeRange[0]} days`}
+            </span>
           </div>
           <Slider value={timeRange} onValueChange={setTimeRange} min={7} max={365} step={1} className="w-full" />
         </Card>

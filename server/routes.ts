@@ -5,7 +5,7 @@ import { storage } from "./storage";
 import { setupAuth, registerAuthRoutes, isAuthenticated, optionalAuth } from "./replit_integrations/auth";
 import { authStorage } from "./replit_integrations/auth/storage";
 import { registerChatRoutes } from "./replit_integrations/chat";
-import { generateCourseContent, type ProviderConfig, testByokConnection, providerConfigFromProfile } from "./ai-providers";
+import { generateCourseContent, generateByokOrPool, validateByokCredentials, type ProviderConfig, testByokConnection, providerConfigFromProfile } from "./ai-providers";
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS, DEFAULT_ACHIEVEMENTS, DEFAULT_TOPIC_CONNECTIONS } from "./seed-data";
 import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 import { insertOpenScienceIdeaSchema, insertOpenScienceCommentSchema } from "@shared/schema";
@@ -77,6 +77,9 @@ import { registerContributionsRoutes } from "./routes/contributions";
 // Phase 9: Adaptive learning (continue, goals, prefs, timeline)
 import { registerLearnRoutes } from "./routes/learn";
 
+// Native MCP Server for Personal AI Agents
+import { registerMcpRoutes } from "./routes/mcp";
+
 export async function registerRoutes(
   httpServer: Server,
   app: Express
@@ -92,6 +95,7 @@ export async function registerRoutes(
   registerAdminRoutes(app);
   registerContributionsRoutes(app);
   registerLearnRoutes(app);
+  registerMcpRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {
@@ -106,18 +110,22 @@ export async function registerRoutes(
       let roadmap = await storage.getRoadmap(userId, topicId);
       
       if (!roadmap) {
-        // Generate roadmap using AI
+        // Generate roadmap using user's BYOC AI key (or deterministic default if unconfigured)
         const topic = await storage.getTopicById(topicId);
         if (!topic) {
           return res.status(404).json({ error: "Topic not found" });
         }
 
         try {
-          const content = await generateCourseContent(
-            [
-              {
-                role: "system",
-                content: `You are an expert educator. Generate a learning roadmap for the topic. Return a JSON object with a "levels" array containing exactly 5 levels. Each level must have:
+          const profile = await storage.getUserProfile(userId);
+          const userConfig = providerConfigFromProfile(profile);
+          let content = '{"levels":[]}';
+          if (validateByokCredentials(userConfig).valid) {
+            const resByok = await generateByokOrPool(
+              [
+                {
+                  role: "system",
+                  content: `You are an expert educator. Generate a learning roadmap for the topic. Return a JSON object with a "levels" array containing exactly 5 levels. Each level must have:
 - id: number (1-5)
 - title: string (short title for the level)
 - description: string (brief description of what's covered)
@@ -126,14 +134,19 @@ export async function registerRoutes(
 - content: string (detailed explanation of what the learner will understand at this level)
 
 Make the progression natural from fundamentals to advanced concepts.`,
-              },
-              {
-                role: "user",
-                content: `Create a learning roadmap for: ${topic.title}\n\nDescription: ${topic.description}`,
-              },
-            ],
-            { responseFormat: "json", maxTokens: 2048 }
-          ) || '{"levels":[]}';
+                },
+                {
+                  role: "user",
+                  content: `Create a learning roadmap for: ${topic.title}\n\nDescription: ${topic.description}`,
+                },
+              ],
+              userConfig,
+              { responseFormat: "json", maxTokens: 2048 }
+            );
+            content = resByok.content || '{"levels":[]}';
+          } else {
+            content = JSON.stringify({ levels: getDefaultLevels(topic.title) });
+          }
           
           // Parse and validate the AI response
           let parsedContent;
@@ -241,13 +254,16 @@ Make the progression natural from fundamentals to advanced concepts.`,
   app.get("/api/user/stats", isAuthenticated, async (req: any, res: Response) => {
     try {
       const userId = req.user.claims.sub;
-      const stats = await storage.getUserStats(userId);
-      const savedCards = await storage.getSavedCards(userId);
+      const [stats, savedCards, streak] = await Promise.all([
+        storage.getUserStats(userId),
+        storage.getSavedCards(userId),
+        storage.getUserStreak(userId),
+      ]);
       
       res.json({
         ...stats,
-        currentStreak: 7, // TODO: Implement streak tracking
-        longestStreak: 14,
+        currentStreak: streak?.currentStreak ?? 0,
+        longestStreak: streak?.longestStreak ?? 0,
         savedCards: savedCards.length,
       });
     } catch (error) {
@@ -566,12 +582,27 @@ Make the progression natural from fundamentals to advanced concepts.`,
 
       // Check if we already have generated units for this topic
       let units = await storage.getLessonUnits(topicId);
+      const coursePlan = await storage.getLatestCoursePlan(topicId);
       
       const userId = req.user?.claims?.sub;
 
       if (units.length === 0) {
-        // Generate outline using AI
-        units = await generateLessonOutline(topicId, topic.title, topic.description);
+        const profile = userId ? await storage.getUserProfile(userId) : undefined;
+        const userConfig = providerConfigFromProfile(profile);
+        try {
+          units = await generateLessonOutline(topicId, topic.title, topic.description, {
+            createdByUserId: userId,
+            userConfig,
+          });
+        } catch (outlineErr: any) {
+          if (outlineErr?.message?.includes("BYOC_REQUIRED")) {
+            return res.status(402).json({
+              error: "BYOC_REQUIRED",
+              message: "Add an AI key in Settings (or upload with Hermes Agent via PAT) to generate this course outline.",
+            });
+          }
+          throw outlineErr;
+        }
         // Fire background batch pre-generation for all new non-nextgen units (only if logged in)
         if (userId) {
           batchPregenerateUnits(units, topic, userId).catch(console.error);
@@ -588,6 +619,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
         return res.json({
           topic,
           units: unitsOpen,
+          coursePlan: coursePlan || null,
           mastery: null,
           isAdmin: false,
           isPublic: true,
@@ -613,6 +645,7 @@ Make the progression natural from fundamentals to advanced concepts.`,
       res.json({
         topic,
         units: unitsWithProgress,
+        coursePlan: coursePlan || null,
         mastery,
         isAdmin, // Include admin status so frontend can show unlocked tabs
       });
@@ -680,6 +713,16 @@ Make the progression natural from fundamentals to advanced concepts.`,
       let content = unit.contentJson;
 
       if (!content) {
+        const profile = await storage.getUserProfile(userId);
+        const userConfig = providerConfigFromProfile(profile);
+        if (!validateByokCredentials(userConfig).valid) {
+          return res.status(402).json({
+            error: "BYOC_REQUIRED",
+            message:
+              "Platform free AI is disabled. Add an AI key in Settings (xAI, Gemini, OpenRouter, Anthropic, Hugging Face, Ollama, LM Studio) — or author this unit with Hermes Agent and upload via Personal Access Token.",
+          });
+        }
+
         // Build sibling context so the AI knows which units exist in the same tier
         const allTopicUnits = await storage.getLessonUnits(unit.topicId);
         const tierUnits = allTopicUnits
@@ -693,10 +736,21 @@ Make the progression natural from fundamentals to advanced concepts.`,
         };
         console.log(`[Lesson] Generating content for unit ${unitId} "${unit.title}" (${unit.difficulty} ${unitContext.position}/${unitContext.total})`);
 
-        // Generate content using AI - use different generator for Next Gen
-        const generatedContent = isNextGen 
-          ? await generateNextGenContent(topic, unit, masteredTopics, categoryName)
-          : await generateLessonContent(topic, unit, masteredTopics, categoryName, unitContext);
+        // Generate content using user's BYOC AI key - use different generator for Next Gen
+        let generatedContent: any;
+        try {
+          generatedContent = isNextGen 
+            ? await generateNextGenContent(topic, unit, masteredTopics, categoryName, userConfig)
+            : await generateLessonContent(topic, unit, masteredTopics, categoryName, unitContext, userConfig);
+        } catch (genErr: any) {
+          if (genErr?.message?.includes("BYOC_REQUIRED")) {
+            return res.status(402).json({
+              error: "BYOC_REQUIRED",
+              message: genErr.message,
+            });
+          }
+          throw genErr;
+        }
         
         // Only save real AI-generated content, NOT placeholder fallbacks
         const isPlaceholder = typeof generatedContent === "object" && generatedContent !== null &&
@@ -709,6 +763,11 @@ Make the progression natural from fundamentals to advanced concepts.`,
         const updatedUnit = await storage.updateLessonContent(unitId, generatedContent);
         content = generatedContent;
         console.log(`[Lesson] unit_id=${unitId} title="${unit.title}" content_hash=${contentHash(content)} (generated)`);
+
+        // Index newly generated unit content (embeddings + OER resources + SOTA bottlenecks) into the flywheel
+        import("./embeddings")
+          .then(({ indexUnitToFlywheel }) => indexUnitToFlywheel(storage, unitId, unit.topicId, content, userId))
+          .catch((e) => console.warn("[Flywheel] Unit index failed:", e));
 
         // Predictive pre-generation: asynchronously generate next unit's content
         predictivelyGenerateNextUnit(unit, topic, masteredTopics, userId, categoryName).catch(console.error);
@@ -773,15 +832,33 @@ Make the progression natural from fundamentals to advanced concepts.`,
       }
 
       const questionCount = Math.min(Math.max(req.body?.questionCount || 3, 1), 10);
+      const userId = req.user.claims.sub;
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message: "Connect an AI key in Settings to generate on-demand quizzes.",
+        });
+      }
 
       console.log(`[OnDemandQuiz] Generating ${questionCount} questions for unit ${unitId} "${unit.title}" (${unit.difficulty})`);
 
-      const quiz = await generateOnDemandQuiz(
-        { title: topic.title, description: topic.description || "" },
-        { title: unit.title, difficulty: unit.difficulty, outline: unit.outline },
-        unit.contentJson,
-        questionCount
-      );
+      let quiz;
+      try {
+        quiz = await generateOnDemandQuiz(
+          { title: topic.title, description: topic.description || "" },
+          { title: unit.title, difficulty: unit.difficulty, outline: unit.outline },
+          unit.contentJson,
+          questionCount,
+          userConfig
+        );
+      } catch (qErr: any) {
+        if (qErr?.message?.includes("BYOC_REQUIRED")) {
+          return res.status(402).json({ error: "BYOC_REQUIRED", message: qErr.message });
+        }
+        throw qErr;
+      }
 
       if (!quiz || quiz.length === 0) {
         return res.status(500).json({
@@ -1000,13 +1077,23 @@ Respond with JSON:
   "celebrationMessage": "A fun, encouraging message congratulating them on completing the course"
 }`;
 
-      const { generateCourseContent } = await import("./ai-providers");
-      const posterContent = await generateCourseContent(
-        [{ role: "user", content: posterPrompt }],
-        { responseFormat: "json", temperature: 0.8 }
-      ) || "{}";
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message: "Connect an AI key in Settings to generate your course completion poster.",
+        });
+      }
 
-      const posterData = JSON.parse(posterContent);
+      const { content: posterContent } = await generateByokOrPool(
+        [{ role: "user", content: posterPrompt }],
+        userConfig,
+        { responseFormat: "json", temperature: 0.8 }
+      );
+
+      const fenceMatch = posterContent.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const posterData = JSON.parse(fenceMatch ? fenceMatch[1].trim() : (posterContent || "{}"));
 
       // Add real stats
       posterData.stats = {
@@ -1354,6 +1441,9 @@ Return a JSON object in this exact format:
         customOpenaiUrl: req.body?.customOpenaiUrl,
         customOpenaiKey: req.body?.customOpenaiKey,
         openRouterKey: req.body?.openRouterKey,
+        xaiKey: req.body?.xaiKey,
+        geminiKey: req.body?.geminiKey,
+        anthropicKey: req.body?.anthropicKey,
       });
       const result = await testByokConnection(config);
       res.json(result);
@@ -1594,13 +1684,29 @@ Return a JSON object with:
 
 Only suggest topics that are genuinely relevant. If few topics match, suggest those few rather than padding with irrelevant ones.`;
 
-      const content = await generateCourseContent(
-        [
-          { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
-          { role: "user", content: prompt },
-        ],
-        { responseFormat: "json", maxTokens: 2048 }
-      ) || '{}';
+      const userId = req.user?.claims?.sub;
+      const userProfile = userId ? await storage.getUserProfile(userId) : undefined;
+      const userConfig = providerConfigFromProfile(userProfile);
+
+      let content = "{}";
+      try {
+        const aiResult = await generateByokOrPool(
+          [
+            { role: "system", content: "You are an expert curriculum designer. Return only valid JSON." },
+            { role: "user", content: prompt },
+          ],
+          userConfig
+        );
+        content = aiResult.content || "{}";
+      } catch (err: any) {
+        if (err?.message?.includes("BYOC_REQUIRED")) {
+          return res.status(402).json({
+            error: "BYOC_REQUIRED",
+            message: "Connect your own AI key in Settings to use AI pathway suggestions.",
+          });
+        }
+        throw err;
+      }
       let suggestions;
       try {
         suggestions = JSON.parse(content);
@@ -2135,22 +2241,33 @@ Only suggest topics that are genuinely relevant. If few topics match, suggest th
 
   // ============ CUSTOM TOPIC ROUTES ============
 
-  // Create custom topic request
+  // Create custom topic request (BYOC required)
   app.post("/api/custom-topics", isAuthenticated, async (req: any, res: Response) => {
     try {
       const { title, description } = req.body;
       if (!title || !description) {
         return res.status(400).json({ error: "Title and description are required" });
       }
+
+      const userId = req.user.claims.sub;
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message:
+            "Platform free AI is disabled. Add your own AI key in Settings (xAI, Gemini, OpenRouter, Anthropic, Hugging Face, Ollama, LM Studio) — or author this course with Hermes Agent and upload via PAT.",
+        });
+      }
       
       const customTopic = await storage.createCustomTopic({
-        userId: req.user.claims.sub,
+        userId,
         title,
         description,
       });
       
       // Start generating the topic in the background
-      generateCustomTopicContent(customTopic.id, title, description, req.user.claims.sub).catch(console.error);
+      generateCustomTopicContent(customTopic.id, title, description, userId).catch(console.error);
       
       res.json(customTopic);
     } catch (error) {

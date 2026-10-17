@@ -145,100 +145,14 @@ const difficultyIcons: Record<string, any> = {
   nextgen: Sparkles,
 };
 
-const DOGE_WALLET = "DQqGoxU66iTj6tHdSMRU61r3Rxhv6e9T8w";
-
-function DogeWalletCopy() {
-  const { toast } = useToast();
-  const [copied, setCopied] = useState(false);
-
-  const copyAddress = async () => {
-    try {
-      await navigator.clipboard.writeText(DOGE_WALLET);
-      setCopied(true);
-      toast({ title: "Copied!", description: "Wallet address copied to clipboard" });
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      toast({ title: "Copy failed", description: "Please copy the address manually", variant: "destructive" });
-    }
-  };
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Wallet className="h-3.5 w-3.5 shrink-0" />
-        <span>Or send directly to DOGE wallet:</span>
-      </div>
-      <div className="flex items-center gap-2">
-        <code className="text-xs flex-1 truncate select-all p-2 rounded-md bg-muted border">{DOGE_WALLET}</code>
-        <Button
-          variant="outline"
-          size="icon"
-          onClick={copyAddress}
-          data-testid="modal-copy-wallet-address"
-        >
-          {copied ? <Check className="h-3.5 w-3.5 text-green-500" /> : <Copy className="h-3.5 w-3.5" />}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function AdminPurchaseApprovals() {
-  const { toast } = useToast();
-  const { data: pending = [] } = useQuery<any[]>({
-    queryKey: ["/api/admin/keys/pending"],
-  });
-
-  const resolveMutation = useMutation({
-    mutationFn: async ({ requestId, approved }: { requestId: number; approved: boolean }) => {
-      const res = await apiRequest("POST", `/api/admin/keys/resolve/${requestId}`, { approved });
-      return res.json();
-    },
-    onSuccess: (_data, variables) => {
-      toast({ title: variables.approved ? "Purchase Approved" : "Purchase Rejected" });
-      queryClient.invalidateQueries({ queryKey: ["/api/admin/keys/pending"] });
-    },
-  });
-
-  if (pending.length === 0) return null;
-
-  return (
-    <div className="border-t pt-4 space-y-2">
-      <p className="text-sm font-medium text-orange-600 dark:text-orange-400">Pending Purchase Requests ({pending.length})</p>
-      {pending.map((req: any) => (
-        <div key={req.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-orange-500/10 border border-orange-500/20">
-          <div className="min-w-0">
-            <p className="text-sm font-medium truncate">{req.username || "User"}</p>
-            <p className="text-xs text-muted-foreground">{req.quantity} keys ({req.dogeAmount} DOGE)</p>
-          </div>
-          <div className="flex gap-1 shrink-0">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => resolveMutation.mutate({ requestId: req.id, approved: true })}
-              disabled={resolveMutation.isPending}
-              className="gap-1 text-green-600 border-green-500/50"
-              data-testid={`button-approve-${req.id}`}
-            >
-              <Check className="h-3 w-3" />
-              Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => resolveMutation.mutate({ requestId: req.id, approved: false })}
-              disabled={resolveMutation.isPending}
-              className="gap-1 text-red-600 border-red-500/50"
-              data-testid={`button-reject-${req.id}`}
-            >
-              <X className="h-3 w-3" />
-              Reject
-            </Button>
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+/** Extract optional `[Tier Name]` tag appended by the dynamic course planner */
+function parseUnitTierLabel(outline?: string | null): { cleanOutline: string; tierName?: string } {
+  if (!outline) return { cleanOutline: "" };
+  const match = outline.match(/^(.*?)\s*\[([^\]]+)\]\s*(?:\(added via [^)]+\))?$/);
+  if (match) {
+    return { cleanOutline: match[1].trim(), tierName: match[2].trim() };
+  }
+  return { cleanOutline: outline };
 }
 
 export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHoleProps) {
@@ -329,6 +243,14 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       recommendedOER?: { name: string; url: string; reason: string }[];
       complexityAssessment?: string;
       scope?: string;
+      tiers?: { name: string; description?: string; unitCount?: number }[];
+      subTopics?: { title: string; description: string; units?: { title: string; outline?: string; difficulty?: string; tierName?: string }[] }[];
+      fusion?: boolean;
+      inputs?: string[];
+      rationale?: string;
+      capstoneProject?: { title: string; description: string; milestones?: string[] };
+      crossLinks?: { domains: string[]; insight: string }[];
+      researchAngles?: { title: string; whyInteresting: string; url?: string }[];
     };
     learningIntent?: string;
   }>({
@@ -480,53 +402,37 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     queryKey: ["/api/user/xp"],
   });
 
-  // Fetch user's unlock keys
-  const { data: keysData } = useQuery<{
-    totalKeys: number;
-    usedKeys: number;
-    availableKeys: number;
-    earnProgress: {
-      topicsCompletedToday: number;
-      topicsNeeded: number;
-      alreadyEarnedToday: boolean;
-      qualifyingTopics: number[];
-    };
-  }>({
-    queryKey: ["/api/keys"],
-  });
-
-  const useKeyMutation = useMutation({
-    mutationFn: async (topicId: number) => {
-      const res = await apiRequest("POST", `/api/keys/use/${topicId}`);
+  // Spawn a sub-topic as a linked course when clicked from a decomposed curriculum
+  const spawnSubTopicMutation = useMutation({
+    mutationFn: async (sub: { title: string; description: string }) => {
+      const res = await apiRequest("POST", "/api/learn/custom-course", {
+        subject: `${topic.title}: ${sub.title}`,
+        courseLength: "standard",
+        technicalLevel: "intermediate",
+        learningIntent: "deep",
+        categoryId: topic.categoryId || undefined,
+      });
       return res.json();
     },
-    onSuccess: () => {
-      toast({ title: "Topic Unlocked!", description: "All difficulty levels are now available." });
-      queryClient.invalidateQueries({ queryKey: ["/api/keys"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/lessons/unit"] });
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/my-courses"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
+      toast({
+        title: "Sub-topic course ready",
+        description: `Opening "${data.topic?.title}"...`,
+      });
+      if (data.topic?.id) {
+        window.location.href = `/rabbit-hole?topic=${data.topic.id}`;
+      }
     },
     onError: (err: any) => {
-      toast({ title: "Failed to unlock", description: err.message || "Could not use key", variant: "destructive" });
-    },
-  });
-
-  const [showBuyKeys, setShowBuyKeys] = useState(false);
-  const [buyQuantity, setBuyQuantity] = useState(1);
-
-  const purchaseMutation = useMutation({
-    mutationFn: async (quantity: number) => {
-      const res = await apiRequest("POST", "/api/keys/purchase", { quantity });
-      return res.json();
-    },
-    onSuccess: () => {
-      toast({ title: "Purchase Request Submitted", description: "Your request is pending admin approval. Send your Dogecoin payment and we'll approve it shortly." });
-      setShowBuyKeys(false);
-      setBuyQuantity(1);
-      queryClient.invalidateQueries({ queryKey: ["/api/keys/purchases"] });
-    },
-    onError: (err: any) => {
-      toast({ title: "Purchase Failed", description: err.message || "Could not submit purchase", variant: "destructive" });
+      toast({
+        title: "Could not build sub-topic course",
+        description: err?.message?.includes("BYOC_REQUIRED")
+          ? "Connect an AI key in Settings (or author via Hermes Agent) to generate sub-topic courses."
+          : err?.message || "Try again in a moment.",
+        variant: "destructive",
+      });
     },
   });
 
@@ -829,6 +735,41 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     return acc;
   }, {} as Record<string, LessonUnit[]>) || {};
 
+  // Dynamic tiers: only show difficulty tabs that actually have units (fallback to beginner if empty)
+  const ALL_DIFFICULTIES = ["beginner", "intermediate", "advanced", "nextgen"] as const;
+  const availableDifficulties = useMemo(() => {
+    const present = ALL_DIFFICULTIES.filter((d) => (unitsByDifficulty[d]?.length || 0) > 0);
+    return present.length > 0 ? present : (["beginner"] as const);
+  }, [unitsByDifficulty]);
+
+  // Ensure activeTab is always one of the available tiers
+  useEffect(() => {
+    if (availableDifficulties.length > 0 && !availableDifficulties.includes(activeTab as any)) {
+      setActiveTab(availableDifficulties[0]);
+    }
+  }, [availableDifficulties, activeTab]);
+
+  // Derive descriptive tier label per difficulty from unit outlines (`[Tier Name]`) or coursePlan.tiers
+  const tierLabelsByDifficulty = useMemo(() => {
+    const labels: Record<string, string> = {
+      beginner: "Foundations",
+      intermediate: "Core Mechanics",
+      advanced: "Advanced",
+      nextgen: "Frontier & SOTA",
+    };
+    for (const diff of ALL_DIFFICULTIES) {
+      const units = unitsByDifficulty[diff] || [];
+      for (const u of units) {
+        const { tierName } = parseUnitTierLabel(u.outline);
+        if (tierName) {
+          labels[diff] = tierName;
+          break;
+        }
+      }
+    }
+    return labels;
+  }, [unitsByDifficulty]);
+
   const mastery = lessonData?.mastery;
   
   const getProgressForDifficulty = (difficulty: string) => {
@@ -1121,14 +1062,30 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   <section>
                     <div className="flex items-center gap-2 mb-4">
                       <AlertTriangle className="h-5 w-5 text-red-500" />
-                      <h2 className="text-xl font-semibold">Open Roadblocks</h2>
-                      <Badge variant="destructive" className="text-xs">Unsolved</Badge>
+                      <h2 className="text-xl font-semibold">Open SOTA Roadblocks</h2>
+                      <Badge variant="destructive" className="text-xs">Unsolved Bottlenecks</Badge>
                     </div>
                     <div className="space-y-4">
                       {(nextGenContent as any).openRoadblocks.map((roadblock: any, i: number) => (
                         <Card key={i} className="border-red-500/20 bg-red-500/5 overflow-hidden" data-testid={`card-roadblock-${i}`}>
                           <CardContent className="p-4 sm:p-6 space-y-3">
-                            <h3 className="font-semibold break-words [overflow-wrap:anywhere] text-red-700 dark:text-red-400">{roadblock.title}</h3>
+                            <div className="flex items-start justify-between gap-2 flex-wrap">
+                              <h3 className="font-semibold break-words [overflow-wrap:anywhere] text-red-700 dark:text-red-400">{roadblock.title}</h3>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                className="h-7 text-xs border-amber-500/40 text-amber-500 hover:bg-amber-500/10"
+                                onClick={() => {
+                                  setIdeaTitle(`Hypothesis on: ${roadblock.title}`);
+                                  setIdeaDescription(`Addressing bottleneck: ${roadblock.title}\n\nProposed approach & cross-domain mechanism:\n`);
+                                  setShowIdeaForm(true);
+                                  document.querySelector('[data-testid="section-idea-board"]')?.scrollIntoView({ behavior: "smooth" });
+                                }}
+                              >
+                                <Sparkles className="h-3 w-3 mr-1" />
+                                Propose Hypothesis
+                              </Button>
+                            </div>
                             <p className="text-muted-foreground text-sm break-words [overflow-wrap:anywhere]">{roadblock.description}</p>
                             {roadblock.whyItMatters && (
                               <div className="bg-red-500/10 rounded-md p-3">
@@ -1140,6 +1097,60 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         </Card>
                       ))}
                     </div>
+                  </section>
+                )}
+
+                {/* Cross-Domain Insights (Polymath Bridges) */}
+                {(nextGenContent as any).crossDomainInsights && (nextGenContent as any).crossDomainInsights.length > 0 && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Zap className="h-5 w-5 text-cyan-500" />
+                      <h2 className="text-xl font-semibold">Cross-Domain Structural Bridges</h2>
+                    </div>
+                    <div className="space-y-4">
+                      {(nextGenContent as any).crossDomainInsights.map((cd: any, i: number) => (
+                        <Card key={i} className="border-cyan-500/20 bg-cyan-500/5 overflow-hidden">
+                          <CardContent className="p-4 sm:p-6 space-y-2">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <Badge variant="outline" className="border-cyan-500/40 text-cyan-400">{topic.title} × {cd.distantDomain}</Badge>
+                              {cd.abstraction && <span className="text-xs text-muted-foreground font-mono">{cd.abstraction}</span>}
+                            </div>
+                            <p className="text-sm text-foreground/90">{cd.insight}</p>
+                            {cd.example && <p className="text-xs text-muted-foreground italic">{cd.example}</p>}
+                          </CardContent>
+                        </Card>
+                      ))}
+                    </div>
+                  </section>
+                )}
+
+                {/* Open Science Pitch & Minimal Viable Experiment */}
+                {((nextGenContent as any).pitchFramework?.title || (nextGenContent as any).experimentDesign?.title) && (
+                  <section>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Target className="h-5 w-5 text-amber-500" />
+                      <h2 className="text-xl font-semibold">Open Science Pitch & Minimal Viable Experiment</h2>
+                    </div>
+                    <Card className="border-amber-500/30 bg-amber-500/5 overflow-hidden">
+                      <CardContent className="p-4 sm:p-6 space-y-4">
+                        {(nextGenContent as any).pitchFramework?.title && (nextGenContent as any).pitchFramework.title !== "Content Unavailable" && (
+                          <div className="space-y-2">
+                            <h3 className="font-semibold text-base text-amber-400">{(nextGenContent as any).pitchFramework.title}</h3>
+                            <p className="text-sm text-muted-foreground"><strong>Gap:</strong> {(nextGenContent as any).pitchFramework.problemStatement}</p>
+                            <p className="text-sm text-muted-foreground"><strong>Proposed Angle:</strong> {(nextGenContent as any).pitchFramework.proposedApproach}</p>
+                            <p className="text-sm text-muted-foreground"><strong>2-Week Falsifiable Next Step:</strong> {(nextGenContent as any).pitchFramework.nextStep}</p>
+                          </div>
+                        )}
+                        {(nextGenContent as any).experimentDesign?.hypothesis && (
+                          <div className="pt-3 border-t border-amber-500/20 space-y-1.5">
+                            <p className="text-xs font-semibold uppercase tracking-wide text-amber-400">Minimal Viable Experiment: {(nextGenContent as any).experimentDesign.title}</p>
+                            <p className="text-sm text-muted-foreground"><strong>Hypothesis:</strong> {(nextGenContent as any).experimentDesign.hypothesis}</p>
+                            <p className="text-sm text-muted-foreground"><strong>Method:</strong> {(nextGenContent as any).experimentDesign.method}</p>
+                            <p className="text-xs text-muted-foreground"><strong>Falsification Criteria:</strong> {(nextGenContent as any).experimentDesign.successCriteria}</p>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
                   </section>
                 )}
 
@@ -2110,325 +2121,201 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
               <span className="ml-3 text-muted-foreground">Loading course outline...</span>
             </div>
           ) : (
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-              <TabsList className="grid w-full grid-cols-4">
-                {["beginner", "intermediate", "advanced", "nextgen"].map((diff) => {
-                  const Icon = difficultyIcons[diff];
-                  const locked = isTabLocked(diff);
+            <div className="space-y-6">
+              {/* Sub-topic decomposition modules (when AI planned a broad/interdisciplinary course) */}
+              {coursePlan?.planJson?.subTopics && coursePlan.planJson.subTopics.length > 0 && (
+                <Card className="border-primary/25 bg-primary/5" data-testid="section-subtopics">
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-base flex items-center gap-2">
+                      <Compass className="h-4 w-4 text-primary" />
+                      Decomposed Sub-Topic Modules ({coursePlan.planJson.subTopics.length})
+                    </CardTitle>
+                    <p className="text-xs text-muted-foreground">
+                      This broad discipline breaks down into specialized sub-branches. Click any branch to launch a dedicated deep-dive course.
+                    </p>
+                  </CardHeader>
+                  <CardContent className="grid gap-2.5 sm:grid-cols-2">
+                    {coursePlan.planJson.subTopics.map((st, idx) => (
+                      <div
+                        key={idx}
+                        className="rounded-lg border border-border/70 bg-background/80 p-3 flex flex-col justify-between gap-2"
+                      >
+                        <div>
+                          <h4 className="font-semibold text-sm">{st.title}</h4>
+                          <p className="text-xs text-muted-foreground mt-0.5 line-clamp-2">{st.description}</p>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="w-full h-7 text-xs"
+                          disabled={spawnSubTopicMutation.isPending}
+                          onClick={() => spawnSubTopicMutation.mutate({ title: st.title, description: st.description })}
+                        >
+                          {spawnSubTopicMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1.5 animate-spin" />
+                          ) : (
+                            <Rocket className="h-3 w-3 mr-1.5" />
+                          )}
+                          Branch into Sub-Course
+                        </Button>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
+              )}
+
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+                <TabsList
+                  className={cn(
+                    "grid w-full",
+                    availableDifficulties.length === 1
+                      ? "grid-cols-1"
+                      : availableDifficulties.length === 2
+                      ? "grid-cols-2"
+                      : availableDifficulties.length === 3
+                      ? "grid-cols-3"
+                      : "grid-cols-4"
+                  )}
+                >
+                  {availableDifficulties.map((diff) => {
+                    const Icon = difficultyIcons[diff] || BookOpen;
+                    const locked = isTabLocked(diff);
+                    const progress = getProgressForDifficulty(diff);
+                    const tierLabel = tierLabelsByDifficulty[diff] || (diff === "nextgen" ? "Next Gen" : diff);
+                    
+                    return (
+                      <TabsTrigger
+                        key={diff}
+                        value={diff}
+                        disabled={locked}
+                        className={cn("relative capitalize", locked && "opacity-50")}
+                        data-testid={`tab-${diff}`}
+                      >
+                        <div className="flex items-center gap-1.5 truncate">
+                          {locked ? (
+                            <Lock className="h-4 w-4 shrink-0" />
+                          ) : (
+                            <Icon className="h-4 w-4 shrink-0" />
+                          )}
+                          <span className="truncate text-xs sm:text-sm">{tierLabel}</span>
+                        </div>
+                        {!locked && progress.total > 0 && (
+                          <span className="ml-1.5 text-xs text-muted-foreground shrink-0">
+                            {progress.completed}/{progress.total}
+                          </span>
+                        )}
+                      </TabsTrigger>
+                    );
+                  })}
+                </TabsList>
+
+                {availableDifficulties.map((diff) => {
+                  const units = unitsByDifficulty[diff] || [];
                   const progress = getProgressForDifficulty(diff);
                   
                   return (
-                    <TabsTrigger
-                      key={diff}
-                      value={diff}
-                      disabled={locked}
-                      className={cn("relative capitalize", locked && "opacity-50")}
-                      data-testid={`tab-${diff}`}
-                    >
-                      <div className="flex items-center gap-2">
-                        {locked ? (
-                          <Lock className="h-4 w-4" />
-                        ) : (
-                          <Icon className="h-4 w-4" />
-                        )}
-                        <span className="hidden sm:inline">{diff === "nextgen" ? "Next Gen" : diff}</span>
-                      </div>
-                      {!locked && progress.total > 0 && (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          {progress.completed}/{progress.total}
-                        </span>
+                    <TabsContent key={diff} value={diff} className="space-y-4">
+                      {progress.total > 0 && (
+                        <div className="flex items-center gap-3 mb-6">
+                          <Progress value={progress.percentage} className="flex-1 h-2" />
+                          <span className="text-sm text-muted-foreground whitespace-nowrap">
+                            {progress.completed} of {progress.total} complete
+                          </span>
+                        </div>
                       )}
-                    </TabsTrigger>
+                      
+                      {units.length === 0 ? (
+                        <Card>
+                          <CardContent className="p-8 text-center text-muted-foreground">
+                            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3" />
+                            No lessons available yet. Check back soon!
+                          </CardContent>
+                        </Card>
+                      ) : (
+                        <div className="space-y-3">
+                          {units.map((unit, index) => {
+                            const isCompleted = unit.progress?.status === "completed";
+                            const isInProgress = unit.progress?.status === "in_progress";
+                            const { cleanOutline, tierName } = parseUnitTierLabel(unit.outline);
+                            
+                            return (
+                              <motion.div
+                                key={unit.id}
+                                initial={{ opacity: 0, y: 10 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ delay: index * 0.05 }}
+                              >
+                                <Card
+                                  className={cn(
+                                    "cursor-pointer transition-all hover-elevate",
+                                    unit.locked && "opacity-60 cursor-not-allowed",
+                                    isCompleted && "border-green-500/30 bg-green-500/5"
+                                  )}
+                                  onClick={() => handleStartUnit(unit)}
+                                  data-testid={`unit-${unit.id}`}
+                                >
+                                  <CardContent className="p-4 flex items-center gap-4">
+                                    <div className={cn(
+                                      "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
+                                      isCompleted ? "bg-green-500 text-white" :
+                                      unit.locked ? "bg-muted text-muted-foreground" :
+                                      "bg-primary/10 text-primary border border-primary/20"
+                                    )}>
+                                      {isCompleted ? (
+                                        <CheckCircle className="h-5 w-5" />
+                                      ) : unit.locked ? (
+                                        <Lock className="h-4 w-4" />
+                                      ) : (
+                                        <span className="font-semibold">{index + 1}</span>
+                                      )}
+                                    </div>
+                                    
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <h3 className="font-medium truncate">{unit.title}</h3>
+                                        {tierName && (
+                                          <Badge variant="outline" className="text-[10px] shrink-0 hidden sm:inline-flex">
+                                            {tierName}
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      {cleanOutline && (
+                                        <p className="text-sm text-muted-foreground truncate">
+                                          {cleanOutline}
+                                        </p>
+                                      )}
+                                    </div>
+                                    
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      {isInProgress && (
+                                        <Badge variant="secondary" className="text-xs">
+                                          In Progress
+                                        </Badge>
+                                      )}
+                                      {isCompleted && unit.progress?.quizScore !== null && unit.progress?.quizScore !== undefined && (
+                                        <Badge variant="outline" className="text-xs">
+                                          {unit.progress.quizScore}%
+                                        </Badge>
+                                      )}
+                                      {!unit.locked && (
+                                        <ChevronRight className="h-5 w-5 text-muted-foreground" />
+                                      )}
+                                    </div>
+                                  </CardContent>
+                                </Card>
+                              </motion.div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </TabsContent>
                   );
                 })}
-              </TabsList>
-
-              {["beginner", "intermediate", "advanced", "nextgen"].map((diff) => {
-                const units = unitsByDifficulty[diff] || [];
-                const progress = getProgressForDifficulty(diff);
-                
-                return (
-                  <TabsContent key={diff} value={diff} className="space-y-4">
-                    {progress.total > 0 && (
-                      <div className="flex items-center gap-3 mb-6">
-                        <Progress value={progress.percentage} className="flex-1 h-2" />
-                        <span className="text-sm text-muted-foreground whitespace-nowrap">
-                          {progress.completed} of {progress.total} complete
-                        </span>
-                      </div>
-                    )}
-                    
-                    {units.length === 0 ? (
-                      <Card>
-                        <CardContent className="p-8 text-center text-muted-foreground">
-                          <Loader2 className="h-6 w-6 animate-spin mx-auto mb-3" />
-                          No lessons available yet. Check back soon!
-                        </CardContent>
-                      </Card>
-                    ) : (
-                      <div className="space-y-3">
-                        {units.map((unit, index) => {
-                          const isCompleted = unit.progress?.status === "completed";
-                          const isInProgress = unit.progress?.status === "in_progress";
-                          
-                          return (
-                            <motion.div
-                              key={unit.id}
-                              initial={{ opacity: 0, y: 10 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ delay: index * 0.05 }}
-                            >
-                              <Card
-                                className={cn(
-                                  "cursor-pointer transition-all hover-elevate",
-                                  unit.locked && "opacity-60 cursor-not-allowed",
-                                  isCompleted && "border-green-500/30 bg-green-500/5"
-                                )}
-                                onClick={() => handleStartUnit(unit)}
-                                data-testid={`unit-${unit.id}`}
-                              >
-                                <CardContent className="p-4 flex items-center gap-4">
-                                  <div className={cn(
-                                    "w-10 h-10 rounded-full flex items-center justify-center shrink-0",
-                                    isCompleted ? "bg-green-500 text-white" :
-                                    unit.locked ? "bg-muted text-muted-foreground" :
-                                    "bg-primary/10 text-primary border border-primary/20"
-                                  )}>
-                                    {isCompleted ? (
-                                      <CheckCircle className="h-5 w-5" />
-                                    ) : unit.locked ? (
-                                      <Lock className="h-4 w-4" />
-                                    ) : (
-                                      <span className="font-semibold">{index + 1}</span>
-                                    )}
-                                  </div>
-                                  
-                                  <div className="flex-1 min-w-0">
-                                    <h3 className="font-medium truncate">{unit.title}</h3>
-                                    {unit.outline && (
-                                      <p className="text-sm text-muted-foreground truncate">
-                                        {unit.outline}
-                                      </p>
-                                    )}
-                                  </div>
-                                  
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    {isInProgress && (
-                                      <Badge variant="secondary" className="text-xs">
-                                        In Progress
-                                      </Badge>
-                                    )}
-                                    {isCompleted && unit.progress?.quizScore !== null && unit.progress?.quizScore !== undefined && (
-                                      <Badge variant="outline" className="text-xs">
-                                        {unit.progress.quizScore}%
-                                      </Badge>
-                                    )}
-                                    {!unit.locked && (
-                                      <ChevronRight className="h-5 w-5 text-muted-foreground" />
-                                    )}
-                                  </div>
-                                </CardContent>
-                              </Card>
-                            </motion.div>
-                          );
-                        })}
-                      </div>
-                    )}
-                    
-                    {/* Unlock hint for locked tabs */}
-                    {isTabLocked(diff) && diff !== "beginner" && (
-                      <Card className={cn("border-dashed", diff === "nextgen" && "border-purple-500/30")}>
-                        <CardContent className="p-6 text-center">
-                          <Lock className={cn("h-8 w-8 mx-auto mb-3", diff === "nextgen" ? "text-purple-500" : "text-muted-foreground")} />
-                          <p className="font-medium mb-1">
-                            {diff === "nextgen" ? "Next Gen Analysis Locked" : "Level Locked"}
-                          </p>
-                          <p className="text-sm text-muted-foreground">
-                            {diff === "nextgen" 
-                              ? "Complete 70% of Advanced lessons to unlock cutting-edge research challenges."
-                              : `Complete 70% of ${diff === "intermediate" ? "Beginner" : diff === "advanced" ? "Intermediate" : "previous"} lessons to unlock.`}
-                          </p>
-                          {diff === "nextgen" && (
-                            <p className="text-xs text-purple-500 mt-2">
-                              Explore frontier research, industry challenges, and creative thinking.
-                            </p>
-                          )}
-                          {keysData && keysData.availableKeys > 0 && (
-                            <div className="mt-4 pt-4 border-t border-dashed">
-                              <p className="text-sm text-muted-foreground mb-3">Or skip the requirements:</p>
-                              <Button
-                                size="sm"
-                                onClick={() => useKeyMutation.mutate(topic.id)}
-                                disabled={useKeyMutation.isPending}
-                                className="gap-2"
-                                data-testid="button-use-key"
-                              >
-                                {useKeyMutation.isPending ? (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                  <Key className="h-4 w-4" />
-                                )}
-                                Unlock All Levels ({keysData.availableKeys} {keysData.availableKeys === 1 ? "key" : "keys"} remaining)
-                              </Button>
-                            </div>
-                          )}
-                        </CardContent>
-                      </Card>
-                    )}
-                  </TabsContent>
-                );
-              })}
-            </Tabs>
+              </Tabs>
+            </div>
           )}
         </div>
       </main>
-
-      {/* Buy Keys Modal */}
-      <AnimatePresence>
-        {showBuyKeys && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setShowBuyKeys(false)}
-          >
-            <motion.div
-              className="w-full max-w-md"
-              initial={{ scale: 0.95, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.95, opacity: 0 }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between gap-2 pb-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Key className="h-5 w-5 text-amber-500" />
-                    Unlock Keys
-                  </CardTitle>
-                  <Button variant="ghost" size="icon" onClick={() => setShowBuyKeys(false)} data-testid="button-close-buy-keys">
-                    <X className="h-4 w-4" />
-                  </Button>
-                </CardHeader>
-                <CardContent className="space-y-5">
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-muted">
-                    <span className="text-sm font-medium">Your Keys</span>
-                    <Badge variant="secondary" className="text-base gap-1">
-                      <Key className="h-3.5 w-3.5 text-amber-500" />
-                      {keysData?.availableKeys ?? 0} available
-                    </Badge>
-                  </div>
-
-                  <div className="space-y-2">
-                    <p className="text-sm font-medium">How to get keys:</p>
-                    <div className="space-y-2 text-sm text-muted-foreground">
-                      <div className="flex items-start gap-2">
-                        <Gift className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
-                        <span>3 free keys when you join</span>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <Trophy className="h-4 w-4 text-blue-500 mt-0.5 shrink-0" />
-                        <span>Earn 1 key/day by completing beginner + intermediate + advanced on 3 topics</span>
-                      </div>
-                      <div className="flex items-start gap-2">
-                        <ShoppingCart className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
-                        <span>Buy keys with Dogecoin (1 DOGE = 1 key)</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Admin: Pending Purchase Approvals */}
-                  {isAdmin && <AdminPurchaseApprovals />}
-
-                  <div className="border-t pt-4 space-y-3">
-                    <p className="text-sm font-medium">Buy Keys with Dogecoin</p>
-                    <div className="flex items-center gap-3">
-                      <label className="text-sm text-muted-foreground shrink-0">Quantity:</label>
-                      <div className="flex items-center gap-2">
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => setBuyQuantity(q => Math.max(1, q - 1))}
-                          disabled={buyQuantity <= 1}
-                          data-testid="button-decrease-quantity"
-                        >
-                          <span className="text-lg leading-none">-</span>
-                        </Button>
-                        <span className="w-10 text-center text-lg font-medium" data-testid="text-buy-quantity">{buyQuantity}</span>
-                        <Button
-                          variant="outline"
-                          size="icon"
-                          onClick={() => setBuyQuantity(q => Math.min(100, q + 1))}
-                          disabled={buyQuantity >= 100}
-                          data-testid="button-increase-quantity"
-                        >
-                          <span className="text-lg leading-none">+</span>
-                        </Button>
-                      </div>
-                      <span className="text-sm text-muted-foreground">= {buyQuantity} DOGE</span>
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-xs text-muted-foreground">
-                        1. Send {buyQuantity} DOGE to the payment link below
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        2. Submit your purchase request
-                      </p>
-                      <p className="text-xs text-muted-foreground">
-                        3. Keys will be added after admin confirmation
-                      </p>
-                    </div>
-
-                    <div className="space-y-2">
-                      <p className="text-xs font-medium text-muted-foreground">Payment Options:</p>
-                      <Button variant="outline" asChild className="w-full gap-2" size="sm">
-                        <a
-                          href="https://mydoge.com/JonK"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-testid="link-doge-payment"
-                        >
-                          <ExternalLink className="h-4 w-4" />
-                          Pay via MyDoge at mydoge.com/JonK
-                        </a>
-                      </Button>
-
-                      <DogeWalletCopy />
-
-                      <Button variant="outline" asChild className="w-full gap-2" size="sm">
-                        <a
-                          href="https://buymeacoffee.com/jkorstad"
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          data-testid="link-bmac-payment"
-                        >
-                          <Coffee className="h-4 w-4" />
-                          Pay via Buy Me a Coffee
-                        </a>
-                      </Button>
-                    </div>
-
-                    <Button
-                      className="w-full gap-2"
-                      onClick={() => purchaseMutation.mutate(buyQuantity)}
-                      disabled={purchaseMutation.isPending}
-                      data-testid="button-submit-purchase"
-                    >
-                      {purchaseMutation.isPending ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <Key className="h-4 w-4" />
-                      )}
-                      Submit Purchase Request ({buyQuantity} {buyQuantity === 1 ? "key" : "keys"})
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
 
       <AnimatePresence>
         {showChat && (
