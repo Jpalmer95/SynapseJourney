@@ -6,9 +6,10 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { Suspense, lazy } from "react";
+import { Suspense, lazy, useEffect } from "react";
 import NotFound from "@/pages/not-found";
 import { LandingPage } from "@/pages/landing";
+import { AuthPage } from "@/pages/auth-page";
 import { ResetPasswordPage } from "@/pages/reset-password";
 
 // Route-level code splitting: the entry bundle used to carry every page (3.4 MB raw /
@@ -58,6 +59,15 @@ function SessionCheckError({ onRetry, isRetrying }: { onRetry: () => void; isRet
   );
 }
 
+// An authenticated visitor who lands on /signin or /signup belongs on the dashboard.
+function RedirectHome() {
+  const [, setLocation] = useLocation();
+  useEffect(() => {
+    setLocation("/", { replace: true });
+  }, [setLocation]);
+  return null;
+}
+
 function AppContent() {
   const [location] = useLocation();
   const { user, isLoading, isAuthenticated, isError, retry, isRetrying } = useAuth();
@@ -85,8 +95,25 @@ function AppContent() {
   }
 
   if (!isAuthenticated) {
-    // Preserve the deep link so sign-in lands on the page that was requested.
-    return <LandingPage nextPath={location !== "/" ? location : null} />;
+    const nextParam = new URLSearchParams(window.location.search).get("next");
+
+    // Public marketing page — newcomers read before they are asked to sign in.
+    if (location === "/") {
+      return <LandingPage />;
+    }
+
+    // Explicit auth routes.
+    if (location.startsWith("/signin") || location.startsWith("/signup")) {
+      return (
+        <AuthPage
+          nextPath={nextParam}
+          initialMode={location.startsWith("/signup") ? "register" : "login"}
+        />
+      );
+    }
+
+    // Any other protected deep link: sign in first, then continue where they were headed.
+    return <AuthPage nextPath={location} />;
   }
 
   return (
@@ -112,6 +139,8 @@ function AppContent() {
             }
           >
           <Switch>
+            <Route path="/signin" component={RedirectHome} />
+            <Route path="/signup" component={RedirectHome} />
             <Route path="/" component={HomePage} />
       <Route path="/map" component={MapPage} />
       <Route path="/saved" component={SavedPage} />

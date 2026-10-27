@@ -1,10 +1,21 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Sparkles, Zap, Brain, Map, BookOpen, Loader2, Fingerprint, Layers, FlaskConical } from "lucide-react";
+import {
+  Sparkles,
+  Zap,
+  Brain,
+  Map,
+  BookOpen,
+  Layers,
+  FlaskConical,
+  ArrowRight,
+  Network,
+  GraduationCap,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import type { Topic } from "@shared/schema";
 
 const features = [
   {
@@ -45,409 +56,221 @@ const features = [
   },
 ];
 
-type ProviderInfo = {
-  google: boolean;
-  passkeys: boolean;
-  email: { configured: boolean; provider: string };
-};
+const steps = [
+  {
+    title: "Say what you need to learn",
+    body: "A goal in your own words — “deploy a Next.js app to production”, “actually understand orbital mechanics”, “fuse immunology and ML”. No catalog hunting.",
+  },
+  {
+    title: "Learn unit by unit",
+    body: "Concept, analogy, worked example, quiz, and the sources behind it. Go as deep as the tier you picked, or jump straight to what you need.",
+  },
+  {
+    title: "Watch the network densify",
+    body: "Each finished unit adds nodes and edges to your map. That growing density is the point — it is what makes the next topic faster to learn.",
+  },
+];
 
-function browserSupportsPasskeys(): boolean {
-  return typeof window !== "undefined" && typeof (window as any).PublicKeyCredential !== "undefined";
-}
-
-export function LandingPage({ nextPath }: { nextPath?: string | null } = {}) {
-  // Where to go after a successful sign-in: the page the visitor originally asked for.
-  const postAuthDestination = nextPath && nextPath.startsWith("/") ? nextPath : "/";
-  const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [error, setError] = useState("");
-  const [info, setInfo] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [forgotSent, setForgotSent] = useState(false);
-  const [adminResetUrl, setAdminResetUrl] = useState("");
-  const [providers, setProviders] = useState<ProviderInfo>({
-    google: false,
-    passkeys: browserSupportsPasskeys(),
-    email: { configured: true, provider: "unknown" },
+export function LandingPage() {
+  const { data: topics = [] } = useQuery<Topic[]>({
+    queryKey: ["/api/topics"],
+    staleTime: 5 * 60 * 1000,
   });
-  const [passkeyLoading, setPasskeyLoading] = useState(false);
 
-  useEffect(() => {
-    fetch("/api/auth/providers")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (d) setProviders({ google: !!d.google, passkeys: !!d.passkeys, email: d.email });
-      })
-      .catch(() => {});
-
-    const params = new URLSearchParams(window.location.search);
-    const authError = params.get("auth_error");
-    if (authError) {
-      setError(
-        authError === "google_not_configured"
-          ? "Google sign-in isn't enabled on this deployment yet."
-          : `Sign-in failed (${authError}). Try a password or passkey instead.`,
-      );
-    }
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setInfo("");
-    setLoading(true);
-
-    try {
-      if (mode === "forgot") {
-        const res = await fetch("/api/auth/forgot-password", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email }),
-        });
-        const data = await res.json();
-        if (!res.ok) {
-          setError(data.message || "Something went wrong");
-          setLoading(false);
-          return;
-        }
-        setForgotSent(true);
-        if (data.adminResetUrl) {
-          setAdminResetUrl(data.adminResetUrl);
-        } else if (data.delivery === "failed") {
-          setInfo(
-            "The reset email could not be delivered by this deployment's mail provider. Contact the site admin.",
-          );
-        } else {
-          setInfo(data.message || "");
-        }
-        setLoading(false);
-        return;
-      }
-
-      const endpoint = mode === "login" ? "/api/auth/login" : "/api/auth/register";
-      const body: any = { email, password };
-      if (mode === "register") {
-        body.firstName = firstName;
-        body.lastName = lastName;
-      }
-
-      const res = await fetch(endpoint, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        credentials: "include",
-      });
-
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.message || "Authentication failed");
-        setLoading(false);
-        return;
-      }
-
-      window.location.href = postAuthDestination;
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
-      setLoading(false);
-    }
-  };
-
-  const handlePasskeyLogin = async () => {
-    setError("");
-    setPasskeyLoading(true);
-    try {
-      const { startAuthentication } = await import("@simplewebauthn/browser");
-      const optRes = await fetch("/api/auth/passkey/login/options", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: email || undefined }),
-        credentials: "include",
-      });
-      if (!optRes.ok) {
-        const d = await optRes.json().catch(() => ({}));
-        throw new Error(d.message || "Could not start passkey sign-in");
-      }
-      const options = await optRes.json();
-      const response = await startAuthentication({ optionsJSON: options });
-      const verifyRes = await fetch("/api/auth/passkey/login/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ response }),
-        credentials: "include",
-      });
-      if (!verifyRes.ok) {
-        const d = await verifyRes.json().catch(() => ({}));
-        throw new Error(d.message || "Passkey sign-in failed");
-      }
-      window.location.href = postAuthDestination;
-    } catch (err: any) {
-      setError(err?.message || "Passkey sign-in failed");
-      setPasskeyLoading(false);
-    }
-  };
+  const sampleTopics = topics.slice(0, 6);
 
   return (
     <div className="min-h-screen bg-background">
-      <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-lg border-b border-border">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-50 bg-background/85 backdrop-blur-lg border-b border-border">
+        <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between gap-4">
+          <a href="/" className="flex items-center gap-2" aria-label="Synapse home">
             <div className="p-2 rounded-md bg-primary">
-              <Sparkles className="h-5 w-5 text-primary-foreground" />
+              <Sparkles className="h-5 w-5 text-primary-foreground" aria-hidden="true" />
             </div>
             <span className="text-xl font-bold">Synapse</span>
+          </a>
+
+          <nav aria-label="Landing" className="hidden md:flex items-center gap-1">
+            {[
+              { href: "#how", label: "How it works" },
+              { href: "#catalog", label: "Catalog" },
+              { href: "#features", label: "Features" },
+            ].map((item) => (
+              <a
+                key={item.href}
+                href={item.href}
+                className="px-3 py-2 rounded-md text-sm text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+              >
+                {item.label}
+              </a>
+            ))}
+          </nav>
+
+          <div className="flex items-center gap-2">
+            <Button asChild variant="ghost" size="sm">
+              <a href="/signin">Sign in</a>
+            </Button>
+            <Button asChild size="sm">
+              <a href="/signup">Get started</a>
+            </Button>
           </div>
-          <Button variant="outline" onClick={() => document.getElementById("auth-section")?.scrollIntoView({ behavior: "smooth" })}>
-            Get Started
-          </Button>
         </div>
       </header>
 
       <main>
-        <section className="pt-32 pb-20 px-4">
+        {/* Hero */}
+        <section className="pt-16 pb-12 md:pt-24 md:pb-16 px-4">
           <div className="max-w-4xl mx-auto text-center">
-            <motion.div
-              initial={{ opacity: 0, y: 30 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6 }}
-            >
-              <h1 className="text-5xl md:text-7xl font-bold mb-6 bg-gradient-to-r from-primary via-violet-500 to-purple-600 bg-clip-text text-transparent">
-                Learn Without Limits
+            <motion.div initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }}>
+              <Badge variant="outline" className="mb-6 text-xs">
+                Open source · BYOC · agent-native
+              </Badge>
+              <h1 className="text-4xl md:text-6xl font-bold tracking-tight mb-5">
+                Learn anything —{" "}
+                <span className="bg-gradient-to-r from-primary via-violet-500 to-purple-600 bg-clip-text text-transparent">
+                  breadthwise, depthwise, or laser-focused
+                </span>
               </h1>
-              <p className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-                Rapid learning paths, deep foundational courses, and cross-domain synthesis — built to attack
-                real frontier bottlenecks in industry and open science, with your own AI agent learning
-                alongside you.
+              <p className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto mb-8">
+                Synapse builds the course you actually need: a fast route to one unblocked problem, a
+                twenty-unit foundation, or a synthesis of two fields that has never been taught together.
+              </p>
+              <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+                <Button asChild size="lg" className="w-full sm:w-auto">
+                  <a href="/signup">
+                    Start learning free
+                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                  </a>
+                </Button>
+                <Button asChild size="lg" variant="outline" className="w-full sm:w-auto">
+                  <a href="#catalog">Browse the catalog</a>
+                </Button>
+              </div>
+              <p className="mt-4 text-sm text-muted-foreground">
+                Free to browse and read. AI generation runs on your own provider keys — you are never
+                billed for someone else's compute.
               </p>
             </motion.div>
           </div>
         </section>
 
-        <section id="auth-section" className="py-20 px-4 bg-muted/30">
-          <div className="max-w-md mx-auto">
-            <Card className="p-6">
-              {nextPath && (
-                <div
-                  className="mb-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm"
-                  data-testid="signin-required-banner"
-                >
-                  Sign in to open <span className="font-mono text-xs break-all">{nextPath}</span>
-                </div>
-              )}
-              <h2 className="text-2xl font-bold mb-4 text-center">
-                {mode === "login" ? "Welcome Back" : mode === "register" ? "Create Account" : "Reset Password"}
-              </h2>
-              {mode === "forgot" && forgotSent ? (
-                <div className="text-center space-y-4">
-                  <p className="text-sm text-muted-foreground">
-                    If an account exists for <span className="font-medium text-foreground">{email}</span>, we've sent a
-                    password reset link. Check your inbox (and spam folder) — the link expires in 1 hour.
+        {/* Synaptodendrogenesis — the word the platform is named after */}
+        <section className="pb-16 md:pb-24 px-4">
+          <div className="max-w-4xl mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              transition={{ duration: 0.5 }}
+            >
+              <Card
+                className="relative overflow-hidden border-primary/30 bg-gradient-to-br from-primary/10 via-background to-violet-500/10"
+                data-testid="synaptodendrogenesis-card"
+              >
+                <CardContent className="p-8 md:p-12 text-center">
+                  <Network className="mx-auto mb-6 h-8 w-8 text-primary" aria-hidden="true" />
+                  <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground mb-3">
+                    The word behind the platform
                   </p>
-                  {adminResetUrl && (
-                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-left space-y-2">
-                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
-                        Email delivery is not configured on this deployment. Admin reset link:
-                      </p>
-                      <a
-                        href={adminResetUrl}
-                        className="text-xs break-all text-primary underline"
-                      >
-                        {adminResetUrl}
-                      </a>
-                    </div>
-                  )}
-                  {info && !adminResetUrl && <p className="text-xs text-muted-foreground">{info}</p>}
-                  <Button
-                    variant="outline"
-                    className="w-full"
-                    onClick={() => {
-                      setMode("login");
-                      setForgotSent(false);
-                      setAdminResetUrl("");
-                      setInfo("");
-                    }}
-                  >
-                    Back to Login
-                  </Button>
-                </div>
-              ) : (
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div>
-                  <Label htmlFor="email">Email</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    placeholder="you@example.com"
-                    autoComplete="username"
-                  />
-                </div>
-                {mode !== "forgot" && (
-                <div>
-                  <Label htmlFor="password">Password</Label>
-                  <Input
-                    id="password"
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    placeholder="••••••••"
-                    autoComplete={mode === "login" ? "current-password" : "new-password"}
-                  />
-                </div>
-                )}
-                {mode === "login" && (
-                  <div className="text-right">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setMode("forgot");
-                        setForgotSent(false);
-                        setError("");
-                        setInfo("");
-                      }}
-                      className="text-sm text-primary hover:underline inline-flex items-center min-h-6 px-1 -mx-1"
-                    >
-                      Forgot password?
-                    </button>
-                  </div>
-                )}
-                {mode === "register" && (
-                  <>
-                    <div>
-                      <Label htmlFor="firstName">First Name</Label>
-                      <Input
-                        id="firstName"
-                        value={firstName}
-                        onChange={(e) => setFirstName(e.target.value)}
-                        placeholder="Jane"
-                      />
-                    </div>
-                    <div>
-                      <Label htmlFor="lastName">Last Name</Label>
-                      <Input
-                        id="lastName"
-                        value={lastName}
-                        onChange={(e) => setLastName(e.target.value)}
-                        placeholder="Doe"
-                      />
-                    </div>
-                  </>
-                )}
-                {error && (
-                  <p className="text-sm text-destructive">{error}</p>
-                )}
-                <Button type="submit" className="w-full" disabled={loading}>
-                  {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                  {mode === "login" ? "Log In" : mode === "register" ? "Create Account" : "Send Reset Link"}
-                </Button>
-              </form>
-              )}
-
-              {mode !== "forgot" && (providers.google || providers.passkeys) && (
-                <div className="mt-4 space-y-2">
-                  <div className="flex items-center gap-3 py-1">
-                    <div className="h-px flex-1 bg-border" />
-                    <span className="text-xs uppercase tracking-wide text-muted-foreground">or</span>
-                    <div className="h-px flex-1 bg-border" />
-                  </div>
-                  {providers.google && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      onClick={() => {
-                        window.location.href = "/api/auth/google/start";
-                      }}
-                    >
-                      <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
-                        <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.4a5.5 5.5 0 0 1-2.4 3.6v3h3.8c2.2-2 3.7-5 3.7-8.8Z" />
-                        <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.8-2.9l-3.8-3c-1.1.7-2.4 1.1-4 1.1-3.1 0-5.7-2.1-6.6-4.9H1.5v3.1A12 12 0 0 0 12 24Z" />
-                        <path fill="#FBBC05" d="M5.4 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.5a12 12 0 0 0 0 10.8l3.9-3.1Z" />
-                        <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.5 6.6l3.9 3.1C6.3 6.9 8.9 4.8 12 4.8Z" />
-                      </svg>
-                      Continue with Google
-                    </Button>
-                  )}
-                  {providers.passkeys && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="w-full"
-                      disabled={passkeyLoading}
-                      onClick={handlePasskeyLogin}
-                    >
-                      {passkeyLoading ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Fingerprint className="mr-2 h-4 w-4" />
-                      )}
-                      Sign in with a passkey
-                    </Button>
-                  )}
-                </div>
-              )}
-
-              <div className="mt-4 text-center text-sm">
-                {mode === "login" ? (
-                  <span>
-                    Don't have an account?{" "}
-                    <button
-                      type="button"
-                      onClick={() => setMode("register")}
-                      className="text-primary hover:underline inline-flex items-center min-h-6 px-1 -mx-1"
-                    >
-                      Sign up
-                    </button>
-                  </span>
-                ) : mode === "register" ? (
-                  <span>
-                    Already have an account?{" "}
-                    <button
-                      type="button"
-                      onClick={() => setMode("login")}
-                      className="text-primary hover:underline"
-                    >
-                      Log in
-                    </button>
-                  </span>
-                ) : (
-                  <span>
-                    Remembered your password?{" "}
-                    <button
-                      type="button"
-                      onClick={() => setMode("login")}
-                      className="text-primary hover:underline"
-                    >
-                      Log in
-                    </button>
-                  </span>
-                )}
-              </div>
-            </Card>
+                  <h2 className="text-3xl md:text-5xl font-bold tracking-tight mb-3 break-words">
+                    Synaptodendrogenesis
+                  </h2>
+                  <p className="text-lg md:text-xl font-medium mb-6">The essence of your journey in Synapse.</p>
+                  <blockquote className="text-base md:text-lg text-muted-foreground max-w-2xl mx-auto italic leading-relaxed">
+                    “The simultaneous proliferation of neural branches (dendrites) and the formation of new
+                    connection points (synapses), resulting in a denser and more complex neural network.”
+                  </blockquote>
+                  <p className="mt-6 text-sm text-muted-foreground max-w-xl mx-auto">
+                    A course is not a checklist of facts. It is new branches and new junctions — and the
+                    density is what makes the next thing easier to learn.
+                  </p>
+                </CardContent>
+              </Card>
+            </motion.div>
           </div>
         </section>
 
-        <section className="py-20 px-4">
+        {/* How it works */}
+        <section id="how" className="py-16 md:py-24 px-4 bg-muted/30">
           <div className="max-w-6xl mx-auto">
-            <motion.div
-              initial={{ opacity: 0 }}
-              whileInView={{ opacity: 1 }}
-              viewport={{ once: true }}
-              className="text-center mb-16"
-            >
-              <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                Four ways in, one growing map
-              </h2>
+            <div className="text-center mb-12">
+              <h2 className="text-3xl md:text-4xl font-bold mb-3">How it works</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">Three steps, no onboarding maze.</p>
+            </div>
+            <ol className="grid md:grid-cols-3 gap-6">
+              {steps.map((step, index) => (
+                <li key={step.title}>
+                  <Card className="h-full">
+                    <CardContent className="p-6">
+                      <div className="flex items-center gap-3 mb-3">
+                        <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-primary font-semibold">
+                          {index + 1}
+                        </span>
+                        <h3 className="text-lg font-semibold">{step.title}</h3>
+                      </div>
+                      <p className="text-sm text-muted-foreground">{step.body}</p>
+                    </CardContent>
+                  </Card>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </section>
+
+        {/* Catalog preview */}
+        <section id="catalog" className="py-16 md:py-24 px-4">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl md:text-4xl font-bold mb-3">In the catalog right now</h2>
+              <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                {topics.length > 0
+                  ? `${topics.length} courses are open — from physics foundations to open-science bottlenecks.`
+                  : "Courses are open across physics, biology, engineering and open-science bottlenecks."}
+              </p>
+            </div>
+
+            {sampleTopics.length > 0 && (
+              <ul className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-10" data-testid="landing-catalog">
+                {sampleTopics.map((topic) => (
+                  <li key={topic.id}>
+                    <a
+                      href={`/signin?next=${encodeURIComponent("/explore")}`}
+                      className="block h-full rounded-xl border border-border bg-card p-5 hover:border-primary/50 hover:bg-muted/40 transition-colors focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      <div className="flex items-start justify-between gap-3 mb-2">
+                        <h3 className="font-semibold leading-snug">{topic.title}</h3>
+                        <Badge variant="secondary" className="shrink-0 text-[10px] capitalize">
+                          {topic.difficulty || "course"}
+                        </Badge>
+                      </div>
+                      <p className="text-sm text-muted-foreground line-clamp-3">{topic.description}</p>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="text-center">
+              <Button asChild variant="outline" size="lg">
+                <a href="/signup">
+                  <GraduationCap className="mr-2 h-4 w-4" aria-hidden="true" />
+                  Create your account to open the full catalog
+                </a>
+              </Button>
+            </div>
+          </div>
+        </section>
+
+        {/* Features */}
+        <section id="features" className="py-16 md:py-24 px-4 bg-muted/30">
+          <div className="max-w-6xl mx-auto">
+            <div className="text-center mb-12">
+              <h2 className="text-3xl md:text-4xl font-bold mb-3">Four ways in, one growing map</h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
                 Every course type keeps its own shape — a fast bootstrap should not read like a textbook, and a
                 foundation should not read like a checklist.
               </p>
-            </motion.div>
+            </div>
 
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {features.map((feature, index) => (
@@ -456,16 +279,16 @@ export function LandingPage({ nextPath }: { nextPath?: string | null } = {}) {
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
-                  transition={{ delay: index * 0.05 }}
+                  transition={{ delay: index * 0.04 }}
                 >
-                  <Card className="h-full hover-elevate">
+                  <Card className="h-full">
                     <CardContent className="p-6">
                       <div className="flex items-start gap-4">
                         <div className="p-3 rounded-lg bg-primary/10">
-                          <feature.icon className="h-6 w-6 text-primary" />
+                          <feature.icon className="h-6 w-6 text-primary" aria-hidden="true" />
                         </div>
                         <div>
-                          <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
+                          <h3 className="text-lg font-semibold mb-2">{feature.title}</h3>
                           <p className="text-muted-foreground text-sm">{feature.description}</p>
                         </div>
                       </div>
@@ -476,21 +299,47 @@ export function LandingPage({ nextPath }: { nextPath?: string | null } = {}) {
             </div>
           </div>
         </section>
+
+        {/* Closing CTA */}
+        <section className="py-16 md:py-24 px-4">
+          <div className="max-w-3xl mx-auto text-center">
+            <h2 className="text-3xl md:text-4xl font-bold mb-4">Start with one honest question</h2>
+            <p className="text-lg text-muted-foreground mb-8">
+              What do you need to understand next? That is the whole intake form.
+            </p>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <Button asChild size="lg" className="w-full sm:w-auto">
+                <a href="/signup">
+                  Create free account
+                  <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                </a>
+              </Button>
+              <Button asChild size="lg" variant="ghost" className="w-full sm:w-auto">
+                <a href="/signin">I already have one</a>
+              </Button>
+            </div>
+          </div>
+        </section>
       </main>
 
       <footer className="py-8 px-4 border-t border-border">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-primary" />
-            <span className="text-sm text-muted-foreground">
-              Synapse - The Open Source Learning Platform
-            </span>
+            <Sparkles className="h-4 w-4 text-primary" aria-hidden="true" />
+            <span className="text-sm text-muted-foreground">Synapse — The Open Source Learning Platform</span>
           </div>
-          <p className="text-sm text-muted-foreground">
-            Built with curiosity in mind
-          </p>
+          <nav aria-label="Footer" className="flex items-center gap-4 text-sm text-muted-foreground">
+            <a className="hover:text-foreground py-1" href="/signin">
+              Sign in
+            </a>
+            <a className="hover:text-foreground py-1" href="/signup">
+              Create account
+            </a>
+          </nav>
         </div>
       </footer>
     </div>
   );
 }
+
+export default LandingPage;
