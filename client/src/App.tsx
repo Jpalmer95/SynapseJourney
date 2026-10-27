@@ -24,11 +24,13 @@ const PathwayDetailPage = lazy(() => import("@/pages/pathway-detail"));
 const AchievementsPage = lazy(() => import("@/pages/achievements"));
 const ExplorePage = lazy(() => import("@/pages/explore"));
 const RabbitHolePage = lazy(() => import("@/pages/rabbit-hole").then((m) => ({ default: m.RabbitHolePage })));
-const AgentsPage = lazy(() => import("@/pages/agents"));
 const CollectionPage = lazy(() => import("@/pages/collection"));
 const PracticeTestPage = lazy(() => import("@/pages/practice-test"));
 const PracticeTestResultsPage = lazy(() => import("@/pages/practice-test-results"));
 const OpenSciencePage = lazy(() => import("@/pages/open-science").then((m) => ({ default: m.OpenSciencePage })));
+// Eager: this page is rendered outside the <Suspense> boundary for signed-out visitors,
+// and a lazy component there throws instead of suspending.
+import AgentsPage from "@/pages/agents";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TTSProvider } from "@/hooks/use-tts";
