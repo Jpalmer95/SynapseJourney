@@ -25,6 +25,16 @@ export const topics = pgTable("topics", {
   imageUrl: text("image_url"),
   embedding: vector("embedding", { dimensions: 768 }),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  // Content governance (migration 0013). A topic is only public when published is
+  // true; per-user JIT courses stay visible to their owner and nobody else.
+  published: boolean("published").default(false).notNull(),
+  reviewed: boolean("reviewed").default(false).notNull(),
+  qualityScore: integer("quality_score"),
+  qualityReport: jsonb("quality_report"),
+  lastAuditedAt: timestamp("last_audited_at"),
+  kind: text("kind").default("core").notNull(),
+  normalizedTitle: text("normalized_title"),
+  ownerUserId: varchar("owner_user_id"),
 });
 
 // Knowledge Cards (content pieces)

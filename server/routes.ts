@@ -80,6 +80,8 @@ import { registerLearnRoutes } from "./routes/learn";
 
 // Native MCP Server for Personal AI Agents
 import { registerMcpRoutes } from "./routes/mcp";
+import { registerWellKnownRoutes } from "./routes/wellknown";
+import { registerAdminContentRoutes } from "./routes/admin-content";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -97,6 +99,8 @@ export async function registerRoutes(
   registerContributionsRoutes(app);
   registerLearnRoutes(app);
   registerMcpRoutes(app);
+  registerWellKnownRoutes(app);
+  registerAdminContentRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {

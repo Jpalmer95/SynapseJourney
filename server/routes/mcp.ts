@@ -12,6 +12,9 @@ import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { embed, indexTopicToFlywheel, indexUnitToFlywheel } from "../embeddings";
+import { randomUUID } from "node:crypto";
+import { scoreCourse, blockingIssues } from "../content-quality";
+import { normalizeTitle } from "../content-quality";
 
 export const MCP_TOOLS = [
   {
@@ -129,6 +132,18 @@ export const MCP_TOOLS = [
     },
   },
   {
+    name: "synapse.list_courses",
+    description:
+      "List the published course catalogue (id, title, category, units, quality) plus any private/JIT courses owned by the caller.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        category: { type: "string", description: "Optional category filter" },
+        limit: { type: "number", description: "Max items (default 60)" },
+      },
+    },
+  },
+  {
     name: "synapse.get_3d_map",
     description:
       "Retrieve the learner's 3D Knowledge Graph nodes (with PCA semantic coordinates, mastery %, and connections).",
@@ -140,33 +155,54 @@ export const MCP_TOOLS = [
 ];
 
 export function registerMcpRoutes(app: Express) {
-  // Public discovery endpoint so agents/users can inspect MCP capabilities
+  // Streamable-HTTP transport notes (2025-03-26 spec):
+  //   POST  JSON-RPC in, JSON or SSE out, session id in `Mcp-Session-Id`
+  //   GET   optional server->client stream; we do not push, so 405 is spec-legal
+  //   DELETE terminate the session
+  // Machine-readable discovery lives at /.well-known/synapse.json.
   app.get("/api/mcp", (_req: Request, res: Response) => {
-    res.json({
-      protocolVersion: "2024-11-05",
-      serverInfo: {
-        name: "synapse-journey-mcp",
-        version: "2.0.0",
-        description: "SynapseJourney Polymath Learning & Open Science MCP Server (BYOC-first)",
-      },
-      authentication: "Bearer sj_<personal_access_token> (create in Settings -> Personal Access Tokens)",
-      tools: MCP_TOOLS,
-    });
+    res.setHeader("Allow", "POST, DELETE");
+    res.status(405).json({ error: "Use POST for JSON-RPC. Streamable HTTP GET streams are not offered." });
   });
 
-  // Authenticated JSON-RPC 2.0 MCP endpoint (accepts Bearer `sj_...` PAT or session cookie)
+  app.delete("/api/mcp", (req: Request, res: Response) => {
+    res.status(200).json({ ok: true, terminated: Boolean(req.headers["mcp-session-id"]) });
+  });
+
+  // Authenticated JSON-RPC 2.0 MCP endpoint (Bearer `sj_...` PAT or session cookie)
   app.post("/api/mcp", isAuthenticated, async (req: any, res: Response) => {
     const { jsonrpc = "2.0", id = null, method, params = {} } = req.body || {};
     const userId = req.user?.claims?.sub;
 
-    const sendResult = (result: any) => res.json({ jsonrpc, id, result });
+    const wantsSse = String(req.headers.accept || "").includes("text/event-stream");
+    const sessionId = String(req.headers["mcp-session-id"] || "") || (method === "initialize" ? randomUUID() : "");
+    if (sessionId) res.setHeader("Mcp-Session-Id", sessionId);
+    res.setHeader("MCP-Protocol-Version", "2025-03-26");
+
+    const emit = (payload: any) => {
+      if (!wantsSse) return res.json(payload);
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.write(`event: message\ndata: ${JSON.stringify(payload)}\n\n`);
+      res.end();
+    };
+    const sendResult = (result: any) => emit({ jsonrpc, id, result });
     const sendError = (code: number, message: string, data?: any) =>
-      res.status(200).json({ jsonrpc, id, error: { code, message, ...(data ? { data } : {}) } });
+      emit({ jsonrpc, id, error: { code, message, ...(data ? { data } : {}) } });
 
     try {
+      if (method === "notifications/initialized" || method === "notifications/cancelled") {
+        return res.status(202).end();
+      }
+
+      if (method === "ping") {
+        return sendResult({});
+      }
+
       if (method === "initialize") {
         return sendResult({
-          protocolVersion: "2024-11-05",
+          protocolVersion: "2025-03-26",
           capabilities: { tools: {} },
           serverInfo: { name: "synapse-journey-mcp", version: "2.0.0" },
         });
@@ -186,9 +222,10 @@ export function registerMcpRoutes(app: Express) {
           if (!query) return sendError(-32602, "query is required");
 
           const vec = await embed(query);
-          const topics = vec
-            ? await storage.searchTopicsVectors(vec, limit, 0.45)
-            : await storage.searchTopicsTrgm(query, limit);
+          const visibleIds = new Set((await storage.getVisibleTopics(userId)).map((t) => t.id));
+          const topics = (
+            vec ? await storage.searchTopicsVectors(vec, limit, 0.45) : await storage.searchTopicsTrgm(query, limit)
+          ).filter((t) => visibleIds.has(t.id));
           const bottlenecks = await storage.getSotaBottlenecks({ limit });
           const matchedBottlenecks = bottlenecks.filter((b) =>
             `${b.title} ${b.description} ${b.domain}`.toLowerCase().includes(query.toLowerCase())
@@ -247,6 +284,15 @@ export function registerMcpRoutes(app: Express) {
             }
           }
 
+          const gate = scoreCourse(
+            (args.units || []).map((u: any) => ({ title: u.title, contentJson: u.contentJson })),
+            "focused_skill",
+          );
+          const blocked = blockingIssues(gate);
+          if (blocked.length > 0) {
+            return sendError(-32602, "Content quality gate failed", gate as any);
+          }
+
           const existingUnits = await storage.getLessonUnits(topic.id);
           const nextOrderByDiff: Record<string, number> = {
             beginner: 1,
@@ -277,6 +323,13 @@ export function registerMcpRoutes(app: Express) {
             createdUnits.push(created);
           }
 
+          await storage.updateTopicQuality(topic.id, gate.score, gate, {
+            reviewed: false,
+            kind: args.topicId ? "addon" : "jit",
+          });
+          if (!args.topicId) {
+            await storage.setTopicGovernance(topic.id, { ownerUserId: userId, published: false });
+          }
           await storage.upsertProgress({ userId, topicId: topic.id, status: "learning", mastery: 0 });
           indexTopicToFlywheel(storage, topic.id).catch(() => {});
 
@@ -296,6 +349,32 @@ export function registerMcpRoutes(app: Express) {
               },
             ],
           });
+        }
+
+        if (toolName === "synapse.list_courses") {
+          const limit = Math.min(200, Number(args.limit) || 60);
+          const all = await storage.getVisibleTopics(userId);
+          const cats = await storage.getCategories();
+          const catName = new Map(cats.map((c) => [c.id, c.name]));
+          const wanted = args.category ? String(args.category).toLowerCase() : null;
+          const rows = [];
+          for (const t of all) {
+            const name = t.categoryId ? catName.get(t.categoryId) ?? null : null;
+            if (wanted && (!name || name.toLowerCase() !== wanted)) continue;
+            const units = await storage.getLessonUnits(t.id);
+            rows.push({
+              topicId: t.id,
+              title: t.title,
+              category: name,
+              units: units.length,
+              archetype: ((await storage.getLatestCoursePlan(t.id))?.planJson as any)?.archetype ?? null,
+              qualityScore: t.qualityScore,
+              published: t.published,
+              courseUrl: `/rabbit-hole?topic=${t.id}`,
+            });
+            if (rows.length >= limit) break;
+          }
+          return sendResult({ content: [{ type: "text", text: JSON.stringify(rows, null, 2) }] });
         }
 
         if (toolName === "synapse.list_sota_bottlenecks") {

@@ -9,7 +9,8 @@ import { getEmailProviderStatus, sendEmail, sendPasswordResetEmail, passwordRese
 import { isGoogleConfigured, registerGoogleRoutes } from "./google";
 import { registerPasskeyRoutes } from "./passkeys";
 
-function isAdminEmail(email: string): boolean {
+export function isAdminEmail(email: string | undefined | null): boolean {
+  if (!email) return false;
   const admins = (process.env.ADMIN_EMAILS || "")
     .split(",")
     .map((e) => e.trim().toLowerCase())

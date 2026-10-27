@@ -90,7 +90,7 @@ import {
   type InsertUserAccessToken,
 } from "@shared/schema";
 import { db } from "./db";
-import { eq, desc, and, sql, inArray, isNotNull } from "drizzle-orm";
+import { eq, desc, and, or, sql, inArray, isNotNull } from "drizzle-orm";
 
 export interface IStorage {
   // Categories
@@ -100,6 +100,19 @@ export interface IStorage {
 
   // Topics
   getTopics(): Promise<Topic[]>;
+  /** Published topics plus the viewer's own unpublished ones (JIT courses). */
+  getVisibleTopics(viewerUserId?: string | null): Promise<Topic[]>;
+  findTopicByNormalizedTitle(normalizedTitle: string): Promise<Topic | undefined>;
+  updateTopicQuality(
+    id: number,
+    score: number,
+    report: unknown,
+    opts?: { reviewed?: boolean; kind?: string },
+  ): Promise<void>;
+  setTopicGovernance(
+    id: number,
+    patch: { published?: boolean; reviewed?: boolean; kind?: string; ownerUserId?: string | null },
+  ): Promise<void>;
   getTopicById(id: number): Promise<Topic | undefined>;
   getTopicsByCategory(categoryId: number): Promise<Topic[]>;
   createTopic(topic: InsertTopic): Promise<Topic>;
@@ -457,6 +470,55 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Topics
+  async getVisibleTopics(viewerUserId?: string | null): Promise<Topic[]> {
+    if (!viewerUserId) {
+      return db.select().from(topics).where(eq(topics.published, true)).orderBy(topics.title);
+    }
+    return db
+      .select()
+      .from(topics)
+      .where(or(eq(topics.published, true), eq(topics.ownerUserId, viewerUserId)))
+      .orderBy(topics.title);
+  }
+
+  async findTopicByNormalizedTitle(normalizedTitle: string): Promise<Topic | undefined> {
+    const [row] = await db.select().from(topics).where(eq(topics.normalizedTitle, normalizedTitle));
+    return row;
+  }
+
+  async updateTopicQuality(
+    id: number,
+    score: number,
+    report: unknown,
+    opts?: { reviewed?: boolean; kind?: string },
+  ): Promise<void> {
+    await db
+      .update(topics)
+      .set({
+        qualityScore: score,
+        qualityReport: report as any,
+        lastAuditedAt: new Date(),
+        ...(opts?.reviewed !== undefined ? { reviewed: opts.reviewed } : {}),
+        ...(opts?.kind ? { kind: opts.kind } : {}),
+      })
+      .where(eq(topics.id, id));
+  }
+
+  async setTopicGovernance(
+    id: number,
+    patch: { published?: boolean; reviewed?: boolean; kind?: string; ownerUserId?: string | null },
+  ): Promise<void> {
+    await db
+      .update(topics)
+      .set({
+        ...(patch.published !== undefined ? { published: patch.published } : {}),
+        ...(patch.reviewed !== undefined ? { reviewed: patch.reviewed } : {}),
+        ...(patch.kind ? { kind: patch.kind } : {}),
+        ...(patch.ownerUserId !== undefined ? { ownerUserId: patch.ownerUserId } : {}),
+      })
+      .where(eq(topics.id, id));
+  }
+
   async getTopics(): Promise<Topic[]> {
     return db.select().from(topics);
   }

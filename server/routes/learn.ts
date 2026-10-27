@@ -4,6 +4,8 @@
  */
 import type { Express, Response } from "express";
 import { z } from "zod";
+import { scoreCourse, blockingIssues, normalizeTitle } from "../content-quality";
+import { isAdminEmail } from "../auth/localAuth";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { generateLessonOutline } from "./ai";
@@ -745,6 +747,31 @@ export function registerLearnRoutes(app: Express) {
 
       const body = parsed.data;
       const title = body.topic.title;
+
+      // ── Quality gate ──────────────────────────────────────────────────────
+      // Blocks the template junk that filled the seeded corpus: repeated quiz
+      // stems, placeholder/search-page resources, thin prose, missing examples.
+      const archetype = body.archetype ?? "focused_skill";
+      const quality = scoreCourse(
+        body.units.map((u) => ({ title: u.title, contentJson: u.contentJson })),
+        archetype,
+      );
+      const blocking = blockingIssues(quality);
+      const isAdmin = isAdminEmail(req.user?.claims?.email);
+      const force = Boolean((req.body as any)?.force) && isAdmin;
+      if (blocking.length > 0 && !force) {
+        return res.status(422).json({
+          error: "Content quality gate failed",
+          hint: "Fix the flagged units, or (admins only) resend with force: true.",
+          quality,
+        });
+      }
+
+      // ── Duplicate gate ────────────────────────────────────────────────────
+      // Same subject under a new title splits the corpus. An unpublished twin is
+      // treated as the canonical row to refresh; a published one must be extended
+      // through the topicId (modular add-on) rail instead of forked.
+      const normalizedTitle = normalizeTitle(title);
       // Optional topicId: deepen an EXISTING course (append new units) instead of
       // creating/matching by title. This is the "agent gives guided expansions"
       // rail — Hermes can extend any course the user is taking.
@@ -758,11 +785,28 @@ export function registerLearnRoutes(app: Express) {
         topic = (await storage.getTopics()).find((t) => t.title.toLowerCase() === title.toLowerCase());
       }
       if (!topic) {
+        const twin = await storage.findTopicByNormalizedTitle(normalizedTitle);
+        if (twin) {
+          if (twin.published) {
+            return res.status(409).json({
+              error: "A published course with this subject already exists",
+              existingTopicId: twin.id,
+              hint: "Append a modular add-on instead: resend with topicId set to the existing course.",
+            });
+          }
+          topic = twin; // an unpublished twin is the canonical row to refresh
+        }
+      }
+      if (!topic) {
         topic = await storage.createTopic({
           title,
           description: body.topic.description || body.goalText || `Hermes-authored course: ${title}`,
           categoryId: body.topic.categoryId || null,
           difficulty: body.topic.difficulty || "beginner",
+          normalizedTitle,
+          ownerUserId: userId,
+          kind: (req.body as any)?.kind === "jit" ? "jit" : (req.body as any)?.kind === "niche" ? "niche" : "core",
+          published: false,
         } as any);
       }
 
@@ -822,6 +866,13 @@ export function registerLearnRoutes(app: Express) {
           createdByUserId: userId,
           version: 1,
         });
+      }
+
+      await storage.updateTopicQuality(topic.id, quality.score, quality, {
+        reviewed: quality.grade === "ok" && !force,
+      });
+      if (force) {
+        await storage.setTopicGovernance(topic.id, { published: Boolean((req.body as any)?.publish) });
       }
 
       // Depth comes from the declared intent; goalText alone must not force skim mode

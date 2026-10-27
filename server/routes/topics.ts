@@ -1,5 +1,6 @@
 import type { Express, Request, Response } from "express";
 import { storage } from "../storage";
+import { optionalAuth } from "../replit_integrations/auth";
 
 export function registerTopicsRoutes(app: Express) {
   // Feed endpoint - public for now to show content to non-logged users
@@ -40,9 +41,12 @@ export function registerTopicsRoutes(app: Express) {
   });
 
   // Topics
-  app.get("/api/topics", async (req: Request, res: Response) => {
+  app.get("/api/topics", optionalAuth, async (req: any, res: Response) => {
     try {
-      const topics = await storage.getTopics();
+      // Only published (reviewed) courses are part of the commons. A signed-in user
+      // also sees their own private/JIT courses.
+      const viewerId = req.user?.claims?.sub ?? null;
+      const topics = await storage.getVisibleTopics(viewerId);
       // Never ship the 768-float embedding per topic: it is only used server-side for
       // similarity search and inflated this endpoint to ~670 KB.
       res.json(
@@ -54,6 +58,10 @@ export function registerTopicsRoutes(app: Express) {
           difficulty: t.difficulty,
           imageUrl: t.imageUrl,
           createdAt: t.createdAt,
+          published: t.published,
+          reviewed: t.reviewed,
+          qualityScore: t.qualityScore,
+          kind: t.kind,
         }))
       );
     } catch (error) {
