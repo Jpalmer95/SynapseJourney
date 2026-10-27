@@ -84,8 +84,8 @@ export function getEmailProviderStatus(): EmailProviderStatus {
     configured: false,
     from: mailFrom(),
     detail:
-      "No email provider configured. Set RESEND_API_KEY (recommended) or SMTP_HOST/SMTP_USER/SMTP_PASS " +
-      "so password reset and verification emails are actually delivered.",
+      "No email provider configured. Set RESEND_API_KEY (or SENDGRID_API_KEY / BREVO_API_KEY / MAILGUN_*) " +
+      "so password reset emails are actually delivered. Outbound SMTP is blocked on this host, so SMTP_HOST will not work.",
   };
 }
 
