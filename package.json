@@ -10,7 +10,8 @@
     "check": "tsc",
     "db:push": "drizzle-kit push",
     "db:migrate:pgvector": "psql $DATABASE_URL -f migrations/0001_pgvector_extensions.sql",
-    "audit:content": "tsx scripts/audit-content.ts"
+    "audit:content": "tsx scripts/audit-content.ts",
+    "purge:units": "tsx scripts/purge-bad-units.ts"
   },
   "dependencies": {
     "@codesandbox/sandpack-react": "^2.20.0",
