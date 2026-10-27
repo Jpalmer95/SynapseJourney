@@ -707,6 +707,10 @@ export function registerLearnRoutes(app: Express) {
           difficulty: z.enum(["beginner", "intermediate", "advanced", "nextgen"]).optional(),
         }),
         learningIntent: z.enum(["survey", "standard", "deep", "speed_run", "goal"]).optional(),
+        /** Course shape (see shared/course-archetypes.ts) — persisted with the plan. */
+        archetype: z
+          .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain"])
+          .optional(),
         plan: z.object({
           contentType: z.string().optional(),
           scope: z.string().optional(),
@@ -807,6 +811,7 @@ export function registerLearnRoutes(app: Express) {
           goalDescription: body.goalText || null,
           planJson: {
             ...body.plan,
+            ...(body.archetype ? { archetype: body.archetype } : {}),
             units: body.units.map((u) => ({
               title: u.title,
               outline: u.outline || "",
