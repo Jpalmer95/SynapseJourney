@@ -190,8 +190,56 @@
 
 ---
 
+## Phase 7 — Content governance and public launch (2026-10-27)
+
+The corpus was the blocker: 695 of 725 units failed a junk heuristic (template prose, one quiz stem
+repeated 285 times, 593 units listing a Khan Academy *search* URL as a resource). Every topic was
+public on creation, so per-user JIT courses leaked into the shared catalogue.
+
+- [x] **7.1 Quality gate (`server/content-quality.ts`)**
+  - `scoreUnitContent` / `scoreCourse` / `blockingIssues`; error-severity issues block, warnings are stored.
+  - Rejects: template markers, duplicate quiz stems (in-unit and across a course), placeholder resource
+    URLs, prose below 60% of the archetype budget, missing takeaways/quiz/resources.
+  - Enforced at REST ingest (422 + per-unit report), at MCP ingest (JSON-RPC error), and via
+    `npm run check:quality` self-tests.
+- [x] **7.2 Duplicate gate**
+  - `findDuplicateTitle` compares distinctive tokens (year/edition/intro/essentials stripped).
+    A ≥0.6 match against a published course returns 409 with `existingTopicId`; variants extend that
+    course through the `topicId` add-on rail instead of forking the catalogue.
+- [x] **7.3 Governance model (migration 0013)**
+  - `topics.published | reviewed | quality_score | quality_report | last_audited_at | kind |
+    normalized_title | owner_user_id`.
+  - New agent courses land private to their author. `/api/topics` returns published OR owned-by-viewer.
+- [x] **7.4 Tooling**
+  - `npm run audit:content [-- --apply] [-- --delete-unusable] [-- --json f]` — score + triage.
+  - `npm run purge:units [-- --apply] [-- --topic N]` — remove units that fail the unit gate.
+  - `npm run ensure:plans [-- --apply]` — guarantee every course declares an archetype.
+  - Admin API: `/api/admin/content/report`, `/audit`, `/publish`, `/topic/:id/units`.
+- [x] **7.5 Flagship refresh (21 courses, 166 units)**
+  - Algebra/Calculus/Probability/DE, Mechanics/Thermo/EM/Optics/Orbital, Data Structures/Algorithms/
+    Databases, ML/Neural Networks, General + Organic Chemistry, Cell Biology, Microeconomics,
+    Logic, Music Theory, Graph Theory.
+  - Each is 7–8 `focused_skill` units with two 240–320 word sections, 4 takeaways, a worked numeric
+    example, 4 quiz items and 4 curated OER anchors. Course quality scores 99–100.
+  - 43 filler topics deleted, 10 personal JIT courses quarantined private, 0 unusable topics public.
+- [x] **7.6 Public agent surface**
+  - `/api/mcp` upgraded to Streamable HTTP: `Mcp-Session-Id`, `MCP-Protocol-Version: 2025-03-26`,
+    SSE when `Accept: text/event-stream`, `notifications/*` → 202, `GET` → 405 per spec.
+  - New tool `synapse.list_courses`; search results filtered to visible topics.
+  - `GET /.well-known/synapse.json` — endpoints, auth, archetypes, content policy, live corpus counts.
+  - `/agents` public onboarding page (token → MCP config → teaching loop) and a landing section linking it.
+  - Public skill: `github.com/Jpalmer95/synapse-learn` (SKILL.md + MCP reference + authoring contract).
+- **Phase 7 Success Criteria:**
+  - `npm run check`, `npm run build`, `npm run check:quality` pass.
+  - Public `/api/topics` contains only reviewed courses (21), all with an archetype and ≥6 units.
+  - A junk payload returns 422 with a per-unit report; a re-titled duplicate of a published course returns 409.
+  - `/agents` and `/.well-known/synapse.json` are reachable without a session.
+
+
+---
+
 ## Metadata
 - **Updated:** 2026-10-27
 - **Owner:** Jonathan Korstad + Hermes Agent
 - **Branch:** `fix/auth-and-copy` → `main`
-- **Status:** Phases 1–5 complete; Phase 6 (auth recovery, passkeys, Google, course archetypes) implemented and deployed. Password-reset email is live via Resend (verified domain synapsejourney.org, DKIM + SPF CNAMEs + DMARC). Remaining optional step: Google OAuth credentials.
+- **Status:** Phases 1–7 complete. Auth recovery + passkeys + archetypes deployed (Phase 6); password-reset email live via Resend; content governance, 21 flagship courses and the public agent surface (MCP Streamable HTTP, `/.well-known`, `/agents`, `synapse-learn` skill) shipped in Phase 7. Remaining optional: Google OAuth credentials, cloud embeddings (droplet cannot reach Ollama), Resend key rotation.
