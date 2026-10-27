@@ -138,11 +138,11 @@ export function ProfilePage() {
                   </AvatarFallback>
                 </Avatar>
                 <div className="flex-1 text-center md:text-left">
-                  <h2 className="text-2xl font-bold mb-1">
+                  <h1 className="text-2xl font-bold mb-1">
                     {user?.firstName && user?.lastName
                       ? `${user.firstName} ${user.lastName}`
                       : user?.email || "Polymath Learner"}
-                  </h2>
+                  </h1>
                   <p className="text-sm text-muted-foreground mb-3">{user?.email}</p>
                   <div className="flex flex-wrap justify-center md:justify-start gap-2">
                     <Badge variant="secondary" className="gap-1">

@@ -117,6 +117,7 @@ export function HomeSearch({ onDive }: HomeSearchProps) {
           onChange={(e) => onChange(e.target.value)}
           onFocus={() => query.trim().length >= 2 && setOpen(true)}
           placeholder="Search any topic — e.g. 'how do neural networks learn'"
+          aria-label="Search any topic"
           className="pl-9 pr-9 h-11 bg-background/80 backdrop-blur border-border"
           data-testid="home-search-input"
         />

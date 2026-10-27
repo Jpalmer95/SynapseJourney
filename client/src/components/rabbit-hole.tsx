@@ -67,6 +67,7 @@ import {
 import { AiChat } from "@/components/ai-chat";
 import { TTSButton } from "@/components/tts-button";
 import { MermaidDiagram } from "@/components/mermaid";
+import { LessonMarkdown } from "@/components/lesson-markdown";
 import { CodeSandbox } from "@/components/code-sandbox";
 import { CoursePoster, type CoursePosterData } from "@/components/course-poster";
 import { useTTS, type TTSSection } from "@/hooks/use-tts";
@@ -1426,7 +1427,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                           {lessonContent.keyTakeaways.map((takeaway: string, i: number) => (
                             <li key={i} className="flex items-start gap-2 text-sm" data-testid={`text-takeaway-${i}`}>
                               <Check className="h-4 w-4 text-amber-500 shrink-0 mt-0.5" />
-                              <span className="text-muted-foreground break-words [overflow-wrap:anywhere]">{takeaway}</span>
+                              <LessonMarkdown
+                                text={takeaway}
+                                className="text-muted-foreground break-words [overflow-wrap:anywhere]"
+                              />
                             </li>
                           ))}
                         </ul>
@@ -1458,9 +1462,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </div>
                     <Card className="overflow-hidden w-full">
                       <CardContent className="p-4 sm:p-6 overflow-hidden">
-                        <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                          {lessonContent.concept}
-                        </p>
+                        <LessonMarkdown
+                          text={lessonContent.concept}
+                          className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                        />
                       </CardContent>
                     </Card>
                   </section>
@@ -1504,9 +1509,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </div>
                     <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden w-full">
                       <CardContent className="p-4 sm:p-6 overflow-hidden">
-                        <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                          {lessonContent.analogy}
-                        </p>
+                        <LessonMarkdown
+                          text={lessonContent.analogy}
+                          className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                        />
                       </CardContent>
                     </Card>
                   </section>
@@ -1536,9 +1542,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </div>
                     <Card className="border-blue-500/20 bg-blue-500/5 overflow-hidden w-full">
                       <CardContent className="p-4 sm:p-6 space-y-4 overflow-hidden">
-                        <p className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere] [word-break:break-word]">
-                          {lessonContent.example.content}
-                        </p>
+                        <LessonMarkdown
+                          text={lessonContent.example.content}
+                          className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                        />
                         {lessonContent.example.code && (
                           <div className="mt-4 w-full min-w-0">
                             <CodeSandbox code={lessonContent.example.code} />

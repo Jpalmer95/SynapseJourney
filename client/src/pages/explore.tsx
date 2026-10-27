@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { AppLayout } from "@/components/app-layout";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -220,6 +221,7 @@ export default function ExplorePage() {
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                   <Input
                     placeholder="Search for any topic... (e.g., music theory, quantum physics, networking)"
+                    aria-label="Search topics"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="pl-10"
@@ -242,7 +244,7 @@ export default function ExplorePage() {
                   </div>
                 )}
 
-                {!showCreateForm && (
+                {!showCreateForm && !(searchQuery && filteredTopics.length === 0) && (
                   <Button
                     variant="outline"
                     className="w-full"
@@ -549,9 +551,11 @@ export default function ExplorePage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.15 }}
           >
-            <h2 className="text-lg font-semibold mb-4">
-              {searchQuery ? `Results for "${searchQuery}"` : "All Topics"}
-            </h2>
+            {(topicsLoading || !searchQuery || filteredTopics.length > 0) && (
+              <h2 className="text-lg font-semibold mb-4">
+                {searchQuery ? `Results for "${searchQuery}"` : "All Topics"}
+              </h2>
+            )}
             
             {topicsLoading ? (
               <div className="grid gap-4 md:grid-cols-2">
@@ -628,8 +632,8 @@ export default function ExplorePage() {
                         </div>
                       )}
 
-                      {/* Topic count info */}
-                      <p className="text-center text-sm text-muted-foreground mt-4">
+                      {/* Topic count info (hidden when the empty state already said it) */}
+                      <p className={cn("text-center text-sm text-muted-foreground mt-4", searchQuery && filteredTopics.length === 0 && "hidden")}>
                         {searchQuery 
                           ? `Found ${filteredTopics.length} topic${filteredTopics.length !== 1 ? 's' : ''}`
                           : `Showing ${(currentPage - 1) * TOPICS_PER_PAGE + 1}-${Math.min(currentPage * TOPICS_PER_PAGE, filteredTopics.length)} of ${filteredTopics.length} topics`

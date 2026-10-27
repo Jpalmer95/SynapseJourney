@@ -24,15 +24,39 @@ import PracticeTestPage from "@/pages/practice-test";
 import PracticeTestResultsPage from "@/pages/practice-test-results";
 import { OpenSciencePage } from "@/pages/open-science";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { TTSProvider } from "@/hooks/use-tts";
 import { TTSMiniPlayer } from "@/components/tts-mini-player";
 import { HelmetProvider, Helmet } from "react-helmet-async";
 import { motion, AnimatePresence } from "framer-motion";
 import { useLocation } from "wouter";
 
+function SessionCheckError({ onRetry, isRetrying }: { onRetry: () => void; isRetrying: boolean }) {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-background px-4">
+      <div className="max-w-md text-center space-y-4">
+        <h1 className="text-xl font-semibold">We couldn't verify your session</h1>
+        <p className="text-sm text-muted-foreground">
+          The server took too long to answer. Your work is safe — this is a connection problem, not a
+          logout.
+        </p>
+        <div className="flex items-center justify-center gap-3">
+          <Button onClick={onRetry} disabled={isRetrying}>
+            {isRetrying ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+            Try again
+          </Button>
+          <Button variant="outline" onClick={() => window.location.reload()}>
+            Reload page
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function AppContent() {
   const [location] = useLocation();
-  const { user, isLoading, isAuthenticated } = useAuth();
+  const { user, isLoading, isAuthenticated, isError, retry, isRetrying } = useAuth();
 
   if (isLoading) {
     return (
@@ -45,13 +69,20 @@ function AppContent() {
     );
   }
 
+  // The session probe failed — say so instead of rendering a marketing page as if the
+  // learner had been signed out.
+  if (isError) {
+    return <SessionCheckError onRetry={() => retry()} isRetrying={!!isRetrying} />;
+  }
+
   // Password reset page renders for unauthenticated visitors too (they have no session).
   if (location.startsWith("/reset-password")) {
     return <ResetPasswordPage />;
   }
 
   if (!isAuthenticated) {
-    return <LandingPage />;
+    // Preserve the deep link so sign-in lands on the page that was requested.
+    return <LandingPage nextPath={location !== "/" ? location : null} />;
   }
 
   return (

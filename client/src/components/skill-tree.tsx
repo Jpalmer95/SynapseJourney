@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { motion } from "framer-motion";
 import { ChevronRight, Lock, Check, Sparkles } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -29,6 +29,7 @@ interface NodeLayout {
 
 export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeProps) {
   const { playClick } = useSFX();
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Compute Layout Heights & SVG Canvas size
   const NODE_WIDTH = 260;
@@ -139,7 +140,10 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
     const shiftX = Math.abs(minX) + (NODE_WIDTH / 2) + 20;
     computedNodes.forEach(node => { node.x += shiftX; });
     const computedWidth = maxX - minX + NODE_WIDTH + 40;
-    const computedHeight = (maxLvl * LEVEL_SPACING_Y) + NODE_HEIGHT + 40;
+    // Derive the canvas height from the nodes we actually placed: levels can wrap into
+    // extra rows, and the old maxLevel * spacing formula clipped those rows.
+    const maxNodeY = computedNodes.reduce((max, n) => Math.max(max, n.y), 0);
+    const computedHeight = maxNodeY + NODE_HEIGHT + 40;
 
     // 6. Generate Edges mapping
     computedNodes.forEach(node => {
@@ -195,10 +199,25 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
     return { nodes: computedNodes, edges: computedEdges, maxLevel: maxLvl, width: computedWidth, height: computedHeight };
   }, [topics, masteredTopicIds]);
 
+  // The canvas is several times wider than its viewport and nodes are centred on it, so
+  // scroll position 0 showed an empty panel. Land on the entry level instead.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const entry = nodes.filter((n) => n.level === 0);
+    if (entry.length === 0) return;
+    const first = Math.min(...entry.map((n) => n.x));
+    const last = Math.max(...entry.map((n) => n.x));
+    const centre = (first + last) / 2;
+    el.scrollLeft = Math.max(0, centre - el.clientWidth / 2);
+  }, [nodes]);
+
   return (
-    <div 
-      className="relative w-full overflow-x-auto overflow-y-hidden pb-12 flex justify-center custom-scrollbar" 
-      style={{ minHeight: `${height + 100}px` }}
+    <div
+      ref={scrollRef}
+      className="relative w-full overflow-x-auto overflow-y-visible pb-6 flex justify-center custom-scrollbar"
+      style={{ height: `${height + 60}px` }}
+      data-testid="skill-tree-scroller"
     >
       <div 
         className="relative" 
@@ -259,7 +278,10 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
                 height: `${NODE_HEIGHT}px`,
               }}
             >
-              <div 
+              <button
+                type="button"
+                aria-label={`${node.topic.title} — ${node.status}`}
+                disabled={node.status === "locked"}
                 onClick={() => {
                   if (node.status === 'locked') {
                     // Play error bump / dull click maybe
@@ -270,7 +292,7 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
                   }
                 }}
                 className={cn(
-                  "h-full w-full rounded-lg border-2 p-3 flex items-center gap-3 transition-all cursor-pointer relative group",
+                  "h-full w-full text-left rounded-lg border-2 p-3 flex items-center gap-3 transition-all cursor-pointer relative group focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   node.status === "mastered" 
                     ? "bg-amber-500/10 border-amber-500 hover:bg-amber-500/20 shadow-[0_0_20px_rgba(245,158,11,0.3)]"
                     : node.status === "available"
@@ -302,7 +324,7 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
                 {node.status !== 'locked' && (
                   <ChevronRight className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity absolute right-2" />
                 )}
-              </div>
+              </button>
             </motion.div>
           );
         })}

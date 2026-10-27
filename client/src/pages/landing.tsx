@@ -55,7 +55,9 @@ function browserSupportsPasskeys(): boolean {
   return typeof window !== "undefined" && typeof (window as any).PublicKeyCredential !== "undefined";
 }
 
-export function LandingPage() {
+export function LandingPage({ nextPath }: { nextPath?: string | null } = {}) {
+  // Where to go after a successful sign-in: the page the visitor originally asked for.
+  const postAuthDestination = nextPath && nextPath.startsWith("/") ? nextPath : "/";
   const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -146,7 +148,7 @@ export function LandingPage() {
         return;
       }
 
-      window.location.href = "/";
+      window.location.href = postAuthDestination;
     } catch (err: any) {
       setError(err.message || "Something went wrong");
       setLoading(false);
@@ -180,7 +182,7 @@ export function LandingPage() {
         const d = await verifyRes.json().catch(() => ({}));
         throw new Error(d.message || "Passkey sign-in failed");
       }
-      window.location.href = "/";
+      window.location.href = postAuthDestination;
     } catch (err: any) {
       setError(err?.message || "Passkey sign-in failed");
       setPasskeyLoading(false);
@@ -226,6 +228,14 @@ export function LandingPage() {
         <section id="auth-section" className="py-20 px-4 bg-muted/30">
           <div className="max-w-md mx-auto">
             <Card className="p-6">
+              {nextPath && (
+                <div
+                  className="mb-4 rounded-lg border border-primary/40 bg-primary/10 px-3 py-2 text-sm"
+                  data-testid="signin-required-banner"
+                >
+                  Sign in to open <span className="font-mono text-xs break-all">{nextPath}</span>
+                </div>
+              )}
               <h2 className="text-2xl font-bold mb-4 text-center">
                 {mode === "login" ? "Welcome Back" : mode === "register" ? "Create Account" : "Reset Password"}
               </h2>
@@ -300,7 +310,7 @@ export function LandingPage() {
                         setError("");
                         setInfo("");
                       }}
-                      className="text-sm text-primary hover:underline"
+                      className="text-sm text-primary hover:underline inline-flex items-center min-h-6 px-1 -mx-1"
                     >
                       Forgot password?
                     </button>
@@ -389,7 +399,7 @@ export function LandingPage() {
                     <button
                       type="button"
                       onClick={() => setMode("register")}
-                      className="text-primary hover:underline"
+                      className="text-primary hover:underline inline-flex items-center min-h-6 px-1 -mx-1"
                     >
                       Sign up
                     </button>

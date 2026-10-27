@@ -295,3 +295,11 @@
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Keyboard focus must be visible. Unlayered on purpose: utility classes such as
+ * `focus-visible:outline-none` live in @layer utilities and would otherwise erase it.
+ * The browser default (outline: auto 1px rgb(16,16,16)) is invisible on the dark theme. */
+:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}

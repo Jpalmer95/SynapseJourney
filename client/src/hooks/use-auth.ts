@@ -1,20 +1,43 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { User } from "@shared/models/auth";
 
+/**
+ * The session probe gates the entire app. It can hang (~30s observed on a cold server)
+ * and then silently resolve to `null`, which used to render the marketing landing page at
+ * whatever URL the learner was on — indistinguishable from being logged out. Bound the
+ * request, retry once, and expose the failure so the UI can say "couldn't verify session".
+ */
+const AUTH_TIMEOUT_MS = 10_000;
+
+export class AuthCheckError extends Error {}
+
 async function fetchUser(): Promise<User | null> {
-  const response = await fetch("/api/auth/user", {
-    credentials: "include",
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
 
-  if (response.status === 401) {
-    return null;
+  try {
+    const response = await fetch("/api/auth/user", {
+      credentials: "include",
+      signal: controller.signal,
+    });
+
+    if (response.status === 401) {
+      return null;
+    }
+
+    if (!response.ok) {
+      throw new AuthCheckError(`${response.status}: ${response.statusText}`);
+    }
+
+    return (await response.json()) as User;
+  } catch (err: any) {
+    if (err?.name === "AbortError") {
+      throw new AuthCheckError("Session check timed out");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  if (!response.ok) {
-    throw new Error(`${response.status}: ${response.statusText}`);
-  }
-
-  return response.json();
 }
 
 async function logout(): Promise<void> {
@@ -34,10 +57,11 @@ async function logout(): Promise<void> {
 
 export function useAuth() {
   const queryClient = useQueryClient();
-  const { data: user, isLoading } = useQuery<User | null>({
+  const { data: user, isLoading, isError, error, refetch, isFetching } = useQuery<User | null>({
     queryKey: ["/api/auth/user"],
     queryFn: fetchUser,
-    retry: false,
+    retry: 1,
+    retryDelay: 1200,
     staleTime: 1000 * 60 * 5, // 5 minutes
   });
 
@@ -52,6 +76,11 @@ export function useAuth() {
     user,
     isLoading,
     isAuthenticated: !!user,
+    /** Session probe failed (timeout / 5xx) — NOT the same thing as being signed out. */
+    isError,
+    error,
+    retry: refetch,
+    isRetrying: isFetching,
     logout: logoutMutation.mutate,
     isLoggingOut: logoutMutation.isPending,
   };
