@@ -70,6 +70,7 @@ async function deleteTopic(topicId: number) {
     "topic_coordinates where topic_id = " + topicId,
     "topic_learning_prefs where topic_id = " + topicId,
     "topic_mastery where topic_id = " + topicId,
+    "lesson_progress where unit_id in (select id from lesson_units where topic_id = " + topicId + ")",
     "lesson_units where topic_id = " + topicId,
     "knowledge_cards where topic_id = " + topicId,
     "knowledge_resources where topic_id = " + topicId,
