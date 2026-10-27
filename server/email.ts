@@ -3,16 +3,22 @@ import nodemailer from "nodemailer";
 /**
  * Transactional email delivery.
  *
+ * NOTE: DigitalOcean/AWS/GCP block outbound SMTP ports 25/465/587, so SMTP cannot
+ * work on the droplet — use an HTTPS API provider.
+ *
  * Providers are tried in this order (first configured wins):
- *   1. Resend HTTP API   — RESEND_API_KEY
- *   2. SMTP              — SMTP_HOST (+ SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE)
- *   3. Console fallback  — logs the message and reports delivered:false
+ *   1. Resend    — RESEND_API_KEY
+ *   2. SendGrid  — SENDGRID_API_KEY
+ *   3. Brevo     — BREVO_API_KEY
+ *   4. Mailgun   — MAILGUN_API_KEY + MAILGUN_DOMAIN
+ *   5. SMTP      — SMTP_HOST (+ SMTP_PORT, SMTP_USER, SMTP_PASS, SMTP_SECURE)
+ *   6. Console   — logs the message and reports delivered:false
  *
  * MAIL_FROM must be an address the provider has authorised. APP_URL is used to
  * build absolute links.
  */
 
-export type EmailProvider = "resend" | "smtp" | "console";
+export type EmailProvider = "resend" | "sendgrid" | "brevo" | "mailgun" | "smtp" | "console";
 
 export interface EmailProviderStatus {
   provider: EmailProvider;
@@ -42,9 +48,28 @@ function mailFrom(): string {
   return process.env.MAIL_FROM || "Synapse <no-reply@synapsejourney.org>";
 }
 
+function fromAddress(): string {
+  const m = mailFrom().match(/<([^>]+)>/);
+  return (m ? m[1] : mailFrom()).trim();
+}
+
+function fromName(): string {
+  const m = mailFrom().match(/^(.*)</);
+  return (m ? m[1] : "Synapse").trim().replace(/"/g, "") || "Synapse";
+}
+
 export function getEmailProviderStatus(): EmailProviderStatus {
   if (process.env.RESEND_API_KEY) {
     return { provider: "resend", configured: true, from: mailFrom(), detail: "Resend HTTP API" };
+  }
+  if (process.env.SENDGRID_API_KEY) {
+    return { provider: "sendgrid", configured: true, from: mailFrom(), detail: "SendGrid v3 API" };
+  }
+  if (process.env.BREVO_API_KEY) {
+    return { provider: "brevo", configured: true, from: mailFrom(), detail: "Brevo transactional API" };
+  }
+  if (process.env.MAILGUN_API_KEY && process.env.MAILGUN_DOMAIN) {
+    return { provider: "mailgun", configured: true, from: mailFrom(), detail: `Mailgun ${process.env.MAILGUN_DOMAIN}` };
   }
   if (process.env.SMTP_HOST) {
     return {
@@ -111,6 +136,115 @@ async function sendViaResend(msg: EmailMessage): Promise<SendEmailResult> {
   }
 }
 
+async function postJson(
+  url: string,
+  headers: Record<string, string>,
+  body: unknown,
+): Promise<{ ok: boolean; status: number; body: any }> {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: JSON.stringify(body),
+  });
+  const text = await res.text();
+  let parsed: any = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    parsed = { raw: text };
+  }
+  return { ok: res.ok, status: res.status, body: parsed };
+}
+
+async function sendViaSendGrid(msg: EmailMessage): Promise<SendEmailResult> {
+  try {
+    const r = await postJson(
+      "https://api.sendgrid.com/v3/mail/send",
+      { Authorization: `Bearer ${process.env.SENDGRID_API_KEY}` },
+      {
+        personalizations: [{ to: [{ email: msg.to }] }],
+        from: { email: fromAddress(), name: fromName() },
+        subject: msg.subject,
+        content: [
+          { type: "text/plain", value: msg.text },
+          { type: "text/html", value: msg.html },
+        ],
+      },
+    );
+    if (!r.ok) {
+      const error = r.body?.errors?.[0]?.message || `SendGrid HTTP ${r.status}`;
+      console.error(`[email] SendGrid rejected message to ${msg.to}: ${error}`);
+      return { delivered: false, provider: "sendgrid", error };
+    }
+    console.log(`[email] SendGrid accepted → ${msg.to}`);
+    return { delivered: true, provider: "sendgrid" };
+  } catch (err: any) {
+    const error = err?.message || "SendGrid request failed";
+    console.error(`[email] SendGrid request failed for ${msg.to}:`, error);
+    return { delivered: false, provider: "sendgrid", error };
+  }
+}
+
+async function sendViaBrevo(msg: EmailMessage): Promise<SendEmailResult> {
+  try {
+    const r = await postJson(
+      "https://api.brevo.com/v3/smtp/email",
+      { "api-key": process.env.BREVO_API_KEY as string },
+      {
+        sender: { email: fromAddress(), name: fromName() },
+        to: [{ email: msg.to }],
+        subject: msg.subject,
+        htmlContent: msg.html,
+        textContent: msg.text,
+      },
+    );
+    if (!r.ok) {
+      const error = r.body?.message || `Brevo HTTP ${r.status}`;
+      console.error(`[email] Brevo rejected message to ${msg.to}: ${error}`);
+      return { delivered: false, provider: "brevo", error };
+    }
+    console.log(`[email] Brevo accepted ${r.body?.messageId || ""} → ${msg.to}`);
+    return { delivered: true, provider: "brevo", id: r.body?.messageId };
+  } catch (err: any) {
+    const error = err?.message || "Brevo request failed";
+    console.error(`[email] Brevo request failed for ${msg.to}:`, error);
+    return { delivered: false, provider: "brevo", error };
+  }
+}
+
+async function sendViaMailgun(msg: EmailMessage): Promise<SendEmailResult> {
+  try {
+    const domain = process.env.MAILGUN_DOMAIN as string;
+    const form = new URLSearchParams({
+      from: mailFrom(),
+      to: msg.to,
+      subject: msg.subject,
+      text: msg.text,
+      html: msg.html,
+    });
+    const res = await fetch(`https://api.mailgun.net/v3/${domain}/messages`, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(`api:${process.env.MAILGUN_API_KEY}`).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const error = body?.message || `Mailgun HTTP ${res.status}`;
+      console.error(`[email] Mailgun rejected message to ${msg.to}: ${error}`);
+      return { delivered: false, provider: "mailgun", error };
+    }
+    console.log(`[email] Mailgun accepted ${body?.id || ""} → ${msg.to}`);
+    return { delivered: true, provider: "mailgun", id: body?.id };
+  } catch (err: any) {
+    const error = err?.message || "Mailgun request failed";
+    console.error(`[email] Mailgun request failed for ${msg.to}:`, error);
+    return { delivered: false, provider: "mailgun", error };
+  }
+}
+
 async function sendViaSmtp(msg: EmailMessage): Promise<SendEmailResult> {
   const t = getTransporter();
   if (!t) return { delivered: false, provider: "console", error: "SMTP not configured" };
@@ -134,6 +268,9 @@ async function sendViaSmtp(msg: EmailMessage): Promise<SendEmailResult> {
 export async function sendEmail(msg: EmailMessage): Promise<SendEmailResult> {
   const status = getEmailProviderStatus();
   if (status.provider === "resend") return sendViaResend(msg);
+  if (status.provider === "sendgrid") return sendViaSendGrid(msg);
+  if (status.provider === "brevo") return sendViaBrevo(msg);
+  if (status.provider === "mailgun") return sendViaMailgun(msg);
   if (status.provider === "smtp") return sendViaSmtp(msg);
 
   console.log(
