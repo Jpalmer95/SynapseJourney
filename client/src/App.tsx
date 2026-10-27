@@ -111,6 +111,24 @@ function AppContent() {
       return <AgentsPage />;
     }
 
+    // Read-only catalogue and lesson view are public: "free to browse and read" is the
+    // promise on the landing page, and the content APIs behind them already allow
+    // anonymous reads. Progress, quizzes that record, and the map still need an account.
+    if (location === "/explore") {
+      return (
+        <Suspense fallback={<div className="min-h-screen bg-background" />}>
+          <ExplorePage />
+        </Suspense>
+      );
+    }
+    if (location.startsWith("/rabbit-hole")) {
+      return (
+        <Suspense fallback={<div className="min-h-screen bg-background" />}>
+          <RabbitHolePage />
+        </Suspense>
+      );
+    }
+
     // Explicit auth routes.
     if (location.startsWith("/signin") || location.startsWith("/signup")) {
       return (
