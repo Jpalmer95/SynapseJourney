@@ -1385,7 +1385,11 @@ Return a JSON object in this exact format:
   app.get("/api/user/profile", isAuthenticated, async (req: any, res: Response) => {
     try {
       const profile = await storage.getUserProfile(req.user.claims.sub);
-      res.json(profile || { userId: req.user.claims.sub });
+      if (!profile) return res.json({ userId: req.user.claims.sub });
+      // The stored voice sample is hundreds of KB of base64 and no client needs
+      // it here (TTS reads it server-side). Ship a flag instead of the blob.
+      const { ttsReferenceAudio, ...rest } = profile as any;
+      res.json({ ...rest, hasTtsReferenceAudio: Boolean(ttsReferenceAudio) });
     } catch (error) {
       console.error("Error fetching profile:", error);
       res.status(500).json({ error: "Failed to fetch profile" });
