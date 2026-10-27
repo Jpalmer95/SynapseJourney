@@ -169,7 +169,7 @@
 ### Phase 6: Auth Recovery + Course Archetypes
 **Objective:** Make login recoverable on a self-hosted deployment, add modern sign-in, and make every course type carry an explicit depth/section contract.
 
-- [x] **6.1 Transactional email that actually sends**
+- [x] **6.1 Transactional email that actually sends** — live on Resend as of 2026-10-27; `server/env.ts` loads `.env` at boot so pm2 restarts can't silently drop credentials.
   - `server/email.ts` now resolves a provider in order: Resend HTTP API (`RESEND_API_KEY`) → SMTP → console fallback, and returns a structured `{delivered, provider, error}` instead of swallowing failures.
   - `POST /api/auth/forgot-password` reports delivery state; when no provider is configured, the admin address (`ADMIN_EMAILS`) receives the reset link in the HTTP response so the operator can never be locked out.
   - `POST /api/auth/email/test` (admin) proves the provider accepts a message.
@@ -194,4 +194,4 @@
 - **Updated:** 2026-10-27
 - **Owner:** Jonathan Korstad + Hermes Agent
 - **Branch:** `fix/auth-and-copy` → `main`
-- **Status:** Phases 1–5 complete; Phase 6 (auth recovery, passkeys, Google, course archetypes) implemented and deployed. Remaining operator step: set a mail provider credential (`RESEND_API_KEY` or SMTP) and optionally Google OAuth credentials.
+- **Status:** Phases 1–5 complete; Phase 6 (auth recovery, passkeys, Google, course archetypes) implemented and deployed. Password-reset email is live via Resend (verified domain synapsejourney.org, DKIM + SPF CNAMEs + DMARC). Remaining optional step: Google OAuth credentials.
