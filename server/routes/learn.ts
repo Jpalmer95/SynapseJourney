@@ -824,9 +824,15 @@ export function registerLearnRoutes(app: Express) {
         });
       }
 
+      // Depth comes from the declared intent; goalText alone must not force skim mode
+      // (an ingested fundamentals course with a goal still needs full sections).
+      const ingestDepth =
+        body.learningIntent === "goal" || (!body.learningIntent && body.goalText)
+          ? "speed_run"
+          : body.learningIntent || "standard";
       await storage.upsertTopicLearningPrefs(userId, topic.id, {
-        depthMode: body.learningIntent === "goal" || body.goalText ? "speed_run" : (body.learningIntent || "standard"),
-        contentView: body.goalText ? "skim" : "full",
+        depthMode: ingestDepth,
+        contentView: ingestDepth === "speed_run" || ingestDepth === "survey" ? "skim" : "full",
       });
 
       let goal = null;
