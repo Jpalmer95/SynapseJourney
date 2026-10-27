@@ -490,9 +490,37 @@ export default function SettingsPage() {
     },
   });
 
+  // Only the fields this endpoint accepts may be sent. The GET response also
+  // carries ttsReferenceAudio (hundreds of KB of base64) and bookkeeping columns;
+  // echoing those back blew past the 100kb JSON limit and 413'd every save.
+  const toProfilePayload = (data: Partial<UserProfile>) => {
+    const keys: (keyof UserProfile)[] = [
+      "ageRange",
+      "technicalLevel",
+      "priorExperience",
+      "allowTestOut",
+      "huggingFaceToken",
+      "ollamaUrl",
+      "lmStudioUrl",
+      "customOpenaiUrl",
+      "customOpenaiKey",
+      "openRouterKey",
+      "xaiKey",
+      "anthropicKey",
+      "geminiKey",
+      "preferredAiProvider",
+      "preferredModel",
+    ];
+    const payload: Record<string, unknown> = {};
+    for (const key of keys) {
+      if (data[key] !== undefined) payload[key] = data[key];
+    }
+    return payload;
+  };
+
   const profileMutation = useMutation({
     mutationFn: async (data: Partial<UserProfile>) => {
-      return apiRequest("POST", "/api/user/profile", data);
+      return apiRequest("POST", "/api/user/profile", toProfilePayload(data));
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
@@ -502,10 +530,12 @@ export default function SettingsPage() {
         description: "Your learning profile has been saved.",
       });
     },
-    onError: () => {
+    onError: (err: any) => {
       toast({
         title: "Error",
-        description: "Failed to save profile. Please try again.",
+        description: err?.message
+          ? `Failed to save profile: ${err.message}`
+          : "Failed to save profile. Please try again.",
         variant: "destructive",
       });
     },
