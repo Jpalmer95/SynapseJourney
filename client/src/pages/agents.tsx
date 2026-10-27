@@ -110,7 +110,7 @@ export default function AgentsPage() {
             <CodeBlock title="shell" code={hermesConfig} />
             <p className="mt-2 text-sm text-muted-foreground">
               Install the companion skill so your agent knows the archetype contract and the upload rules:{" "}
-              <code className="rounded bg-muted px-1 py-0.5 text-xs">hermes skill install-Jpalmer95/synapse-learn</code>
+              <code className="rounded bg-muted px-1 py-0.5 text-xs">git clone https://github.com/Jpalmer95/synapse-learn ~/.hermes/skills/synapse-learn</code>
             </p>
           </div>
 
