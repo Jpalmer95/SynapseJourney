@@ -18,7 +18,18 @@ async function fetchUser(): Promise<User | null> {
 }
 
 async function logout(): Promise<void> {
-  window.location.href = "/api/logout";
+  // POST + client-side redirect. Never navigate to an /api/ URL: the service
+  // worker serves cached index.html for navigations, which both shows a 404 and
+  // (worse) leaves the session alive.
+  try {
+    await fetch("/api/auth/logout", {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+    });
+  } finally {
+    window.location.replace("/");
+  }
 }
 
 export function useAuth() {

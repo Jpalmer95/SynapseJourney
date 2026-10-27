@@ -12,7 +12,11 @@ export default defineConfig({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
       workbox: {
-        maximumFileSizeToCacheInBytes: 5000000
+        maximumFileSizeToCacheInBytes: 5000000,
+        // Never answer a navigation to /api/* from the precache: those are
+        // server routes (logout, auth callbacks, MCP), not SPA pages.
+        navigateFallbackDenylist: [/^\/api\//],
+        cleanupOutdatedCaches: true,
       },
       manifest: {
         name: 'SynapseJourney',
