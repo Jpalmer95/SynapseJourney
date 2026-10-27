@@ -98,9 +98,15 @@ function AppContent() {
   if (!isAuthenticated) {
     const nextParam = new URLSearchParams(window.location.search).get("next");
 
-    // Public marketing page — newcomers read before they are asked to sign in.
+    // Public marketing pages — newcomers read before they are asked to sign in.
     if (location === "/") {
       return <LandingPage />;
+    }
+
+    // Agent onboarding must be readable without an account: an integrator needs the
+    // MCP endpoint and auth shape before they have any reason to register.
+    if (location === "/agents") {
+      return <AgentsPage />;
     }
 
     // Explicit auth routes.
