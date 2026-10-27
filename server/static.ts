@@ -25,7 +25,7 @@ export function serveStatic(app: Express) {
   // fallback answered 200 for every unknown URL, a soft 404 for crawlers and analytics.
   const spaRoutes = [
     /^\/$/,
-    /^\/(map|saved|profile|settings|pathways|achievements|explore|rabbit-hole|collection|open-science)(\/|$)/,
+    /^\/(map|saved|profile|settings|pathways|achievements|explore|rabbit-hole|collection|open-science|agents|signin|signup)(\/|$)/,
     /^\/pathway\/[^/]+\/?$/,
     /^\/practice-test\/[^/]+(\/results\/[^/]+)?\/?$/,
     /^\/reset-password(\/|$)/,
