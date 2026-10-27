@@ -136,7 +136,7 @@ export default function PathwayDetailPage() {
 
   return (
     <AppLayout>
-      <div className="p-4 sm:p-6 max-w-3xl mx-auto">
+      <div className="p-4 sm:p-6 max-w-6xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: -10 }}
           animate={{ opacity: 1, y: 0 }}

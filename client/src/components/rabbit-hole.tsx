@@ -1633,7 +1633,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         {activeQuiz.map((q, qIndex) => (
                           <div key={qIndex} className="space-y-3">
                             <p className="font-medium break-words [overflow-wrap:anywhere]">
-                              {qIndex + 1}. {q.question}
+                              {qIndex + 1}. <LessonMarkdown text={q.question} inline />
                             </p>
                             <RadioGroup
                               value={quizAnswers[qIndex]?.toString()}
@@ -1652,7 +1652,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                                 >
                                   <RadioGroupItem value={oIndex.toString()} id={`q${qIndex}-o${oIndex}`} className="mt-0.5 shrink-0" />
                                   <Label htmlFor={`q${qIndex}-o${oIndex}`} className="flex-1 cursor-pointer break-words [overflow-wrap:anywhere] min-w-0">
-                                    {option}
+                                    <LessonMarkdown text={option} inline />
                                   </Label>
                                   {quizSubmitted && oIndex === q.correctIndex && (
                                     <Check className="h-4 w-4 text-green-500 shrink-0" />

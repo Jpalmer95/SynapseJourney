@@ -54,8 +54,20 @@ function MathBlock({ value }: { value: string }) {
   );
 }
 
-export function LessonMarkdown({ text, className }: { text?: string | null; className?: string }) {
+export function LessonMarkdown({
+  text,
+  className,
+  inline = false,
+}: {
+  text?: string | null;
+  className?: string;
+  inline?: boolean;
+}) {
   if (!text || !text.trim()) return null;
+  // Short strings (quiz prompts, answer options) keep their single-line flow.
+  if (inline) {
+    return <span className={className}>{renderInline(text, "i")}</span>;
+  }
 
   const source = text.replace(/\r\n/g, "\n");
   const lines = source.split("\n");

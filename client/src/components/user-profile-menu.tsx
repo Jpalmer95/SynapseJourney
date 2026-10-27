@@ -17,7 +17,7 @@ export function UserProfileMenu() {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="rounded-full" data-testid="button-user-menu">
+        <Button variant="ghost" size="icon" className="rounded-full" aria-label="Account menu" data-testid="button-user-menu">
           <Avatar className="h-8 w-8">
             <AvatarImage src={user?.profileImageUrl || undefined} />
             <AvatarFallback>
