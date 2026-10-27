@@ -936,9 +936,21 @@ export class DatabaseStorage implements IStorage {
         .where(and(eq(lessonUnits.topicId, topicId), eq(lessonUnits.difficulty, difficulty)))
         .orderBy(lessonUnits.unitIndex);
     }
+    // Order by pedagogical tier, not alphabetically — 'advanced' sorts before
+    // 'beginner' in a plain text ORDER BY, which made agents and the outline view
+    // start a course at its hardest unit.
     return db.select().from(lessonUnits)
       .where(eq(lessonUnits.topicId, topicId))
-      .orderBy(lessonUnits.difficulty, lessonUnits.unitIndex);
+      .orderBy(
+        sql`CASE ${lessonUnits.difficulty}
+          WHEN 'beginner' THEN 0
+          WHEN 'intermediate' THEN 1
+          WHEN 'advanced' THEN 2
+          WHEN 'nextgen' THEN 3
+          WHEN 'next_gen' THEN 3
+          ELSE 4 END`,
+        lessonUnits.unitIndex,
+      );
   }
 
   async getLessonUnit(id: number): Promise<LessonUnit | undefined> {
