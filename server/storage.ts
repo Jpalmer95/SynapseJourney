@@ -103,6 +103,11 @@ export interface IStorage {
   /** Published topics plus the viewer's own unpublished ones (JIT courses). */
   getVisibleTopics(viewerUserId?: string | null): Promise<Topic[]>;
   findTopicByNormalizedTitle(normalizedTitle: string): Promise<Topic | undefined>;
+  /** Full-text fallback over unit prose when no embedding backend is available. */
+  searchUnitsByText(
+    query: string,
+    limit?: number,
+  ): Promise<{ unitId: number; topicId: number; title: string; snippet: string }[]>;
   updateTopicQuality(
     id: number,
     score: number,
@@ -484,6 +489,43 @@ export class DatabaseStorage implements IStorage {
   async findTopicByNormalizedTitle(normalizedTitle: string): Promise<Topic | undefined> {
     const [row] = await db.select().from(topics).where(eq(topics.normalizedTitle, normalizedTitle));
     return row;
+  }
+
+  async searchUnitsByText(
+    query: string,
+    limit = 10,
+  ): Promise<{ unitId: number; topicId: number; title: string; snippet: string }[]> {
+    // Embeddings are optional on self-hosted deployments (Ollama may be unreachable), so
+    // search must still work: match the longest terms against unit prose, one query per term.
+    const terms = Array.from(new Set((query || "").toLowerCase().split(/[^a-z0-9-]+/).filter((t) => t.length >= 4))).slice(0, 5);
+    if (terms.length === 0) return [];
+    const found = new Map<number, { unitId: number; topicId: number; title: string; snippet: string }>();
+    for (const term of terms) {
+      const like = `%${term}%`;
+      const res: any = await db.execute(sql`
+        SELECT lu.id AS unit_id, lu.topic_id, lu.title,
+               left(coalesce(lu.content_json->>'concept', lu.content_json->>'content', ''), 240) AS snippet
+        FROM lesson_units lu
+        JOIN topics t ON t.id = lu.topic_id
+        WHERE lu.content_json IS NOT NULL
+          AND t.published = true
+          AND (lu.title ILIKE ${like} OR lu.content_json::text ILIKE ${like})
+        LIMIT ${limit}
+      `);
+      for (const r of (res.rows ?? res)) {
+        const unitId = Number(r.unit_id);
+        if (!found.has(unitId)) {
+          found.set(unitId, {
+            unitId,
+            topicId: Number(r.topic_id),
+            title: String(r.title),
+            snippet: String(r.snippet ?? ""),
+          });
+        }
+      }
+      if (found.size >= limit) break;
+    }
+    return Array.from(found.values()).slice(0, limit);
   }
 
   async updateTopicQuality(

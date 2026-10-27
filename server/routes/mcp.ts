@@ -226,6 +226,8 @@ export function registerMcpRoutes(app: Express) {
           const topics = (
             vec ? await storage.searchTopicsVectors(vec, limit, 0.45) : await storage.searchTopicsTrgm(query, limit)
           ).filter((t) => visibleIds.has(t.id));
+          // Prose fallback so search still works without an embedding backend.
+          const units = await storage.searchUnitsByText(query, limit);
           const bottlenecks = await storage.getSotaBottlenecks({ limit });
           const matchedBottlenecks = bottlenecks.filter((b) =>
             `${b.title} ${b.description} ${b.domain}`.toLowerCase().includes(query.toLowerCase())
@@ -236,7 +238,7 @@ export function registerMcpRoutes(app: Express) {
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ topics, bottlenecks: matchedBottlenecks, resources }, null, 2),
+                text: JSON.stringify({ topics, units, bottlenecks: matchedBottlenecks, resources }, null, 2),
               },
             ],
           });
