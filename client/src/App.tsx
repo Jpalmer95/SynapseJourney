@@ -6,23 +6,27 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { useAuth } from "@/hooks/use-auth";
 import { ErrorBoundary } from "@/components/error-boundary";
+import { Suspense, lazy } from "react";
 import NotFound from "@/pages/not-found";
 import { LandingPage } from "@/pages/landing";
 import { ResetPasswordPage } from "@/pages/reset-password";
-import { HomePage } from "@/pages/home";
-import { MapPage } from "@/pages/map";
-import { SavedPage } from "@/pages/saved";
-import { ProfilePage } from "@/pages/profile";
-import SettingsPage from "@/pages/settings";
-import PathwaysPage from "@/pages/pathways";
-import PathwayDetailPage from "@/pages/pathway-detail";
-import AchievementsPage from "@/pages/achievements";
-import ExplorePage from "@/pages/explore";
-import RabbitHolePage from "@/pages/rabbit-hole";
-import CollectionPage from "@/pages/collection";
-import PracticeTestPage from "@/pages/practice-test";
-import PracticeTestResultsPage from "@/pages/practice-test-results";
-import { OpenSciencePage } from "@/pages/open-science";
+
+// Route-level code splitting: the entry bundle used to carry every page (3.4 MB raw /
+// ~1 MB gzip), including three.js for the 3D map. Each page now loads on first visit.
+const HomePage = lazy(() => import("@/pages/home").then((m) => ({ default: m.HomePage })));
+const MapPage = lazy(() => import("@/pages/map").then((m) => ({ default: m.MapPage })));
+const SavedPage = lazy(() => import("@/pages/saved").then((m) => ({ default: m.SavedPage })));
+const ProfilePage = lazy(() => import("@/pages/profile").then((m) => ({ default: m.ProfilePage })));
+const SettingsPage = lazy(() => import("@/pages/settings"));
+const PathwaysPage = lazy(() => import("@/pages/pathways"));
+const PathwayDetailPage = lazy(() => import("@/pages/pathway-detail"));
+const AchievementsPage = lazy(() => import("@/pages/achievements"));
+const ExplorePage = lazy(() => import("@/pages/explore"));
+const RabbitHolePage = lazy(() => import("@/pages/rabbit-hole").then((m) => ({ default: m.RabbitHolePage })));
+const CollectionPage = lazy(() => import("@/pages/collection"));
+const PracticeTestPage = lazy(() => import("@/pages/practice-test"));
+const PracticeTestResultsPage = lazy(() => import("@/pages/practice-test-results"));
+const OpenSciencePage = lazy(() => import("@/pages/open-science").then((m) => ({ default: m.OpenSciencePage })));
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TTSProvider } from "@/hooks/use-tts";
@@ -100,6 +104,13 @@ function AppContent() {
           transition={{ duration: 0.2 }}
           className="min-h-screen"
         >
+          <Suspense
+            fallback={
+              <div className="min-h-[60vh] flex items-center justify-center">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            }
+          >
           <Switch>
             <Route path="/" component={HomePage} />
       <Route path="/map" component={MapPage} />
@@ -117,6 +128,7 @@ function AppContent() {
       <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
             <Route component={NotFound} />
           </Switch>
+          </Suspense>
         </motion.div>
       </AnimatePresence>
     </>
