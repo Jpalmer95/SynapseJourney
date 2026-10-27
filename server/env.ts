@@ -36,9 +36,11 @@ function parseEnv(contents: string): Record<string, string> {
 }
 
 function load(): void {
+  // __dirname exists in the esbuild CJS bundle but not under tsx/ESM.
+  const here = typeof __dirname !== "undefined" ? __dirname : process.cwd();
   const candidates = [
     path.resolve(process.cwd(), ".env"),
-    path.resolve(__dirname, "..", ".env"),
+    path.resolve(here, "..", ".env"),
   ];
   for (const file of candidates) {
     try {
