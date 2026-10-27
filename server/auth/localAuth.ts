@@ -255,7 +255,9 @@ export async function setupAuth(app: Express) {
       if (!user) {
         return res.status(404).json({ message: "User not found" });
       }
-      res.json(user);
+      // Never expose the password hash (or any future secret column) to the client.
+      const { passwordHash: _passwordHash, ...safeUser } = user as any;
+      res.json(safeUser);
     } catch (error) {
       console.error("Error fetching user:", error);
       res.status(500).json({ message: "Failed to fetch user" });
