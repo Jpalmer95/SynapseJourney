@@ -47,6 +47,8 @@ async function main() {
 
     if (APPLY) {
       for (const id of bad) {
+        // Progress rows reference units; drop them first so the delete cannot FK-fail.
+        await db.execute(sql`DELETE FROM lesson_progress WHERE unit_id = ${id}`);
         await db.execute(sql`DELETE FROM lesson_units WHERE id = ${id}`);
       }
     }
