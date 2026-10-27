@@ -4,7 +4,7 @@
  */
 import type { Express, Response } from "express";
 import { z } from "zod";
-import { scoreCourse, blockingIssues, normalizeTitle } from "../content-quality";
+import { scoreCourse, blockingIssues, normalizeTitle, findDuplicateTitle } from "../content-quality";
 import { isAdminEmail } from "../auth/localAuth";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
@@ -785,6 +785,19 @@ export function registerLearnRoutes(app: Express) {
         topic = (await storage.getTopics()).find((t) => t.title.toLowerCase() === title.toLowerCase());
       }
       if (!topic) {
+        // Published-course dedupe: a re-titled copy of an existing course is refused, not
+        // forked. Niche/JIT variants extend the core course via topicId instead.
+        const publishedCourses = (await storage.getVisibleTopics(null)).map((t) => ({ id: t.id, title: t.title }));
+        const dup = findDuplicateTitle(title, publishedCourses);
+        if (dup) {
+          return res.status(409).json({
+            error: "A published course already covers this subject",
+            existingTopicId: dup.id,
+            existingTitle: dup.title,
+            similarity: Number(dup.score.toFixed(2)),
+            hint: "Extend the existing course with topicId (modular add-on), or give this course a genuinely different scope.",
+          });
+        }
         const twin = await storage.findTopicByNormalizedTitle(normalizedTitle);
         if (twin) {
           if (twin.published) {

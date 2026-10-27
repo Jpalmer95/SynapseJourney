@@ -342,3 +342,55 @@ export function scoreCourse(units: { title: string; contentJson?: any }[], arche
 export function blockingIssues(quality: CourseQuality): QualityIssue[] {
   return quality.issues.filter((i) => i.severity === "error");
 }
+
+/** Tokens that mark a re-packaging of the same subject rather than a new one. */
+const VARIANT_STOPWORDS = new Set([
+  "2024","2025","2026","2027","edition","ed","part","vol","volume","i","ii","iii","iv","v",
+  "advanced","basic","basics","introduction","intro","fundamentals","fundamental","essentials",
+  "essential","course","crash","quick","fast","deep","dive","full","complete","masterclass",
+  "tutorial","guide","101","bootcamp","refresher","primer","the","a","an","of","and","for","to",
+]);
+
+export function titleTokens(title: string): string[] {
+  return normalizeTitle(title)
+    .split("-")
+    .filter((t) => t && !VARIANT_STOPWORDS.has(t))
+    .map((t) => (t.length > 3 && t.endsWith("s") ? t.slice(0, -1) : t));
+}
+
+/** 0..1 similarity over distinctive tokens; 1 means the same subject re-titled. */
+export function titleSimilarity(a: string, b: string): number {
+  const ta = new Set(titleTokens(a));
+  const tb = new Set(titleTokens(b));
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let shared = 0;
+  ta.forEach((t) => { if (tb.has(t)) shared += 1; });
+  let union = 0;
+  const seen = new Set<string>();
+  ta.forEach((t) => { seen.add(t); });
+  tb.forEach((t) => { seen.add(t); });
+  union = seen.size;
+  const jaccard = shared / union;
+  // One title's distinctive tokens contained in the other's means the same subject.
+  const containment = shared / Math.min(ta.size, tb.size);
+  return Math.max(jaccard, containment >= 1 ? 0.95 : containment * 0.8);
+}
+
+/**
+ * Find an existing course that already covers this subject.
+ * Blocks "Calculus" vs "Calculus (2026 edition)" vs "Calculus I — the essentials".
+ */
+export function findDuplicateTitle(
+  candidate: string,
+  existing: { id: number; title: string }[],
+  threshold = 0.6,
+): { id: number; title: string; score: number } | null {
+  let best: { id: number; title: string; score: number } | null = null;
+  for (const t of existing) {
+    const score = titleSimilarity(candidate, t.title);
+    if (score >= threshold && (!best || score > best.score)) {
+      best = { id: t.id, title: t.title, score };
+    }
+  }
+  return best;
+}

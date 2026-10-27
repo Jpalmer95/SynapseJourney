@@ -14,7 +14,7 @@ import { isAuthenticated } from "../replit_integrations/auth";
 import { embed, indexTopicToFlywheel, indexUnitToFlywheel } from "../embeddings";
 import { randomUUID } from "node:crypto";
 import { scoreCourse, blockingIssues } from "../content-quality";
-import { normalizeTitle } from "../content-quality";
+import { normalizeTitle, findDuplicateTitle } from "../content-quality";
 
 export const MCP_TOOLS = [
   {
@@ -264,6 +264,17 @@ export function registerMcpRoutes(app: Express) {
           let topic = args.topicId ? await storage.getTopicById(Number(args.topicId)) : undefined;
           if (!topic) {
             if (!args.topic?.title) return sendError(-32602, "Provide topicId or topic.title");
+            const dup = findDuplicateTitle(
+              String(args.topic.title),
+              (await storage.getVisibleTopics(null)).map((t) => ({ id: t.id, title: t.title })),
+            );
+            if (dup) {
+              return sendError(-32602, "A published course already covers this subject; extend it with topicId", {
+                existingTopicId: dup.id,
+                existingTitle: dup.title,
+                similarity: Number(dup.score.toFixed(2)),
+              });
+            }
             const allTopics = await storage.getTopics();
             const existing = allTopics.find(
               (t) => t.title.toLowerCase() === String(args.topic.title).trim().toLowerCase()
