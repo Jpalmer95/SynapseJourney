@@ -63,10 +63,11 @@ export function formatTimeAgo(date: Date): string {
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffMins < 60) return `${diffMins} minutes ago`;
-  if (diffHours < 24) return `${diffHours} hours ago`;
-  if (diffDays === 1) return "1 day ago";
-  return `${diffDays} days ago`;
+  const plural = (n: number, unit: string) => `${n} ${unit}${n === 1 ? "" : "s"} ago`;
+  if (diffMins < 1) return "just now";
+  if (diffMins < 60) return plural(diffMins, "minute");
+  if (diffHours < 24) return plural(diffHours, "hour");
+  return plural(diffDays, "day");
 }
 
 export function getDefaultLevels(topicTitle: string) {

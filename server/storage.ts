@@ -492,6 +492,16 @@ export class DatabaseStorage implements IStorage {
     }
   }
 
+  /**
+   * Roll back a topic that was created for a request that then failed (e.g. BYOC 402).
+   * Only safe for freshly created topics with no lesson units or goals attached.
+   */
+  async deleteEmptyTopic(id: number): Promise<void> {
+    const units = await db.select({ id: lessonUnits.id }).from(lessonUnits).where(eq(lessonUnits.topicId, id)).limit(1);
+    if (units.length > 0) return;
+    await db.delete(topics).where(eq(topics.id, id));
+  }
+
   async updateTopicEmbedding(id: number, embedding: number[]): Promise<void> {
     const v = `[${embedding.join(",")}]`;
     await db.execute(sql`UPDATE topics SET embedding = ${v}::vector WHERE id = ${id}`);

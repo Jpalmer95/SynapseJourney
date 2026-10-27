@@ -28,7 +28,19 @@ export function registerTopicsRoutes(app: Express) {
   app.get("/api/topics", async (req: Request, res: Response) => {
     try {
       const topics = await storage.getTopics();
-      res.json(topics);
+      // Never ship the 768-float embedding per topic: it is only used server-side for
+      // similarity search and inflated this endpoint to ~670 KB.
+      res.json(
+        topics.map((t) => ({
+          id: t.id,
+          title: t.title,
+          description: t.description,
+          categoryId: t.categoryId,
+          difficulty: t.difficulty,
+          imageUrl: t.imageUrl,
+          createdAt: t.createdAt,
+        }))
+      );
     } catch (error) {
       console.error("Error fetching topics:", error);
       res.status(500).json({ error: "Failed to fetch topics" });

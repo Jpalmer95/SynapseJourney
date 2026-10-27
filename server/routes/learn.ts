@@ -7,7 +7,7 @@ import { z } from "zod";
 import { storage } from "../storage";
 import { isAuthenticated } from "../replit_integrations/auth";
 import { generateLessonOutline } from "./ai";
-import { providerConfigFromProfile } from "../ai-providers";
+import { providerConfigFromProfile, validateByokCredentials } from "../ai-providers";
 import { indexTopicToFlywheel, indexUnitToFlywheel } from "../embeddings";
 
 const depthModes = ["survey", "standard", "deep", "speed_run", "goal"] as const;
@@ -226,11 +226,26 @@ export function registerLearnRoutes(app: Express) {
 
       const description = `Goal-oriented path: ${goalText}`;
 
+      // BYOC: learner's Settings keys first (xAI / Gemini / OpenRouter / HF / Ollama / LM Studio), then platform pool
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
+      // Fail BEFORE writing anything: a 402 after createTopic used to leave an orphan topic
+      // in the shared catalog (visible to every user) with zero units.
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message:
+            "Platform free AI is disabled. Add API keys in Settings, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
+        });
+      }
+
       // Prefer an existing topic with similar title when possible
       let topic = (await storage.getTopics()).find(
         (t) => t.title.toLowerCase() === title.toLowerCase()
       );
 
+      let createdTopicId: number | null = null;
       if (!topic) {
         topic = await storage.createTopic({
           title: title.charAt(0).toUpperCase() + title.slice(1),
@@ -238,11 +253,8 @@ export function registerLearnRoutes(app: Express) {
           categoryId: categoryId || null,
           difficulty: "beginner",
         } as any);
+        createdTopicId = topic.id;
       }
-
-      // BYOC: learner's Settings keys first (xAI / Gemini / OpenRouter / HF / Ollama / LM Studio), then platform pool
-      const profile = await storage.getUserProfile(userId);
-      const userConfig = providerConfigFromProfile(profile);
 
       // Agent Playbook: on when explicitly requested, or when the goal looks technical
       const { isTechnicalGoal } = await import("../course-planner");
@@ -264,6 +276,16 @@ export function registerLearnRoutes(app: Express) {
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
+          // Roll back a topic we just created: a failed generation must not leave an
+          // empty course behind in the shared catalog.
+          if (createdTopicId) {
+            try {
+              await storage.deleteEmptyTopic(createdTopicId);
+              createdTopicId = null;
+            } catch (cleanupErr) {
+              console.error("[learn/goal] failed to roll back topic", createdTopicId, cleanupErr);
+            }
+          }
           if (msg.includes("BYOC_REQUIRED")) {
             return res.status(402).json({
               error: "BYOC_REQUIRED",
@@ -871,10 +893,20 @@ export function registerLearnRoutes(app: Express) {
       const profile = await storage.getUserProfile(userId);
       const userConfig = providerConfigFromProfile(profile);
 
+      // Fail before writing anything (see /api/learn/goal): no orphan topics on 402.
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message:
+            "Platform free AI is disabled. Add API keys in Settings, or author this course with Hermes Agent and upload via Personal Access Token.",
+        });
+      }
+
       // Reuse an existing topic with the same title if present
       let topic = (await storage.getTopics()).find(
         (t) => t.title.toLowerCase() === subject.trim().toLowerCase()
       );
+      let createdTopicId: number | null = null;
       if (!topic) {
         topic = await storage.createTopic({
           title: subject.trim(),
@@ -882,6 +914,7 @@ export function registerLearnRoutes(app: Express) {
           categoryId: categoryId || null,
           difficulty: "beginner",
         } as any);
+        createdTopicId = topic.id;
       }
 
       let units = await storage.getLessonUnits(topic.id);
@@ -897,6 +930,14 @@ export function registerLearnRoutes(app: Express) {
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
+          if (createdTopicId) {
+            try {
+              await storage.deleteEmptyTopic(createdTopicId);
+              createdTopicId = null;
+            } catch (cleanupErr) {
+              console.error("[learn/custom-course] failed to roll back topic", createdTopicId, cleanupErr);
+            }
+          }
           if (msg.includes("BYOC_REQUIRED")) {
             return res.status(402).json({
               error: "BYOC_REQUIRED",

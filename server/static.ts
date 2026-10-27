@@ -20,8 +20,24 @@ export function serveStatic(app: Express) {
 
   app.use(express.static(distPath));
 
+  // Client-side routes that the SPA owns. Anything else is a genuine 404: serve the app
+  // shell (so the branded NotFound page renders) but with an honest status code — the old
+  // fallback answered 200 for every unknown URL, a soft 404 for crawlers and analytics.
+  const spaRoutes = [
+    /^\/$/,
+    /^\/(map|saved|profile|settings|pathways|achievements|explore|rabbit-hole|collection|open-science)(\/|$)/,
+    /^\/pathway\/[^/]+\/?$/,
+    /^\/practice-test\/[^/]+(\/results\/[^/]+)?\/?$/,
+    /^\/reset-password(\/|$)/,
+  ];
+
   // fall through to index.html if the file doesn't exist
-  app.use("*", (_req, res) => {
+  app.use("*", (req, res) => {
+    const pathname = req.originalUrl.split("?")[0];
+    const isSpaRoute = spaRoutes.some((re) => re.test(pathname));
+    if (!isSpaRoute && !pathname.includes(".")) {
+      res.status(404);
+    }
     res.sendFile(path.resolve(distPath, "index.html"));
   });
 }

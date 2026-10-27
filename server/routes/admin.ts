@@ -120,6 +120,33 @@ export function registerAdminRoutes(app: Express) {
     }
   });
 
+  // ============ ADMIN TOPIC CLEANUP ============
+  // Removes an empty topic (no units). Used to clean up courses that a failed
+  // generation left behind before the rollback fix in /api/learn/goal.
+  app.delete("/api/admin/topics/:topicId", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const isAdmin = await isAdminUser(req.user.claims.sub);
+      if (!isAdmin) return res.status(403).json({ error: "Forbidden" });
+
+      const topicId = parseInt(req.params.topicId, 10);
+      if (isNaN(topicId)) return res.status(400).json({ error: "Invalid topic id" });
+
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) return res.status(404).json({ error: "Topic not found" });
+
+      const units = await storage.getLessonUnits(topicId);
+      if (units.length > 0) {
+        return res.status(409).json({ error: "Topic has lesson units; refusing to delete", unitCount: units.length });
+      }
+
+      await storage.deleteEmptyTopic(topicId);
+      res.json({ deleted: true, topicId, title: topic.title });
+    } catch (error) {
+      console.error("Error deleting topic:", error);
+      res.status(500).json({ error: "Failed to delete topic" });
+    }
+  });
+
   // ============ ADMIN LESSON REGENERATION ============
 
   app.post("/api/admin/lessons/:unitId/regenerate", isAuthenticated, async (req: any, res: Response) => {
