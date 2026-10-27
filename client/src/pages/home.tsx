@@ -1,8 +1,12 @@
-import { useState } from "react";
+import { Suspense, lazy, useState } from "react";
 import { AnimatePresence } from "framer-motion";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { RabbitHole } from "@/components/rabbit-hole";
+// The lesson renderer (mermaid, code sandboxes, TTS, quiz) is ~1.3 MB and is only
+// needed once a topic is opened — keep it out of the home page's initial download.
+const RabbitHole = lazy(() =>
+  import("@/components/rabbit-hole").then((m) => ({ default: m.RabbitHole })),
+);
 import { AppLayout } from "@/components/app-layout";
 import { MyCoursesStrip } from "@/components/my-courses-strip";
 import { CourseCreator } from "@/components/course-creator";
@@ -79,13 +83,21 @@ export function HomePage() {
     <AppLayout mobileTitle="Polymath Command Center">
       <AnimatePresence mode="wait">
         {selectedTopic ? (
-          <RabbitHole
-            key="rabbit-hole"
-            topic={selectedTopic}
-            category={selectedCategory}
-            onBack={handleBack}
-            resumeUnitId={resumeUnitId}
-          />
+          <Suspense
+            fallback={
+              <div className="min-h-[70vh] flex items-center justify-center">
+                <span className="h-6 w-6 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+              </div>
+            }
+          >
+            <RabbitHole
+              key="rabbit-hole"
+              topic={selectedTopic}
+              category={selectedCategory}
+              onBack={handleBack}
+              resumeUnitId={resumeUnitId}
+            />
+          </Suspense>
         ) : (
           <div key="command-center" className="min-h-screen pb-24 md:pb-12 pt-16 md:pt-0">
             {/* Top Hybrid Search & Command Bar */}
