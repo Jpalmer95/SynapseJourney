@@ -15,6 +15,7 @@ import {
 } from "../ai-providers";
 import { SYLLABI_MAP } from "../syllabi";
 import { SEED_LESSON_CONTENT } from "../seed-lesson-content";
+import { archetypeSectionBlock, type CourseArchetype } from "@shared/course-archetypes";
 
 // Compute a short SHA-256 hash of lesson content for traceability logging
 export function contentHash(content: unknown): string {
@@ -954,6 +955,7 @@ export async function generateLessonOutline(
     includeAgentContext?: boolean;
     createdByUserId?: string;
     userConfig?: import("../ai-providers").ProviderConfig;
+    archetype?: CourseArchetype;
   }
 ): Promise<any[]> {
   // ── Use pre-planned syllabus if available ───────────────────────────────────
@@ -988,6 +990,7 @@ export async function generateLessonOutline(
       technicalLevel: options?.technicalLevel,
       includeAgentContext: options?.includeAgentContext,
       userConfig: options?.userConfig,
+      archetype: options?.archetype,
     });
 
     // Persist plan for OER surface + versioning
@@ -1300,7 +1303,8 @@ export async function generateLessonContent(
   masteredTopics: { topicId: number; topicTitle: string }[],
   categoryName?: string,
   unitContext?: { position: number; total: number; siblingTitles: string[] },
-  userConfig?: ProviderConfig
+  userConfig?: ProviderConfig,
+  archetype?: CourseArchetype
 ): Promise<any> {
   const crossTopicContext = masteredTopics.length > 0
     ? `The learner has already mastered these topics: ${masteredTopics.map(t => t.topicTitle).join(", ")}. When relevant, draw connections to these concepts they already understand.`
@@ -1415,7 +1419,7 @@ ${positionContext}
 ${crossTopicContext}
 
 ${difficultyGuidelines}
-
+${archetype ? "\n" + archetypeSectionBlock(archetype) + "\n" : ""}
 ${resourceSpecificityInstruction}
 ${precisionRules}${contentTypedHint}
 

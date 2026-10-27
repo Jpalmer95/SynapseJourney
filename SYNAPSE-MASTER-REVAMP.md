@@ -166,8 +166,32 @@
 
 ---
 
+### Phase 6: Auth Recovery + Course Archetypes
+**Objective:** Make login recoverable on a self-hosted deployment, add modern sign-in, and make every course type carry an explicit depth/section contract.
+
+- [x] **6.1 Transactional email that actually sends**
+  - `server/email.ts` now resolves a provider in order: Resend HTTP API (`RESEND_API_KEY`) → SMTP → console fallback, and returns a structured `{delivered, provider, error}` instead of swallowing failures.
+  - `POST /api/auth/forgot-password` reports delivery state; when no provider is configured, the admin address (`ADMIN_EMAILS`) receives the reset link in the HTTP response so the operator can never be locked out.
+  - `POST /api/auth/email/test` (admin) proves the provider accepts a message.
+  - `GET /api/auth/providers` exposes which methods this deployment can complete.
+- [x] **6.2 Google Sign-In (OAuth 2.0, server-side)**
+  - `/api/auth/google/start` + `/api/auth/google/callback`, activated by `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`; state checked, id_token audience/issuer verified, existing password account with the same email is linked rather than duplicated (`user_identities`).
+- [x] **6.3 Passkeys / WebAuthn**
+  - `@simplewebauthn/server` + browser: register (Settings → Sign-in security), sign in from the landing page, list/delete credentials. Challenges live in the session, credentials in `webauthn_credentials` (counter tracked on every use).
+- [x] **6.4 Course archetypes (`shared/course-archetypes.ts`)**
+  - Six shapes — `rapid_bootstrap`, `focused_skill`, `foundation`, `deep_dive`, `frontier_survey`, `cross_domain` — each pinning unit range, tier shape, words/section, sections/unit, takeaways, resource count, minutes/unit, OER policy and capstone requirement.
+  - Planner injects the archetype block; the archetype is persisted in `course_plans.planJson.archetype`; the lesson generator reads it back and enforces the section budget, overriding the generic paragraph count.
+  - Accepted by `POST /api/learn/goal`, `/api/learn/custom-course`, and (via planJson) every unit generated for that course.
+  - Spec: `docs/COURSE-ARCHETYPES.md`. Agent loop: `docs/HERMES-AGENT-LEARNING-LOOP.md`.
+- **Phase 6 Success Criteria:**
+  - `npm run check` and `npm run build` pass.
+  - `GET /api/auth/providers` reports the deployment's real capabilities; passkey registration and sign-in work in a browser.
+  - A reset requested for an admin address either arrives by email (provider configured) or returns the link inline (provider missing) — never silently drops.
+
+---
+
 ## Metadata
-- **Updated:** 2026-10-17
+- **Updated:** 2026-10-27
 - **Owner:** Jonathan Korstad + Hermes Agent
-- **Branch:** `feat/polymath-platform-rebuild`
-- **Status:** Completed Phases 1–5 (Verified & Ready for Production)
+- **Branch:** `fix/auth-and-copy` → `main`
+- **Status:** Phases 1–5 complete; Phase 6 (auth recovery, passkeys, Google, course archetypes) implemented and deployed. Remaining operator step: set a mail provider credential (`RESEND_API_KEY` or SMTP) and optionally Google OAuth credentials.

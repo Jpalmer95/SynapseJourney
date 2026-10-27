@@ -1,4 +1,12 @@
-import { users, passwordResetTokens, type User, type UpsertUser } from "@shared/models/auth";
+import {
+  users,
+  passwordResetTokens,
+  userIdentities,
+  webauthnCredentials,
+  type User,
+  type UpsertUser,
+  type WebauthnCredential,
+} from "@shared/models/auth";
 import { db } from "../../db";
 import { and, eq, isNull, lt } from "drizzle-orm";
 
@@ -15,6 +23,28 @@ export interface IAuthStorage {
   markPasswordResetTokenUsed(id: number): Promise<void>;
   clearPasswordResetTokensForUser(userId: string): Promise<void>;
   deleteExpiredPasswordResetTokens(): Promise<void>;
+  // Social identity links (Google, …)
+  findUserIdByIdentity(provider: string, providerAccountId: string): Promise<string | undefined>;
+  linkIdentity(userId: string, provider: string, providerAccountId: string): Promise<void>;
+  createUserFromOAuth(data: {
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  }): Promise<User>;
+  // Passkeys (WebAuthn)
+  listPasskeys(userId: string): Promise<WebauthnCredential[]>;
+  findPasskeyByCredentialId(credentialId: string): Promise<WebauthnCredential | undefined>;
+  createPasskey(data: {
+    userId: string;
+    credentialId: string;
+    publicKey: string;
+    counter: number;
+    transports: string | null;
+    deviceLabel: string | null;
+  }): Promise<WebauthnCredential>;
+  updatePasskeyUsage(id: number, counter: number): Promise<void>;
+  deletePasskey(userId: string, id: number): Promise<void>;
 }
 
 class AuthStorage implements IAuthStorage {
@@ -95,6 +125,91 @@ class AuthStorage implements IAuthStorage {
       })
       .returning();
     return user;
+  }
+
+  // ── Social identities ──────────────────────────────────────────────────
+
+  async findUserIdByIdentity(provider: string, providerAccountId: string): Promise<string | undefined> {
+    const [row] = await db
+      .select({ userId: userIdentities.userId })
+      .from(userIdentities)
+      .where(
+        and(
+          eq(userIdentities.provider, provider),
+          eq(userIdentities.providerAccountId, providerAccountId),
+        ),
+      )
+      .limit(1);
+    return row?.userId;
+  }
+
+  async linkIdentity(userId: string, provider: string, providerAccountId: string): Promise<void> {
+    await db
+      .insert(userIdentities)
+      .values({ userId, provider, providerAccountId })
+      .onConflictDoNothing();
+  }
+
+  async createUserFromOAuth(data: {
+    email: string;
+    firstName: string | null;
+    lastName: string | null;
+    profileImageUrl: string | null;
+  }): Promise<User> {
+    const [user] = await db
+      .insert(users)
+      .values({
+        email: data.email,
+        firstName: data.firstName,
+        lastName: data.lastName,
+        profileImageUrl: data.profileImageUrl,
+      })
+      .returning();
+    return user;
+  }
+
+  // ── Passkeys ───────────────────────────────────────────────────────────
+
+  async listPasskeys(userId: string): Promise<WebauthnCredential[]> {
+    return db
+      .select()
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.userId, userId))
+      .orderBy(webauthnCredentials.createdAt);
+  }
+
+  async findPasskeyByCredentialId(credentialId: string): Promise<WebauthnCredential | undefined> {
+    const [row] = await db
+      .select()
+      .from(webauthnCredentials)
+      .where(eq(webauthnCredentials.credentialId, credentialId))
+      .limit(1);
+    return row;
+  }
+
+  async createPasskey(data: {
+    userId: string;
+    credentialId: string;
+    publicKey: string;
+    counter: number;
+    transports: string | null;
+    deviceLabel: string | null;
+  }): Promise<WebauthnCredential> {
+    const [row] = await db.insert(webauthnCredentials).values(data).returning();
+    return row;
+  }
+
+  async updatePasskeyUsage(id: number, counter: number): Promise<void> {
+    await db
+      .update(webauthnCredentials)
+      .set({ counter, lastUsedAt: new Date() })
+      .where(eq(webauthnCredentials.id, id));
+  }
+
+  async deletePasskey(userId: string, id: number): Promise<void> {
+    await db
+      .delete(webauthnCredentials)
+      .where(and(eq(webauthnCredentials.userId, userId), eq(webauthnCredentials.id, id)));
   }
 }
 

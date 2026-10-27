@@ -13,6 +13,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from "@/components/ui/dialog";
 import { Slider } from "@/components/ui/slider";
 import { AppLayout } from "@/components/app-layout";
+import { PasskeySettings } from "@/components/passkey-settings";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -285,6 +286,8 @@ function KeysAndSupportSection() {
           )}
         </CardContent>
       </Card>
+
+      <PasskeySettings />
 
       <Card>
         <CardHeader>
