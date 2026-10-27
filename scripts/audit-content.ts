@@ -63,34 +63,32 @@ async function usageFor(topicId: number) {
 }
 
 async function deleteTopic(topicId: number) {
-  // Ordered child-first deletes; every statement is idempotent.
-  const tables = [
-    "topic_connections where from_topic_id = " + topicId,
-    "topic_connections where to_topic_id = " + topicId,
-    "topic_coordinates where topic_id = " + topicId,
-    "topic_learning_prefs where topic_id = " + topicId,
-    "topic_mastery where topic_id = " + topicId,
-    "lesson_progress where unit_id in (select id from lesson_units where topic_id = " + topicId + ")",
-    "lesson_units where topic_id = " + topicId,
-    "knowledge_cards where topic_id = " + topicId,
-    "knowledge_resources where topic_id = " + topicId,
-    "course_plans where topic_id = " + topicId,
-    "course_posters where topic_id = " + topicId,
-    "learning_roadmaps where topic_id = " + topicId,
-    "pathway_topics where topic_id = " + topicId,
-    "flashcards where topic_id = " + topicId,
-    "learning_timeline where topic_id = " + topicId,
-    "user_progress where topic_id = " + topicId,
-    "learning_goals where topic_id = " + topicId,
-    "sota_bottlenecks where topic_id = " + topicId,
-    "open_science_ideas where topic_id = " + topicId,
-    "user_infographics where topic_id = " + topicId,
+  // Ordered child-first; explicit statements because some pairs need a subquery.
+  const statements = [
+    `DELETE FROM topic_connections WHERE from_topic_id = ${topicId} OR to_topic_id = ${topicId}`,
+    `DELETE FROM topic_coordinates WHERE topic_id = ${topicId}`,
+    `DELETE FROM topic_learning_prefs WHERE topic_id = ${topicId}`,
+    `DELETE FROM topic_mastery WHERE topic_id = ${topicId}`,
+    `DELETE FROM lesson_progress WHERE unit_id IN (SELECT id FROM lesson_units WHERE topic_id = ${topicId})`,
+    `DELETE FROM lesson_units WHERE topic_id = ${topicId}`,
+    `DELETE FROM knowledge_cards WHERE topic_id = ${topicId}`,
+    `DELETE FROM knowledge_resources WHERE topic_id = ${topicId}`,
+    `DELETE FROM course_plans WHERE topic_id = ${topicId}`,
+    `DELETE FROM course_posters WHERE topic_id = ${topicId}`,
+    `DELETE FROM learning_roadmaps WHERE topic_id = ${topicId}`,
+    `DELETE FROM pathway_topics WHERE topic_id = ${topicId}`,
+    `DELETE FROM flashcards WHERE topic_id = ${topicId}`,
+    `DELETE FROM learning_timeline WHERE topic_id = ${topicId}`,
+    `DELETE FROM user_progress WHERE topic_id = ${topicId}`,
+    `DELETE FROM learning_goals WHERE topic_id = ${topicId}`,
+    `DELETE FROM sota_bottlenecks WHERE topic_id = ${topicId}`,
+    `DELETE FROM open_science_ideas WHERE topic_id = ${topicId}`,
+    `DELETE FROM user_infographics WHERE topic_id = ${topicId}`,
+    `DELETE FROM topics WHERE id = ${topicId}`,
   ];
-  for (const t of tables) {
-    const [table, where] = t.split(" where ");
-    await db.execute(sql.raw(`DELETE FROM ${table} WHERE ${where}`));
+  for (const stmt of statements) {
+    await db.execute(sql.raw(stmt));
   }
-  await db.execute(sql.raw(`DELETE FROM topics WHERE id = ${topicId}`));
 }
 
 async function main() {
