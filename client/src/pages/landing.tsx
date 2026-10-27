@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Sparkles, ArrowRight, Zap, Brain, Map, BookOpen, Loader2 } from "lucide-react";
+import { Sparkles, Zap, Brain, Map, BookOpen, Loader2, Fingerprint, Layers, FlaskConical } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -9,25 +9,51 @@ import { Label } from "@/components/ui/label";
 const features = [
   {
     icon: Zap,
-    title: "Nebula Feed",
-    description: "Discover knowledge through an engaging, swipeable feed optimized for curiosity rather than addiction.",
+    title: "Rapid bootstrap",
+    description:
+      "Need it today? Generate a 3–5 unit run that gets a project unblocked, with the exact steps and sources you need — no filler history.",
+  },
+  {
+    icon: Layers,
+    title: "Foundational underlayment",
+    description:
+      "Going deep on orbital mechanics, EE, or physics? Build a 20–30 unit foundation tier by tier, anchored to real textbooks, OCW courses, and lecture series.",
   },
   {
     icon: Brain,
-    title: "AI Companion",
-    description: "A Socratic AI tutor that guides your learning with questions, not just answers.",
+    title: "Cross-domain synthesis",
+    description:
+      "Fuse two or more fields into one course with a capstone that only makes sense with all of them — then apply it to live SOTA bottlenecks.",
   },
   {
     icon: Map,
-    title: "3D Knowledge Map",
-    description: "Visualize your learning journey as a beautiful 3D constellation of connected concepts.",
+    title: "3D knowledge graph",
+    description:
+      "Every unit you finish projects into your personal semantic map, so progress compounds visibly instead of disappearing into a feed.",
+  },
+  {
+    icon: FlaskConical,
+    title: "Open science commons",
+    description:
+      "Turn what you learn into falsifiable hypotheses against real frontier roadblocks — reviewed by peers or your own agent.",
   },
   {
     icon: BookOpen,
-    title: "Deep Dive Mode",
-    description: "When curiosity strikes, dive into structured learning paths generated just for you.",
+    title: "Agent-native",
+    description:
+      "Connect Hermes, Claude, or Cursor over MCP: your agent teaches you unit by unit and uploads new courses to the shared corpus.",
   },
 ];
+
+type ProviderInfo = {
+  google: boolean;
+  passkeys: boolean;
+  email: { configured: boolean; provider: string };
+};
+
+function browserSupportsPasskeys(): boolean {
+  return typeof window !== "undefined" && typeof (window as any).PublicKeyCredential !== "undefined";
+}
 
 export function LandingPage() {
   const [mode, setMode] = useState<"login" | "register" | "forgot">("login");
@@ -36,12 +62,40 @@ export function LandingPage() {
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
   const [error, setError] = useState("");
+  const [info, setInfo] = useState("");
   const [loading, setLoading] = useState(false);
   const [forgotSent, setForgotSent] = useState(false);
+  const [adminResetUrl, setAdminResetUrl] = useState("");
+  const [providers, setProviders] = useState<ProviderInfo>({
+    google: false,
+    passkeys: browserSupportsPasskeys(),
+    email: { configured: true, provider: "unknown" },
+  });
+  const [passkeyLoading, setPasskeyLoading] = useState(false);
+
+  useEffect(() => {
+    fetch("/api/auth/providers")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d) setProviders({ google: !!d.google, passkeys: !!d.passkeys, email: d.email });
+      })
+      .catch(() => {});
+
+    const params = new URLSearchParams(window.location.search);
+    const authError = params.get("auth_error");
+    if (authError) {
+      setError(
+        authError === "google_not_configured"
+          ? "Google sign-in isn't enabled on this deployment yet."
+          : `Sign-in failed (${authError}). Try a password or passkey instead.`,
+      );
+    }
+  }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setInfo("");
     setLoading(true);
 
     try {
@@ -58,6 +112,15 @@ export function LandingPage() {
           return;
         }
         setForgotSent(true);
+        if (data.adminResetUrl) {
+          setAdminResetUrl(data.adminResetUrl);
+        } else if (data.delivery === "failed") {
+          setInfo(
+            "The reset email could not be delivered by this deployment's mail provider. Contact the site admin.",
+          );
+        } else {
+          setInfo(data.message || "");
+        }
         setLoading(false);
         return;
       }
@@ -90,6 +153,40 @@ export function LandingPage() {
     }
   };
 
+  const handlePasskeyLogin = async () => {
+    setError("");
+    setPasskeyLoading(true);
+    try {
+      const { startAuthentication } = await import("@simplewebauthn/browser");
+      const optRes = await fetch("/api/auth/passkey/login/options", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email || undefined }),
+        credentials: "include",
+      });
+      if (!optRes.ok) {
+        const d = await optRes.json().catch(() => ({}));
+        throw new Error(d.message || "Could not start passkey sign-in");
+      }
+      const options = await optRes.json();
+      const response = await startAuthentication({ optionsJSON: options });
+      const verifyRes = await fetch("/api/auth/passkey/login/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ response }),
+        credentials: "include",
+      });
+      if (!verifyRes.ok) {
+        const d = await verifyRes.json().catch(() => ({}));
+        throw new Error(d.message || "Passkey sign-in failed");
+      }
+      window.location.href = "/";
+    } catch (err: any) {
+      setError(err?.message || "Passkey sign-in failed");
+      setPasskeyLoading(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-background">
       <header className="fixed top-0 left-0 right-0 z-50 bg-background/80 backdrop-blur-lg border-b border-border">
@@ -118,7 +215,9 @@ export function LandingPage() {
                 Learn Without Limits
               </h1>
               <p className="text-xl md:text-2xl text-muted-foreground mb-8 max-w-2xl mx-auto">
-                Bridge the gap between passive scrolling and active mastery. Synapse transforms how you discover and connect knowledge.
+                Rapid learning paths, deep foundational courses, and cross-domain synthesis — built to attack
+                real frontier bottlenecks in industry and open science, with your own AI agent learning
+                alongside you.
               </p>
             </motion.div>
           </div>
@@ -136,12 +235,28 @@ export function LandingPage() {
                     If an account exists for <span className="font-medium text-foreground">{email}</span>, we've sent a
                     password reset link. Check your inbox (and spam folder) — the link expires in 1 hour.
                   </p>
+                  {adminResetUrl && (
+                    <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-left space-y-2">
+                      <p className="text-xs font-medium text-amber-600 dark:text-amber-400">
+                        Email delivery is not configured on this deployment. Admin reset link:
+                      </p>
+                      <a
+                        href={adminResetUrl}
+                        className="text-xs break-all text-primary underline"
+                      >
+                        {adminResetUrl}
+                      </a>
+                    </div>
+                  )}
+                  {info && !adminResetUrl && <p className="text-xs text-muted-foreground">{info}</p>}
                   <Button
                     variant="outline"
                     className="w-full"
                     onClick={() => {
                       setMode("login");
                       setForgotSent(false);
+                      setAdminResetUrl("");
+                      setInfo("");
                     }}
                   >
                     Back to Login
@@ -158,6 +273,7 @@ export function LandingPage() {
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     placeholder="you@example.com"
+                    autoComplete="username"
                   />
                 </div>
                 {mode !== "forgot" && (
@@ -170,6 +286,7 @@ export function LandingPage() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     placeholder="••••••••"
+                    autoComplete={mode === "login" ? "current-password" : "new-password"}
                   />
                 </div>
                 )}
@@ -181,6 +298,7 @@ export function LandingPage() {
                         setMode("forgot");
                         setForgotSent(false);
                         setError("");
+                        setInfo("");
                       }}
                       className="text-sm text-primary hover:underline"
                     >
@@ -219,6 +337,51 @@ export function LandingPage() {
                 </Button>
               </form>
               )}
+
+              {mode !== "forgot" && (providers.google || providers.passkeys) && (
+                <div className="mt-4 space-y-2">
+                  <div className="flex items-center gap-3 py-1">
+                    <div className="h-px flex-1 bg-border" />
+                    <span className="text-xs uppercase tracking-wide text-muted-foreground">or</span>
+                    <div className="h-px flex-1 bg-border" />
+                  </div>
+                  {providers.google && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => {
+                        window.location.href = "/api/auth/google/start";
+                      }}
+                    >
+                      <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" aria-hidden="true">
+                        <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.6-.2-2.3H12v4.5h6.4a5.5 5.5 0 0 1-2.4 3.6v3h3.8c2.2-2 3.7-5 3.7-8.8Z" />
+                        <path fill="#34A853" d="M12 24c3.2 0 5.9-1.1 7.8-2.9l-3.8-3c-1.1.7-2.4 1.1-4 1.1-3.1 0-5.7-2.1-6.6-4.9H1.5v3.1A12 12 0 0 0 12 24Z" />
+                        <path fill="#FBBC05" d="M5.4 14.3a7.2 7.2 0 0 1 0-4.6V6.6H1.5a12 12 0 0 0 0 10.8l3.9-3.1Z" />
+                        <path fill="#EA4335" d="M12 4.8c1.8 0 3.4.6 4.6 1.8l3.4-3.4A12 12 0 0 0 1.5 6.6l3.9 3.1C6.3 6.9 8.9 4.8 12 4.8Z" />
+                      </svg>
+                      Continue with Google
+                    </Button>
+                  )}
+                  {providers.passkeys && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      disabled={passkeyLoading}
+                      onClick={handlePasskeyLogin}
+                    >
+                      {passkeyLoading ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Fingerprint className="mr-2 h-4 w-4" />
+                      )}
+                      Sign in with a passkey
+                    </Button>
+                  )}
+                </div>
+              )}
+
               <div className="mt-4 text-center text-sm">
                 {mode === "login" ? (
                   <span>
@@ -268,21 +431,22 @@ export function LandingPage() {
               className="text-center mb-16"
             >
               <h2 className="text-3xl md:text-4xl font-bold mb-4">
-                A New Way to Learn
+                Four ways in, one growing map
               </h2>
               <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-                Synapse combines the best of social media engagement with deep, meaningful learning experiences.
+                Every course type keeps its own shape — a fast bootstrap should not read like a textbook, and a
+                foundation should not read like a checklist.
               </p>
             </motion.div>
 
-            <div className="grid md:grid-cols-2 gap-6">
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
               {features.map((feature, index) => (
                 <motion.div
                   key={feature.title}
                   initial={{ opacity: 0, y: 20 }}
                   whileInView={{ opacity: 1, y: 0 }}
                   viewport={{ once: true }}
-                  transition={{ delay: index * 0.1 }}
+                  transition={{ delay: index * 0.05 }}
                 >
                   <Card className="h-full hover-elevate">
                     <CardContent className="p-6">
@@ -292,7 +456,7 @@ export function LandingPage() {
                         </div>
                         <div>
                           <h3 className="text-xl font-semibold mb-2">{feature.title}</h3>
-                          <p className="text-muted-foreground">{feature.description}</p>
+                          <p className="text-muted-foreground text-sm">{feature.description}</p>
                         </div>
                       </div>
                     </CardContent>

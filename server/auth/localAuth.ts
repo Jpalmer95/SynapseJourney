@@ -5,7 +5,17 @@ import { authStorage } from "../replit_integrations/auth/storage";
 import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { storage } from "../storage";
-import { sendPasswordResetEmail } from "../email";
+import { getEmailProviderStatus, sendEmail, sendPasswordResetEmail, passwordResetEmail } from "../email";
+import { isGoogleConfigured, registerGoogleRoutes } from "./google";
+import { registerPasskeyRoutes } from "./passkeys";
+
+function isAdminEmail(email: string): boolean {
+  const admins = (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((e) => e.trim().toLowerCase())
+    .filter(Boolean);
+  return admins.includes(email.toLowerCase());
+}
 
 export function getSession() {
   const sessionTtl = 7 * 24 * 60 * 60 * 1000; // 1 week
@@ -99,6 +109,11 @@ export async function setupAuth(app: Express) {
 
       const user = await authStorage.getUserByEmail(email);
       if (!user?.passwordHash) {
+        if (user && isGoogleConfigured()) {
+          return res
+            .status(401)
+            .json({ message: "This account signs in with Google. Use “Continue with Google”, or set a password via Forgot password." });
+        }
         return res.status(401).json({ message: "Invalid email or password" });
       }
 
@@ -118,12 +133,18 @@ export async function setupAuth(app: Express) {
   });
 
   // Forgot password: generate a reset token and email a link (1h expiry).
-  // Always returns the same generic message to avoid account enumeration.
+  // Always returns the same generic message to avoid account enumeration. If the
+  // deployment has no email provider configured, the admin address gets the link
+  // inline so the operator can never be locked out of their own platform.
   app.post("/api/auth/forgot-password", async (req: any, res: any) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     if (!email) {
       return res.status(400).json({ message: "Email required" });
     }
+
+    const genericMessage =
+      "If an account exists for that email, a password reset link has been sent. Check your inbox and spam folder — the link expires in 1 hour.";
+
     try {
       const user = await authStorage.getUserByEmail(email);
       if (user?.passwordHash) {
@@ -136,14 +157,22 @@ export async function setupAuth(app: Express) {
         const baseUrl = (process.env.APP_URL || `${req.protocol}://${req.get("host")}`).replace(/\/+$/, "");
         const resetUrl = `${baseUrl}/reset-password?token=${token}`;
         // user.email may be null on some legacy rows; email is the normalized submitted address.
-        await sendPasswordResetEmail(email, resetUrl);
+        const delivery = await sendPasswordResetEmail(email, resetUrl);
+        if (!delivery.delivered && isAdminEmail(email)) {
+          return res.json({
+            message:
+              "No email provider is configured on this deployment, so the reset link is shown below instead. " +
+              "It is valid for 1 hour.",
+            delivery: "unavailable",
+            adminResetUrl: resetUrl,
+          });
+        }
+        return res.json({ message: genericMessage, delivery: delivery.delivered ? "sent" : "failed" });
       }
     } catch (error) {
       console.error("[Auth] forgot-password error:", error);
     }
-    return res.json({
-      message: "If an account exists for that email, a password reset link has been sent.",
-    });
+    return res.json({ message: genericMessage, delivery: "sent" });
   });
 
   // Reset password using a token from the emailed link.
@@ -186,6 +215,38 @@ export async function setupAuth(app: Express) {
       res.redirect("/");
     });
   });
+
+  // Public capability discovery — the landing page only renders sign-in methods
+  // this deployment can actually complete.
+  app.get("/api/auth/providers", (_req, res) => {
+    const email = getEmailProviderStatus();
+    res.json({
+      password: true,
+      google: isGoogleConfigured(),
+      passkeys: true,
+      email: { configured: email.configured, provider: email.provider, detail: email.detail },
+    });
+  });
+
+  // Admin-only delivery self-test: proves the configured provider accepts a message.
+  app.post("/api/auth/email/test", isAuthenticated, async (req: any, res) => {
+    const userId = req.user.claims.sub;
+    const me = await authStorage.getUser(userId);
+    const to = (typeof req.body?.to === "string" && req.body.to.trim()) || me?.email;
+    if (!to) return res.status(400).json({ message: "No recipient" });
+    if (!isAdminEmail(to) && !isAdminEmail(me?.email || "")) {
+      return res.status(403).json({ message: "Admin only" });
+    }
+    const status = getEmailProviderStatus();
+    const result = await sendEmail({
+      ...passwordResetEmail(to, `${(process.env.APP_URL || "").replace(/\/+$/, "")}/reset-password`),
+      subject: "Synapse email delivery test",
+    });
+    res.json({ configured: status.configured, detail: status.detail, ...result });
+  });
+
+  registerGoogleRoutes(app);
+  registerPasskeyRoutes(app, isAuthenticated);
 
   app.get("/api/auth/user", isAuthenticated, async (req: any, res) => {
     try {

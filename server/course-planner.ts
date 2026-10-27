@@ -19,6 +19,13 @@
 
 import { generateCourseContent, generateByokOrPool, type ProviderConfig } from "./ai-providers";
 import { classifyTopicByKeywords } from "./routes/ai";
+import {
+  ARCHETYPES,
+  archetypePlannerBlock,
+  inferArchetype,
+  isCourseArchetype,
+  type CourseArchetype,
+} from "@shared/course-archetypes";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -38,6 +45,8 @@ export interface CoursePlanSubTopic {
 }
 
 export interface CoursePlan {
+  /** Which archetype shaped this course (see shared/course-archetypes.ts) */
+  archetype?: CourseArchetype;
   scope: "micro" | "focused" | "standard" | "broad" | "interdisciplinary";
   /** How the AI assessed the topic's complexity */
   complexityAssessment: string;
@@ -83,6 +92,8 @@ GOAL (if any): "{goalDescription}"
 TARGET COURSE LENGTH: "{targetLength}" ({targetUnitRange} units — respect this unless the topic genuinely cannot fit)
 LEARNER TECHNICAL LEVEL: "{technicalLevel}"
 INCLUDE AGENT CONTEXT: "{includeAgentContext}"
+
+{archetypeBlock}
 
 Your task: Analyze this topic and design the ideal curriculum shape for this LEARNING INTENT. Consider:
 
@@ -264,16 +275,31 @@ export async function planCourseWithAI(
     courseLength?: CourseLength;
     technicalLevel?: TechnicalLevel;
     includeAgentContext?: boolean;
+    /** Course shape — drives unit count, tier shape and section budget. */
+    archetype?: CourseArchetype;
     /** BYOC: use learner's keys first, then platform pool */
     userConfig?: ProviderConfig;
   }
 ): Promise<CoursePlan> {
-  const learningIntent = options?.learningIntent || "standard";
+  // An explicit archetype defines the course shape; intent/length fall back to it
+  // so the planner and the lesson generator cannot disagree about depth.
+  const archetype = inferArchetype({
+    archetype: options?.archetype,
+    learningIntent: options?.learningIntent,
+    courseLength: options?.courseLength,
+    goalDescription: options?.goalDescription,
+  });
+  const archetypeSpec = ARCHETYPES[archetype];
+  const learningIntent: LearningIntent =
+    options?.learningIntent || (isCourseArchetype(options?.archetype) ? archetypeSpec.learningIntent : "standard");
   const goalDescription = options?.goalDescription || "";
-  const courseLength: CourseLength = options?.courseLength || "standard";
+  const courseLength: CourseLength =
+    options?.courseLength || (isCourseArchetype(options?.archetype) ? archetypeSpec.courseLength : "standard");
   const technicalLevel: TechnicalLevel = options?.technicalLevel || "intermediate";
   const includeAgentContext = options?.includeAgentContext === true;
   const range = COURSE_LENGTH_RANGES[courseLength];
+
+  const archetypeBlock = archetypePlannerBlock(archetype, archetypeSpec.units);
 
   const prompt = PLANNER_PROMPT
     .replace("{topicTitle}", topicTitle)
@@ -283,7 +309,8 @@ export async function planCourseWithAI(
     .replace("{targetLength}", courseLength)
     .replace("{targetUnitRange}", `${range.min}–${range.max}`)
     .replace("{technicalLevel}", technicalLevel)
-    .replace("{includeAgentContext}", includeAgentContext ? "yes" : "no");
+    .replace("{includeAgentContext}", includeAgentContext ? "yes" : "no")
+    .replace("{archetypeBlock}", archetypeBlock);
 
   try {
     // Always BYOC-or-fail for dynamic plans — never silent platform spend
@@ -377,6 +404,7 @@ export async function planCourseWithAI(
     }
 
     const plan: CoursePlan = {
+      archetype,
       scope: parsed.scope || "standard",
       complexityAssessment: parsed.complexityAssessment || "AI curriculum plan",
       contentType: parsed.contentType || "balanced",
@@ -409,7 +437,7 @@ export async function planCourseWithAI(
     }
 
     console.log(
-      `[CoursePlan] AI planned "${topicTitle}" intent=${learningIntent}: scope=${plan.scope}, ` +
+      `[CoursePlan] AI planned "${topicTitle}" archetype=${archetype} intent=${learningIntent}: scope=${plan.scope}, ` +
       `${plan.tiers.length} tiers, ${totalUnits} units, ` +
       `contentType=${plan.contentType}, hasSubTopics=${plan.hasSubTopics}`
     );
@@ -420,7 +448,7 @@ export async function planCourseWithAI(
       throw error;
     }
     console.warn(`[CoursePlan] AI planning failed for "${topicTitle}", falling back to heuristic:`, error);
-    return legacyHeuristicPlan(topicTitle, topicDescription, learningIntent);
+    return { ...legacyHeuristicPlan(topicTitle, topicDescription, learningIntent), archetype };
   }
 }
 

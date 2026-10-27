@@ -34,6 +34,10 @@ const goalSchema = z.object({
   technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).optional(),
   /** Force the agent-context section on/off; defaults to the isTechnicalGoal heuristic */
   includeAgentContext: z.boolean().optional(),
+  /** Course shape; defaults to rapid_bootstrap for goals */
+  archetype: z
+    .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain"])
+    .optional(),
 });
 
 export function registerLearnRoutes(app: Express) {
@@ -213,7 +217,7 @@ export function registerLearnRoutes(app: Express) {
         return res.status(400).json({ error: "Invalid goal", details: parsed.error.flatten() });
       }
 
-      const { goalText, topicTitle, categoryId, courseLength, technicalLevel, includeAgentContext } = parsed.data;
+      const { goalText, topicTitle, categoryId, courseLength, technicalLevel, includeAgentContext, archetype } = parsed.data;
 
       // Derive a short topic title from the goal if not provided
       const title =
@@ -256,6 +260,7 @@ export function registerLearnRoutes(app: Express) {
             includeAgentContext: wantAgentContext,
             createdByUserId: userId,
             userConfig,
+            archetype,
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
@@ -849,6 +854,9 @@ export function registerLearnRoutes(app: Express) {
     technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).default("intermediate"),
     learningIntent: z.enum(["survey", "standard", "deep", "speed_run"]).default("standard"),
     categoryId: z.number().int().positive().optional(),
+    archetype: z
+      .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain"])
+      .optional(),
   });
 
   app.post("/api/learn/custom-course", isAuthenticated, async (req: any, res: Response) => {
@@ -858,7 +866,7 @@ export function registerLearnRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
       }
-      const { subject, courseLength, technicalLevel, learningIntent, categoryId } = parsed.data;
+      const { subject, courseLength, technicalLevel, learningIntent, categoryId, archetype } = parsed.data;
 
       const profile = await storage.getUserProfile(userId);
       const userConfig = providerConfigFromProfile(profile);
@@ -885,6 +893,7 @@ export function registerLearnRoutes(app: Express) {
             technicalLevel,
             createdByUserId: userId,
             userConfig,
+            archetype,
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);

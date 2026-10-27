@@ -9,6 +9,7 @@ import { generateCourseContent, generateByokOrPool, validateByokCredentials, typ
 import { DEFAULT_CATEGORIES, DEFAULT_PATHWAYS, DEFAULT_TOPICS, DEFAULT_KNOWLEDGE_CARDS, DEFAULT_PATHWAY_TOPICS, DEFAULT_ACHIEVEMENTS, DEFAULT_TOPIC_CONNECTIONS } from "./seed-data";
 import { SEED_LESSON_CONTENT } from "./seed-lesson-content";
 import { insertOpenScienceIdeaSchema, insertOpenScienceCommentSchema } from "@shared/schema";
+import { inferArchetype, isCourseArchetype } from "@shared/course-archetypes";
 
 // Shared utilities (helpers, schemas, formatting)
 export {
@@ -739,9 +740,17 @@ Make the progression natural from fundamentals to advanced concepts.`,
         // Generate content using user's BYOC AI key - use different generator for Next Gen
         let generatedContent: any;
         try {
+          // Section depth must match the course shape the learner picked (rapid
+          // bootstrap vs foundational underlayment), so read it off the plan.
+          const planRecord = await storage.getLatestCoursePlan(unit.topicId);
+          const plannedArchetype = (planRecord?.planJson as any)?.archetype;
+          const archetype = isCourseArchetype(plannedArchetype)
+            ? plannedArchetype
+            : inferArchetype({ learningIntent: planRecord?.learningIntent || undefined });
+
           generatedContent = isNextGen 
             ? await generateNextGenContent(topic, unit, masteredTopics, categoryName, userConfig)
-            : await generateLessonContent(topic, unit, masteredTopics, categoryName, unitContext, userConfig);
+            : await generateLessonContent(topic, unit, masteredTopics, categoryName, unitContext, userConfig, archetype);
         } catch (genErr: any) {
           if (genErr?.message?.includes("BYOC_REQUIRED")) {
             return res.status(402).json({
