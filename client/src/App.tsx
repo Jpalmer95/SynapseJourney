@@ -24,6 +24,7 @@ const PathwayDetailPage = lazy(() => import("@/pages/pathway-detail"));
 const AchievementsPage = lazy(() => import("@/pages/achievements"));
 const ExplorePage = lazy(() => import("@/pages/explore"));
 const RabbitHolePage = lazy(() => import("@/pages/rabbit-hole").then((m) => ({ default: m.RabbitHolePage })));
+const AgentsPage = lazy(() => import("@/pages/agents"));
 const CollectionPage = lazy(() => import("@/pages/collection"));
 const PracticeTestPage = lazy(() => import("@/pages/practice-test"));
 const PracticeTestResultsPage = lazy(() => import("@/pages/practice-test-results"));
@@ -153,6 +154,7 @@ function AppContent() {
       <Route path="/rabbit-hole" component={RabbitHolePage} />
       <Route path="/collection" component={CollectionPage} />
       <Route path="/open-science" component={OpenSciencePage} />
+      <Route path="/agents" component={AgentsPage} />
       <Route path="/practice-test/:id" component={PracticeTestPage} />
       <Route path="/practice-test/:testId/results/:attemptId" component={PracticeTestResultsPage} />
             <Route component={NotFound} />

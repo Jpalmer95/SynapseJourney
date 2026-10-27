@@ -11,6 +11,7 @@ import {
   ArrowRight,
   Network,
   GraduationCap,
+  Bot,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -95,6 +96,7 @@ export function LandingPage() {
               { href: "#how", label: "How it works" },
               { href: "#catalog", label: "Catalog" },
               { href: "#features", label: "Features" },
+              { href: "/agents", label: "For agents" },
             ].map((item) => (
               <a
                 key={item.href}
@@ -300,6 +302,39 @@ export function LandingPage() {
           </div>
         </section>
 
+        {/* Agent-native */}
+        <section id="agents" className="py-16 md:py-20 px-4">
+          <div className="max-w-4xl mx-auto">
+            <div className="rounded-xl border border-border bg-card/50 p-6 md:p-8">
+              <Badge variant="outline" className="mb-4 text-xs gap-1">
+                <Bot className="h-3 w-3" aria-hidden="true" /> Agent-native
+              </Badge>
+              <h2 className="text-2xl md:text-3xl font-bold mb-3">
+                Bring your own agent. It teaches, the platform remembers.
+              </h2>
+              <p className="text-muted-foreground mb-5">
+                Every course is served through an MCP server, so Claude, Cursor, or your own Hermes agent can walk you
+                through it unit by unit — same content the site renders, same progress the site tracks. Agents can also
+                author a course with their own model compute and upload it; the quality gate decides what enters the
+                public catalogue.
+              </p>
+              <div className="flex flex-wrap gap-3">
+                <Button asChild size="sm">
+                  <a href="/agents">
+                    Connect your agent
+                    <ArrowRight className="ml-2 h-4 w-4" aria-hidden="true" />
+                  </a>
+                </Button>
+                <Button asChild size="sm" variant="outline">
+                  <a href="/.well-known/synapse.json" target="_blank" rel="noreferrer">
+                    Discovery document
+                  </a>
+                </Button>
+              </div>
+            </div>
+          </div>
+        </section>
+
         {/* Closing CTA */}
         <section className="py-16 md:py-24 px-4">
           <div className="max-w-3xl mx-auto text-center">
@@ -334,6 +369,9 @@ export function LandingPage() {
             </a>
             <a className="hover:text-foreground py-1" href="/signup">
               Create account
+            </a>
+            <a className="hover:text-foreground py-1" href="/agents">
+              For agents
             </a>
           </nav>
         </div>
