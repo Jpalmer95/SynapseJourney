@@ -424,6 +424,7 @@ export function TTSButton({
               variant="ghost"
               size="icon"
               className={cn(serverVoicePreset !== "browser" && "text-violet-500 dark:text-violet-400")}
+              aria-label="Voice settings"
               data-testid="button-tts-settings"
             >
               <Settings2 className="h-4 w-4" />

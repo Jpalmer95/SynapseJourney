@@ -835,6 +835,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 setQuizAnswers({});
                 setQuizSubmitted(false);
               }}
+              aria-label="Back to unit list"
               data-testid="button-back-to-outline"
             >
               <ArrowLeft className="h-5 w-5" />

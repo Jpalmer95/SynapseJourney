@@ -204,12 +204,25 @@ export function SkillTree({ topics, masteredTopicIds, onTopicClick }: SkillTreeP
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const entry = nodes.filter((n) => n.level === 0);
-    if (entry.length === 0) return;
-    const first = Math.min(...entry.map((n) => n.x));
-    const last = Math.max(...entry.map((n) => n.x));
-    const centre = (first + last) / 2;
-    el.scrollLeft = Math.max(0, centre - el.clientWidth / 2);
+
+    const apply = () => {
+      const entry = nodes.filter((n) => n.level === 0);
+      if (entry.length === 0) return;
+      // Land on the first entry node (the natural starting point of the pathway),
+      // not on the middle of a row that may be several screens wide.
+      const first = Math.min(...entry.map((n) => n.x));
+      el.scrollLeft = Math.max(0, first - NODE_WIDTH / 2 - 16);
+    };
+
+    apply();
+    const raf = requestAnimationFrame(apply);
+    const settle = setTimeout(apply, 250);
+    window.addEventListener("resize", apply);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(settle);
+      window.removeEventListener("resize", apply);
+    };
   }, [nodes]);
 
   return (
