@@ -200,7 +200,7 @@ export function HomePage() {
               {/* 3-Column Command Center Grid: 3D Knowledge Web Status + SOTA Frontier Bottlenecks + OER Commons */}
               <div className="grid gap-6 lg:grid-cols-3">
                 {/* Column 1: 3D Knowledge Constellation & Progress */}
-                <Card className="border-primary/25 bg-card/50 flex flex-col justify-between">
+                <Card className="border-primary/25 bg-card/50 flex flex-col justify-between min-w-0">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base flex items-center gap-2">
@@ -217,23 +217,25 @@ export function HomePage() {
                   </CardHeader>
                   <CardContent className="space-y-3">
                     {exploredNodes.length > 0 ? (
-                      <div className="space-y-2">
+                      <div className="space-y-2 min-w-0">
                         <p className="text-xs font-medium text-muted-foreground">Your Active & Mastered Nodes:</p>
-                        <div className="flex flex-wrap gap-1.5">
+                        <div className="flex flex-wrap gap-1.5 min-w-0">
                           {exploredNodes.slice(0, 8).map((n) => {
                             const t = topics.find((tp) => tp.id === n.id);
                             return (
                               <Badge
                                 key={n.id}
                                 variant="secondary"
-                                className="cursor-pointer hover:bg-primary/20 text-xs py-1"
+                                className="cursor-pointer hover:bg-primary/20 text-xs py-1 max-w-full min-w-0 !whitespace-normal text-left"
                                 onClick={() => t && handleDive(t)}
                               >
                                 <span
-                                  className="w-2 h-2 rounded-full mr-1.5 inline-block"
+                                  className="w-2 h-2 rounded-full mr-1.5 inline-block shrink-0"
                                   style={{ backgroundColor: n.color }}
                                 />
-                                {n.title} ({n.mastery}%)
+                                <span className="break-words min-w-0">
+                                  {n.title} ({n.mastery}%)
+                                </span>
                               </Badge>
                             );
                           })}
@@ -257,7 +259,7 @@ export function HomePage() {
                 </Card>
 
                 {/* Column 2: SOTA Frontier Bottlenecks */}
-                <Card className="border-amber-500/25 bg-card/50 flex flex-col justify-between">
+                <Card className="border-amber-500/25 bg-card/50 flex flex-col justify-between min-w-0">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base flex items-center gap-2">
@@ -301,7 +303,7 @@ export function HomePage() {
                 </Card>
 
                 {/* Column 3: Open Educational Resource (OER) Commons */}
-                <Card className="border-emerald-500/25 bg-card/50 flex flex-col justify-between">
+                <Card className="border-emerald-500/25 bg-card/50 flex flex-col justify-between min-w-0">
                   <CardHeader className="pb-3">
                     <div className="flex items-center justify-between">
                       <CardTitle className="text-base flex items-center gap-2">
