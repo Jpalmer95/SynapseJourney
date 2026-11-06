@@ -20,5 +20,12 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'sjuser') THEN
     GRANT SELECT, INSERT, UPDATE, DELETE ON pathways TO sjuser;
     GRANT SELECT, INSERT, UPDATE, DELETE ON pathway_topics TO sjuser;
+    GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO sjuser;
   END IF;
 END $$;
+
+SELECT setval(pg_get_serial_sequence('pathways', 'id'), COALESCE((SELECT MAX(id) FROM pathways), 1), true);
+SELECT setval(pg_get_serial_sequence('pathway_topics', 'id'), COALESCE((SELECT MAX(id) FROM pathway_topics), 1), true);
+SELECT setval(pg_get_serial_sequence('user_pathways', 'id'), COALESCE((SELECT MAX(id) FROM user_pathways), 1), true);
+SELECT setval(pg_get_serial_sequence('topics', 'id'), COALESCE((SELECT MAX(id) FROM topics), 1), true);
+SELECT setval(pg_get_serial_sequence('lesson_units', 'id'), COALESCE((SELECT MAX(id) FROM lesson_units), 1), true);
