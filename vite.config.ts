@@ -13,6 +13,7 @@ export default defineConfig({
       injectRegister: 'auto',
       workbox: {
         maximumFileSizeToCacheInBytes: 5000000,
+        globIgnores: ["**/*.wasm", "**/tts.worker-*.js"],
         // Never answer a navigation to /api/* from the precache: those are
         // server routes (logout, auth callbacks, MCP), not SPA pages.
         navigateFallbackDenylist: [/^\/api\//],

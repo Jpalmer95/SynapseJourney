@@ -1,5 +1,21 @@
 import { useState, useRef, useEffect } from "react";
-import { Volume2, Loader2, Pause, Play, Settings2, Check, Mic, Square, Zap, Cloud, ChevronDown, X, AlertTriangle } from "lucide-react";
+import {
+  Volume2,
+  Loader2,
+  Pause,
+  Play,
+  Settings2,
+  Check,
+  Mic,
+  Square,
+  Zap,
+  Cloud,
+  ChevronDown,
+  X,
+  AlertTriangle,
+  SkipBack,
+  SkipForward,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Tooltip,
@@ -51,7 +67,7 @@ function audioBufferToWavBlob(buffer: AudioBuffer): Blob {
   writeStr(8, "WAVE");
   writeStr(12, "fmt ");
   view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true); // PCM
+  view.setUint16(20, 1, true);
   view.setUint16(22, numCh, true);
   view.setUint32(24, sr, true);
   view.setUint32(28, sr * numCh * 2, true);
@@ -101,6 +117,9 @@ export function TTSButton({
     isPaused,
     error: ttsError,
     rate,
+    availableVoices,
+    selectedVoiceName,
+    setSelectedVoice,
     speak,
     speakSections,
     stop,
@@ -138,6 +157,7 @@ export function TTSButton({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [showAllKokoroVoices, setShowAllKokoroVoices] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState<"idle" | "success" | "error">("idle");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -162,14 +182,13 @@ export function TTSButton({
     setQwenMode(mode);
   };
 
-  // Kokoro first-load toast: fires once when the Kokoro model starts downloading (only if Kokoro engine is active).
   useEffect(() => {
     if (kokoroLoading && serverVoicePreset === "kokoro" && !kokoroWarmShownRef.current) {
       kokoroWarmShownRef.current = true;
       toast({
-        title: "Downloading Kokoro model…",
-        description: "First-time download (~90 MB). This only happens once — future use is instant.",
-        duration: 30000,
+        title: "Loading Kokoro voice model…",
+        description: "First-time load caches the model in your browser — subsequent playback is instant.",
+        duration: 15000,
       });
     }
     if (!kokoroLoading) {
@@ -179,7 +198,7 @@ export function TTSButton({
 
   const { data: cacheStatus } = useQuery<{ cached: boolean }>({
     queryKey: unitId ? [`/api/tts/cache-status/${unitId}`] : ["no-unit"],
-    enabled: !!unitId && serverVoicePreset !== "browser",
+    enabled: !!unitId && (serverVoicePreset === "qwen" || serverVoicePreset === "custom"),
     staleTime: 30000,
     retry: false,
   });
@@ -188,12 +207,10 @@ export function TTSButton({
     ((isSpeaking || isPaused || isLoading) || !!ttsError));
   const currentLabel = isInSectionMode && currentSectionIndex >= 0 ? sections[currentSectionIndex]?.label : null;
 
-  // Derived Kokoro progress helpers — use explicit phase from worker instead of inferring from percent.
   const isKokoroDownloading = kokoroLoading && kokoroDownloadPhase === "download";
   const kokoroProgressLabel = isKokoroDownloading ? "Downloading model…" : "Compiling model…";
   const kokoroProgressPct   = isKokoroDownloading && kokoroDownloadPercent !== null ? kokoroDownloadPercent : null;
 
-  /** Compact horizontal progress bar shown during Kokoro first-load. */
   const KokoroProgressBar = kokoroLoading ? (
     <div className="space-y-0.5">
       <div className="flex items-center justify-between text-[10px] text-muted-foreground">
@@ -235,10 +252,13 @@ export function TTSButton({
   };
 
   const handleEngineSelect = async (engineId: string) => {
+    if (isSpeaking || isPaused || isLoading) {
+      stop();
+    }
     await setServerVoicePreset(engineId);
+    queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
     if (unitId) {
       queryClient.invalidateQueries({ queryKey: [`/api/tts/cache-status/${unitId}`] });
-      queryClient.invalidateQueries({ queryKey: ["/api/tts/settings"] });
     }
   };
 
@@ -314,7 +334,6 @@ export function TTSButton({
     }
   };
 
-  // Release the mic if the popover is closed mid-recording.
   useEffect(() => {
     return () => {
       if (recorderRef.current && recorderRef.current.state !== "inactive") recorderRef.current.stop();
@@ -343,12 +362,12 @@ export function TTSButton({
           ? `Downloading Kokoro model… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
           : "Compiling Kokoro model…";
       }
-      if (kokoroLoadError && !kokoroReady) return `Kokoro error — tap Listen to retry`;
+      if (kokoroLoadError && !kokoroReady) return "Kokoro error — tap Listen to retry";
       if (!kokoroReady) return "Read aloud · Kokoro (model loads on first Listen)";
       return "Read aloud · Kokoro ready · instant playback";
     }
     if (serverVoicePreset === "qwen" || serverVoicePreset === "custom") return "Read aloud · Qwen TTS";
-    return "Read aloud · Browser";
+    return "Read aloud · Browser TTS";
   };
 
   const getTierBadge = (tier: ReturnType<typeof getVoiceTier>, small = false) => {
@@ -372,7 +391,6 @@ export function TTSButton({
 
   const isCached = cacheStatus?.cached === true;
 
-  // Build a human-readable engine diagnostic string shown under the Kokoro row when ready.
   const kokoroDiagnostic = (() => {
     if (!kokoroReady || !kokoroEngine) return null;
     const engineLabel = kokoroEngine === "webgpu-fp32" ? "WebGPU · fp32" : "WASM · q8";
@@ -380,7 +398,10 @@ export function TTSButton({
     return sourceLabel ? `${engineLabel} · ${sourceLabel}` : engineLabel;
   })();
 
-  // ── Engine row component ────────────────────────────────────────────────────
+  const displayedKokoroVoices = showAllKokoroVoices
+    ? KOKORO_VOICES
+    : KOKORO_VOICES.filter((v) => v.isEnglish);
+
   const EngineRow = ({ engineId, label, sublabel, icon, badge, active, disabled }: {
     engineId: string;
     label: string;
@@ -478,7 +499,7 @@ export function TTSButton({
             <EngineRow
               engineId="kokoro"
               label="Kokoro"
-              sublabel={kokoroIncompatible ? "Not supported on this device" : (kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local · offline, no token needed")}
+              sublabel={kokoroIncompatible ? "Not supported on this device" : (kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local WebGPU/WASM · offline, no token needed")}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
@@ -487,10 +508,20 @@ export function TTSButton({
 
             {/* Kokoro voice sub-grid */}
             {serverVoicePreset === "kokoro" && (
-              <div className="ml-3 pl-3 border-l border-border">
-                <p className="text-[10px] text-muted-foreground mb-1.5">Choose voice</p>
-                <div className="grid grid-cols-3 gap-1">
-                  {KOKORO_VOICES.map(v => (
+              <div className="ml-3 pl-3 border-l border-border space-y-1.5">
+                <div className="flex items-center justify-between">
+                  <p className="text-[10px] text-muted-foreground">Choose voice ({displayedKokoroVoices.length})</p>
+                  <button
+                    type="button"
+                    onClick={() => setShowAllKokoroVoices(v => !v)}
+                    className="text-[10px] text-primary hover:underline"
+                    data-testid="button-toggle-all-kokoro-voices"
+                  >
+                    {showAllKokoroVoices ? "English only" : "All 54 voices"}
+                  </button>
+                </div>
+                <div className="grid grid-cols-3 gap-1 max-h-48 overflow-y-auto pr-0.5">
+                  {displayedKokoroVoices.map(v => (
                     <button
                       key={v.id}
                       onClick={() => setKokoroVoice(v.id)}
@@ -501,19 +532,14 @@ export function TTSButton({
                       data-testid={`button-kokoro-voice-${v.id}`}
                     >
                       <div className="flex items-center justify-between w-full">
-                        <span className="font-medium text-xs">{v.name}</span>
+                        <span className="font-medium text-xs truncate">{v.name}</span>
                         {kokoroVoice === v.id && <Check className="h-2.5 w-2.5 text-primary shrink-0" />}
                       </div>
                       <span className="text-muted-foreground/70 text-[10px] leading-tight capitalize">{v.gender}</span>
-                      <span className="text-muted-foreground/50 text-[10px] leading-tight">{v.style}</span>
+                      <span className="text-muted-foreground/50 text-[10px] leading-tight truncate w-full">{v.style}</span>
                     </button>
                   ))}
                 </div>
-                {unitId && isCached && (
-                  <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
-                    <Check className="h-3 w-3" /> Audio ready for instant playback
-                  </p>
-                )}
               </div>
             )}
 
@@ -521,16 +547,43 @@ export function TTSButton({
             <EngineRow
               engineId="browser"
               label="Browser TTS"
-              sublabel="Device speech engine · no AI"
+              sublabel="Device speech engine · instant, no download"
               icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
               active={serverVoicePreset === "browser"}
             />
+
+            {/* Browser TTS voice picker */}
+            {serverVoicePreset === "browser" && (
+              <div className="ml-3 pl-3 border-l border-border space-y-1.5">
+                {availableVoices.length > 0 ? (
+                  <>
+                    <Label className="text-[10px] text-muted-foreground">System voice ({availableVoices.length} available)</Label>
+                    <select
+                      value={selectedVoiceName || ""}
+                      onChange={(e) => setSelectedVoice(e.target.value)}
+                      className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                      data-testid="select-browser-voice"
+                    >
+                      {availableVoices.map((v) => (
+                        <option key={`${v.name}-${v.lang}`} value={v.name}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">
+                    Using browser default voice. If your OS has no native speech voices installed, Synapse automatically falls back to AI voice.
+                  </p>
+                )}
+              </div>
+            )}
 
             {/* ── Qwen Cloud Engine Row ── */}
             <EngineRow
               engineId="qwen"
               label="Qwen TTS"
-              sublabel="AI voice synthesis via server"
+              sublabel="Hugging Face ZeroGPU · speakers, design & clone"
               icon={<Cloud className="h-4 w-4 text-blue-500" />}
               badge={getTierBadge("cloud", true)}
               active={serverVoicePreset === "qwen" || serverVoicePreset === "custom"}
@@ -631,7 +684,6 @@ export function TTSButton({
                   <TabsContent value="voice_clone" className="space-y-2">
                     <p className="text-[10px] text-muted-foreground">Upload a short voice sample to clone</p>
 
-                    {/* Voice sample upload dropzone */}
                     <div
                       className={cn(
                         "border-2 border-dashed rounded-lg p-2.5 text-center cursor-pointer hover:bg-muted/40 transition-colors",
@@ -725,6 +777,11 @@ export function TTSButton({
                     </Button>
                   </TabsContent>
                 </Tabs>
+                {unitId && isCached && (
+                  <p className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 mt-1.5">
+                    <Check className="h-3 w-3" /> Cached audio ready for instant playback
+                  </p>
+                )}
               </div>
             )}
 
@@ -764,28 +821,28 @@ export function TTSButton({
             {advancedOpen && (
               <div className="px-3 pb-3 space-y-1.5">
                 <p className="text-xs text-muted-foreground">
-                  Kokoro: local WebGPU/WASM model, runs entirely in your browser. Qwen: AI voice synthesis via server. Server fallback (OpenAI) is the silent fallback for all engines.
+                  Kokoro: local WebGPU/WASM model running 100% in your browser. Browser TTS: native OS speech engine. Qwen: Hugging Face ZeroGPU voice synthesis.
                 </p>
               </div>
             )}
           </div>
         </div>
 
-          {/* ── pagevoice companion call-out ── */}
-          <div className="border-t px-3 py-2.5">
-            <p className="text-[11px] text-muted-foreground leading-relaxed">
-              Want a full-page reading overlay with per-paragraph navigation and custom voice cloning? Try the{" "}
-              <a
-                href="https://github.com/Jpalmer95/pagevoice"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
-              >
-                pagevoice
-              </a>{" "}
-              Brave extension — free &amp; open source.
-            </p>
-          </div>
+        {/* ── pagevoice companion call-out ── */}
+        <div className="border-t px-3 py-2.5">
+          <p className="text-[11px] text-muted-foreground leading-relaxed">
+            Want a full-page reading overlay with per-paragraph navigation and custom voice cloning? Try the{" "}
+            <a
+              href="https://github.com/Jpalmer95/pagevoice"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-medium text-primary underline underline-offset-2 hover:opacity-80"
+            >
+              pagevoice
+            </a>{" "}
+            Brave extension — free &amp; open source.
+          </p>
+        </div>
       </PopoverContent>
     </Popover>
   );
@@ -795,17 +852,21 @@ export function TTSButton({
     return (
       <div className={cn("w-full rounded-xl border bg-muted/30 p-3 space-y-2.5", className)}>
         <div className="flex items-center gap-1.5">
-          {sections!.map((_, i) => (
-            <div
+          {sections!.map((sect, i) => (
+            <button
               key={i}
+              type="button"
+              title={`Jump to: ${sect.label}`}
+              onClick={() => speakSections(sections!, i)}
               className={cn(
-                "h-1.5 flex-1 rounded-full transition-all duration-300",
+                "h-2 flex-1 rounded-full transition-all duration-300 cursor-pointer hover:opacity-90",
                 i < currentSectionIndex
                   ? "bg-primary"
                   : i === currentSectionIndex
                   ? "bg-primary/70 animate-pulse"
-                  : "bg-muted-foreground/20"
+                  : "bg-muted-foreground/20 hover:bg-muted-foreground/40"
               )}
+              data-testid={`button-tts-segment-${i}`}
             />
           ))}
         </div>
@@ -823,11 +884,30 @@ export function TTSButton({
                         ? `Downloading Kokoro… ${kokoroProgressPct !== null ? kokoroProgressPct + "%" : ""}`
                         : "Compiling Kokoro model…")
                     : "Generating audio…")
-                : currentLabel ?? "Listening…"}
+                : currentLabel
+                ? `${currentLabel} (${currentSectionIndex + 1}/${sections!.length})`
+                : "Listening…"}
             </span>
             {getTierBadge(activeTier, true)}
           </div>
           <div className="flex items-center gap-0.5 shrink-0">
+            {sections!.length > 1 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={currentSectionIndex <= 0}
+                    onClick={() => speakSections(sections!, Math.max(0, currentSectionIndex - 1))}
+                    data-testid="button-tts-prev-section"
+                  >
+                    <SkipBack className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Previous section</TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -842,6 +922,23 @@ export function TTSButton({
               </TooltipTrigger>
               <TooltipContent>{isPaused ? "Resume" : "Pause"}</TooltipContent>
             </Tooltip>
+            {sections!.length > 1 && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    disabled={currentSectionIndex >= sections!.length - 1}
+                    onClick={() => speakSections(sections!, Math.min(sections!.length - 1, currentSectionIndex + 1))}
+                    data-testid="button-tts-next-section"
+                  >
+                    <SkipForward className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>Next section</TooltipContent>
+              </Tooltip>
+            )}
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button
@@ -859,6 +956,9 @@ export function TTSButton({
             {SettingsPopover}
           </div>
         </div>
+        {KokoroProgressBar && (
+          <div>{KokoroProgressBar}</div>
+        )}
         {ttsError && (
           <p className="text-xs text-red-400">{ttsError}</p>
         )}
@@ -919,7 +1019,7 @@ export function TTSButton({
             <div className="flex flex-col gap-1 min-w-[150px]">
               <div className="flex items-center gap-1.5">
                 {getTooltipText()}
-                {isCached && !isSpeaking && activeTier === "local" && (
+                {isCached && !isSpeaking && activeTier === "cloud" && (
                   <Badge variant="secondary" className="text-xs px-1 py-0 h-4">cached</Badge>
                 )}
               </div>
@@ -933,7 +1033,7 @@ export function TTSButton({
           </TooltipContent>
         </Tooltip>
 
-        {isSpeaking && (
+        {(isSpeaking || isPaused || isLoading) && (
           <Tooltip>
             <TooltipTrigger asChild>
               <Button variant="ghost" size="icon" onClick={handleStop} data-testid="button-tts-stop">

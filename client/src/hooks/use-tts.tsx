@@ -1,11 +1,21 @@
 import { useState, useRef, useCallback, useEffect, createContext, useContext } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { KOKORO_VOICES, KOKORO_DEFAULT_VOICE, QWEN_DEFAULT_VOICE, QWEN_VOICES, getVoiceTier } from "@/lib/tts-constants";
+import {
+  KOKORO_VOICES,
+  KOKORO_DEFAULT_VOICE,
+  QWEN_DEFAULT_VOICE,
+  QWEN_VOICES,
+  getVoiceTier,
+  cleanTextForTTS,
+} from "@/lib/tts-constants";
 import type { QwenMode } from "@/lib/tts-constants";
 import { useToast } from "@/hooks/use-toast";
 
 // localStorage keys used by the TTS engine
+const PRESET_STORAGE_KEY = "tts_voice_preset";
+const SPEED_STORAGE_KEY = "tts_playback_speed";
+const BROWSER_VOICE_KEY = "tts_browser_voice";
 const KOKORO_VOICE_KEY = "kokoro_voice";
 const QWEN_VOICE_KEY = "qwen_voice";
 const QWEN_MODE_KEY = "qwen_mode";
@@ -37,11 +47,15 @@ interface TTSState {
   usingServerTTS: boolean;
   currentSectionIndex: number;
   totalSections: number;
+  currentSectionLabel: string | null;
 }
 
 interface UseTTSReturn extends TTSState {
   speak: (text: string, unitId?: number) => Promise<void>;
   speakSections: (sections: TTSSection[], startIndex?: number) => Promise<void>;
+  jumpToSection: (index: number) => void;
+  nextSection: () => void;
+  prevSection: () => void;
   stop: () => void;
   pause: () => void;
   resume: () => void;
@@ -57,7 +71,7 @@ interface UseTTSReturn extends TTSState {
   kokoroDownloadPercent: number | null;
   kokoroDownloadPhase: "download" | "compile" | null;
   kokoroLoadError: string | null;
-  kokoroDeviceWarning: string | null; // Proactive warning for constrained devices
+  kokoroDeviceWarning: string | null;
   kokoroEngine: "webgpu-fp32" | "wasm-q8" | null;
   kokoroLoadMs: number | null;
   kokoroFromCache: boolean | null;
@@ -78,29 +92,37 @@ interface UseTTSReturn extends TTSState {
 
 const BROWSER_SPEECH_SUPPORTED = typeof window !== "undefined" && "speechSynthesis" in window;
 
-/** Wait up to 2s for browser voices to populate (Chrome/Android loads asynchronously). */
-async function waitForBrowserVoices(): Promise<SpeechSynthesisVoice[]> {
+/**
+ * Wait briefly (default 300ms) for browser voices to populate without losing
+ * transient user-gesture activation on Safari/mobile Chrome.
+ */
+async function waitForBrowserVoices(timeoutMs = 300): Promise<SpeechSynthesisVoice[]> {
   if (!BROWSER_SPEECH_SUPPORTED) return [];
-  const synth = window.speechSynthesis;
-  let voices = synth.getVoices();
-  if (voices.length > 0) return voices;
-  return new Promise((resolve) => {
-    const handler = () => {
-      const v = synth.getVoices();
-      synth.removeEventListener("voiceschanged", handler);
-      resolve(v);
-    };
-    synth.addEventListener("voiceschanged", handler);
-    // Fallback: resolve with whatever we have after 2s
-    setTimeout(() => {
-      synth.removeEventListener("voiceschanged", handler);
-      resolve(synth.getVoices());
-    }, 2000);
-  });
+  try {
+    const synth = window.speechSynthesis;
+    const voices = synth.getVoices();
+    if (voices.length > 0) return voices;
+    return await new Promise((resolve) => {
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        synth.removeEventListener("voiceschanged", handler);
+        try {
+          resolve(synth.getVoices());
+        } catch {
+          resolve([]);
+        }
+      };
+      const handler = () => finish();
+      synth.addEventListener("voiceschanged", handler);
+      setTimeout(finish, timeoutMs);
+    });
+  } catch {
+    return [];
+  }
 }
 
-// Thrown when the server says Qwen TTS needs an HF token (HTTP 428).
-// Distinct from a generic failure so the UI can tell the user exactly what to do.
 class HfTokenRequiredError extends Error {
   constructor(public serverMessage: string) {
     super("HF_TOKEN_REQUIRED");
@@ -221,11 +243,30 @@ function useTTSImpl(): UseTTSReturn {
     usingServerTTS: false,
     currentSectionIndex: -1,
     totalSections: 0,
+    currentSectionLabel: null,
   });
 
-  const [rate, setRateState] = useState(1.0);
-  const [selectedVoiceName, setSelectedVoiceState] = useState<string | null>(null);
-  const [serverVoicePreset, setServerVoicePresetState] = useState<string>("browser");
+  const [rate, setRateState] = useState<number>(() => {
+    try {
+      const stored = parseFloat(localStorage.getItem(SPEED_STORAGE_KEY) || "");
+      if (!isNaN(stored) && stored >= 0.5 && stored <= 3) return stored;
+    } catch { /* ignore */ }
+    return 1.0;
+  });
+
+  const [selectedVoiceName, setSelectedVoiceState] = useState<string | null>(() => {
+    try { return localStorage.getItem(BROWSER_VOICE_KEY) || null; } catch { return null; }
+  });
+
+  const [serverVoicePreset, setServerVoicePresetState] = useState<string>(() => {
+    try {
+      const stored = localStorage.getItem(PRESET_STORAGE_KEY);
+      if (stored === "kokoro" || stored === "browser" || stored === "qwen" || stored === "custom") {
+        return stored;
+      }
+    } catch { /* ignore */ }
+    return "kokoro";
+  });
 
   const [kokoroVoice, setKokoroVoiceState] = useState<string>(() => {
     try {
@@ -265,22 +306,18 @@ function useTTSImpl(): UseTTSReturn {
   const [kokoroEngine, setKokoroEngine] = useState<"webgpu-fp32" | "wasm-q8" | null>(null);
   const [kokoroLoadMs, setKokoroLoadMs] = useState<number | null>(null);
   const [kokoroFromCache, setKokoroFromCache] = useState<boolean | null>(null);
-  // Surfaced to UI when the Kokoro model fails to load (e.g. timeout, OOM).
   const [kokoroLoadError, setKokoroLoadError] = useState<string | null>(null);
-  // Proactive device capability warning (checked at hook init)
+
   const [kokoroDeviceWarning] = useState<string | null>(() => {
     if (typeof navigator === "undefined") return null;
     const ua = (navigator.userAgent || "").toLowerCase();
-    // Tesla browser
     if (ua.includes("tesla") || ua.includes("qtcarbrowser")) {
       return "Tesla browser: local TTS may not work. Use Browser TTS or Qwen Cloud.";
     }
-    // Low memory devices
     const mem = (navigator as any).deviceMemory;
     if (typeof mem === "number" && mem < 2) {
       return `Device has ~${mem}GB RAM. Local TTS may fail. Use Browser TTS or Qwen Cloud.`;
     }
-    // No WebGPU + old iOS
     if (typeof (navigator as any).gpu === "undefined") {
       if (ua.includes("iphone") && (ua.includes("os 12_") || ua.includes("os 13_") || ua.includes("os 14_"))) {
         return "Older iOS detected — local TTS may not work. Use Browser TTS or Qwen Cloud.";
@@ -288,8 +325,7 @@ function useTTSImpl(): UseTTSReturn {
     }
     return null;
   });
-  // If true, Kokoro is known incompatible (proactive or reactive detection).
-  // The speak/speakSections paths will skip the local tier entirely.
+
   const [kokoroIncompatible, setKokoroIncompatible] = useState<boolean>(() => {
     if (typeof navigator === "undefined") return false;
     const ua = (navigator.userAgent || "").toLowerCase();
@@ -305,15 +341,14 @@ function useTTSImpl(): UseTTSReturn {
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  // Persistent AudioContext singleton. Pre-unlocked during the user gesture so
-  // Web Audio API playback works on iOS even after a long async WASM synthesis.
   const audioCtxRef = useRef<AudioContext | null>(null);
-  // Track the currently-playing AudioBufferSourceNode so it can be cancelled.
   const audioSrcNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
   const cancelledRef = useRef<boolean>(false);
+  const runIdRef = useRef<number>(0);
+  const activeSectionsRef = useRef<TTSSection[]>([]);
   const rateRef = useRef(rate);
   const voiceRef = useRef<string | null>(selectedVoiceName);
   const audioUnlockedRef = useRef<boolean>(false);
@@ -325,12 +360,11 @@ function useTTSImpl(): UseTTSReturn {
   const refTextRef = useRef<string>(refText);
   const kokoroIncompatibleRef = useRef<boolean>(kokoroIncompatible);
   const autoSwitchedToBrowserRef = useRef<boolean>(false);
-  // serverVoicePreset ref: updated synchronously in setServerVoicePreset so speak/speakSections
-  // always read the current engine even when called immediately after switching.
-  const serverVoicePresetRef = useRef<string>("browser");
+  const browserFallbackNotifiedRef = useRef<boolean>(false);
+  const serverVoicePresetRef = useRef<string>(serverVoicePreset);
 
-  // Kokoro worker bridge (SharedWorker or regular Worker — same postMessage interface)
-  type WorkerBridge = { postMessage: (data: unknown) => void };
+  // Kokoro DedicatedWorker bridge
+  type WorkerBridge = { postMessage: (data: unknown) => void; terminate?: () => void };
   const workerRef = useRef<WorkerBridge | null>(null);
   const pendingRef = useRef<Map<number, { resolve: (v: Blob | undefined) => void; reject: (e: Error) => void }>>(new Map());
   const msgIdRef = useRef(0);
@@ -347,23 +381,6 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => { qwenVoiceDescriptionRef.current = qwenVoiceDescription; }, [qwenVoiceDescription]);
   useEffect(() => { refTextRef.current = refText; }, [refText]);
   useEffect(() => { kokoroIncompatibleRef.current = kokoroIncompatible; }, [kokoroIncompatible]);
-
-  // Prefer instant Browser TTS on first visit; only auto-upgrade to Kokoro once the model is ready
-  // and the user has not explicitly chosen another engine.
-  useEffect(() => {
-    if (kokoroReady && serverVoicePreset === "browser") {
-      const userPinned = (() => {
-        try {
-          return localStorage.getItem("tts_engine_pinned") === "1";
-        } catch {
-          return false;
-        }
-      })();
-      // Soft upgrade path disabled by default to avoid clunky first-play stalls.
-      // Users opt into Kokoro via the settings popover.
-      if (userPinned) return;
-    }
-  }, [kokoroReady, serverVoicePreset]);
 
   // Auto-switch to Browser TTS when Kokoro is detected incompatible and user still has it selected.
   useEffect(() => {
@@ -396,14 +413,12 @@ function useTTSImpl(): UseTTSReturn {
   useEffect(() => {
     if (ttsSettings) {
       const raw = ttsSettings.voicePreset || "browser";
-      // Migrate legacy preset IDs from pre-v10 to the new engine model
       const LEGACY_QWEN = new Set(["aria", "nova", "echo", "onyx", "fable", "shimmer", "lyra", "sage", "orion"]);
       const normalized = LEGACY_QWEN.has(raw) ? "qwen" : raw;
-      // Keep the ref in sync so speak/speakSections immediately see the loaded preset
       serverVoicePresetRef.current = normalized;
       setServerVoicePresetState(normalized);
-      // If a legacy Qwen preset ID directly maps to a QWEN_VOICES entry, seed qwen_voice
-      // so the user's prior character choice is preserved (only if not already set)
+      try { localStorage.setItem(PRESET_STORAGE_KEY, normalized); } catch { /* ignore */ }
+
       const QWEN_VOICE_IDS = new Set(["aria", "nova", "lyra", "echo", "sage", "orion"]);
       if (normalized !== raw && QWEN_VOICE_IDS.has(raw)) {
         try {
@@ -415,17 +430,18 @@ function useTTSImpl(): UseTTSReturn {
           }
         } catch { /* ignore */ }
       }
-      // Persist migration back to server so preset stays consistent
       if (normalized !== raw) {
         fetch("/api/tts/settings", {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           credentials: "include",
           body: JSON.stringify({ voicePreset: normalized }),
-        }).catch(() => { /* ignore — non-critical */ });
+        }).catch(() => {});
       }
       if (ttsSettings.playbackSpeed) {
         setRateState(ttsSettings.playbackSpeed);
+        rateRef.current = ttsSettings.playbackSpeed;
+        try { localStorage.setItem(SPEED_STORAGE_KEY, String(ttsSettings.playbackSpeed)); } catch { /* ignore */ }
       }
       if (ttsSettings.qwenMode) {
         setQwenModeState(ttsSettings.qwenMode);
@@ -461,12 +477,20 @@ function useTTSImpl(): UseTTSReturn {
         const voices = Array.from(window.speechSynthesis.getVoices());
         if (voices.length > 0) {
           setState(prev => ({ ...prev, availableVoices: voices }));
-          if (!selectedVoiceName) {
-            const preferred = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
-              || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen"))
-              || voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria"))
-              || voices.find(v => v.lang.startsWith("en")) || voices[0];
-            if (preferred) setSelectedVoiceState(preferred.name);
+          if (!voiceRef.current || !voices.some(v => v.name === voiceRef.current)) {
+            const preferred =
+              voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("natural")) ||
+              voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
+              voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")) ||
+              voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("karen")) ||
+              voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("victoria")) ||
+              voices.find(v => v.lang.startsWith("en") && v.default) ||
+              voices.find(v => v.lang.startsWith("en")) ||
+              voices[0];
+            if (preferred) {
+              setSelectedVoiceState(preferred.name);
+              voiceRef.current = preferred.name;
+            }
           }
         }
       } catch {
@@ -481,63 +505,199 @@ function useTTSImpl(): UseTTSReturn {
     };
   }, []);
 
-  const splitIntoChunks = (text: string, maxLength = 200): string[] => {
-    const sentences = text.match(/[^.!?]+[.!?]+|[^.!?]+$/g) || [text];
+  const splitIntoChunks = (rawText: string, maxLength = 220): string[] => {
+    const text = cleanTextForTTS(rawText);
+    if (!text) return [];
+    const sentences = text.match(/[^.!?;]+[.!?;]+|[^.!?;]+$/g) || [text];
     const chunks: string[] = [];
     let currentChunk = "";
-    for (const sentence of sentences) {
-      if (currentChunk.length + sentence.length <= maxLength) {
-        currentChunk += sentence;
+    for (const rawSentence of sentences) {
+      const sentence = rawSentence.trim();
+      if (!sentence) continue;
+      if (sentence.length > maxLength) {
+        if (currentChunk) {
+          chunks.push(currentChunk.trim());
+          currentChunk = "";
+        }
+        // Further split overly long clauses on commas/clauses
+        const clauses = sentence.split(/(?<=[,:—])\s+/);
+        let clauseBuf = "";
+        for (const cl of clauses) {
+          if (clauseBuf.length + cl.length + 1 <= maxLength) {
+            clauseBuf = clauseBuf ? `${clauseBuf} ${cl}` : cl;
+          } else {
+            if (clauseBuf) chunks.push(clauseBuf.trim());
+            clauseBuf = cl;
+          }
+        }
+        if (clauseBuf) chunks.push(clauseBuf.trim());
+        continue;
+      }
+      if (currentChunk.length + sentence.length + 1 <= maxLength) {
+        currentChunk = currentChunk ? `${currentChunk} ${sentence}` : sentence;
       } else {
         if (currentChunk) chunks.push(currentChunk.trim());
         currentChunk = sentence;
       }
     }
     if (currentChunk) chunks.push(currentChunk.trim());
-    return chunks;
+    return chunks.filter(c => c.length > 0);
   };
 
-  const speakChunk = useCallback((text: string): Promise<void> => {
-    return new Promise((resolve, reject) => {
-      if (cancelledRef.current) { reject(new Error("cancelled")); return; }
-      if (!BROWSER_SPEECH_SUPPORTED) { reject(new Error("not_supported")); return; }
+  /**
+   * Prepare browser speechSynthesis before starting a fresh utterance sequence.
+   * Avoids Chromium's synchronous cancel()+speak() race condition where cancel()
+   * flushes the newly-queued utterance or leaves speechSynthesis stuck in paused state.
+   */
+  const resetBrowserSpeech = useCallback(async () => {
+    if (!BROWSER_SPEECH_SUPPORTED) return;
+    try {
+      const synth = window.speechSynthesis;
+      if (synth.speaking || synth.pending || synth.paused) {
+        synth.cancel();
+        await new Promise<void>(resolve => setTimeout(resolve, 60));
+      }
+      if (synth.paused) {
+        synth.resume();
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
 
-      const utterance = new SpeechSynthesisUtterance(text);
-      utterance.rate = rateRef.current;
+  const speakChunk = useCallback((text: string, myRunId: number, allowRetry = true): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      if (cancelledRef.current || runIdRef.current !== myRunId) {
+        reject(new Error("cancelled"));
+        return;
+      }
+      if (!BROWSER_SPEECH_SUPPORTED) {
+        reject(new Error("not_supported"));
+        return;
+      }
+
+      const trimmed = text.trim();
+      if (!trimmed) {
+        resolve();
+        return;
+      }
+
+      const synth = window.speechSynthesis;
+      if (synth.paused) {
+        try { synth.resume(); } catch { /* ignore */ }
+      }
+
+      const utterance = new SpeechSynthesisUtterance(trimmed);
+      utterance.rate = Math.max(0.5, Math.min(3, rateRef.current));
       utterance.pitch = 1;
       utterance.volume = 1;
+      utterance.lang = "en-US";
 
-      const voices = Array.from(window.speechSynthesis.getVoices());
-      let selectedVoice = voiceRef.current ? voices.find(v => v.name === voiceRef.current) : undefined;
-      if (!selectedVoice) {
-        selectedVoice = voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha"))
-          || voices.find(v => v.lang.startsWith("en")) || voices[0];
-      }
-      // iOS WebKit throws Object.getPrototypeOf(voice) if the voice object is stale/detached.
       try {
-        if (selectedVoice) utterance.voice = selectedVoice;
+        const voices = Array.from(synth.getVoices());
+        let selectedVoice = voiceRef.current ? voices.find(v => v.name === voiceRef.current) : undefined;
+        if (!selectedVoice && voices.length > 0) {
+          selectedVoice =
+            voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("natural")) ||
+            voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("google")) ||
+            voices.find(v => v.lang.startsWith("en") && v.name.toLowerCase().includes("samantha")) ||
+            voices.find(v => v.lang.startsWith("en") && v.default) ||
+            voices.find(v => v.lang.startsWith("en")) ||
+            voices[0];
+        }
+        if (selectedVoice) {
+          utterance.voice = selectedVoice;
+          if (selectedVoice.lang) utterance.lang = selectedVoice.lang;
+        }
       } catch {
-        // ignore — proceed with default voice
+        // Proceed with browser default voice
       }
 
-      utterance.onend = () => cancelledRef.current ? reject(new Error("cancelled")) : resolve();
-      utterance.onerror = (e) => {
-        if (e.error === "interrupted" || cancelledRef.current) reject(new Error("cancelled"));
-        else reject(new Error(e.error));
+      let started = false;
+      let settled = false;
+      let startWatchdog: ReturnType<typeof setTimeout> | null = null;
+      let keepAliveTimer: ReturnType<typeof setInterval> | null = null;
+
+      const cleanupTimers = () => {
+        if (startWatchdog) { clearTimeout(startWatchdog); startWatchdog = null; }
+        if (keepAliveTimer) { clearInterval(keepAliveTimer); keepAliveTimer = null; }
       };
+
+      // Watchdog: on Linux/headless browsers without a functioning speech-dispatcher,
+      // speechSynthesis.speak() can silently queue forever without firing onstart/onend/onerror.
+      startWatchdog = setTimeout(() => {
+        if (settled || started) return;
+        if (synth.speaking) {
+          started = true;
+          return;
+        }
+        settled = true;
+        cleanupTimers();
+        try { synth.cancel(); } catch { /* ignore */ }
+        reject(new Error("synthesis-unavailable"));
+      }, 3000);
+
+      utterance.onstart = () => {
+        started = true;
+        if (startWatchdog) { clearTimeout(startWatchdog); startWatchdog = null; }
+        // Desktop Chrome workaround: utterances >14s can freeze unless nudged.
+        keepAliveTimer = setInterval(() => {
+          try {
+            if (synth.speaking && !synth.paused) {
+              synth.pause();
+              synth.resume();
+            }
+          } catch { /* ignore */ }
+        }, 10000);
+      };
+
+      utterance.onend = () => {
+        if (settled) return;
+        settled = true;
+        cleanupTimers();
+        if (cancelledRef.current || runIdRef.current !== myRunId) {
+          reject(new Error("cancelled"));
+        } else {
+          resolve();
+        }
+      };
+
+      utterance.onerror = (e) => {
+        if (settled) return;
+        settled = true;
+        cleanupTimers();
+        if (cancelledRef.current || runIdRef.current !== myRunId) {
+          reject(new Error("cancelled"));
+          return;
+        }
+        // If Chromium fired "interrupted" or "canceled" from a prior cancel() race,
+        // retry once after a short delay before declaring failure.
+        if ((e.error === "interrupted" || e.error === "canceled") && allowRetry) {
+          setTimeout(() => {
+            speakChunk(trimmed, myRunId, false).then(resolve, reject);
+          }, 80);
+          return;
+        }
+        reject(new Error(e.error || "speech_synthesis_error"));
+      };
+
       utteranceRef.current = utterance;
       try {
-        window.speechSynthesis.speak(utterance);
+        synth.speak(utterance);
       } catch {
+        settled = true;
+        cleanupTimers();
         reject(new Error("speech_synthesis_error"));
-        return;
       }
     });
   }, []);
 
-  const playServerAudio = useCallback(async (audioData: string, audioFormat: string, speed: number): Promise<void> => {
+  const playServerAudio = useCallback(async (audioData: string, audioFormat: string, speed: number, myRunId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
-      if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+      if (cancelledRef.current || runIdRef.current !== myRunId) {
+        reject(new Error("cancelled"));
+        return;
+      }
 
       let blobUrl: string | null = null;
       try {
@@ -567,7 +727,7 @@ function useTTSImpl(): UseTTSReturn {
         reject(new Error("audio_error"));
       };
       audio.onpause = () => {
-        if (cancelledRef.current) {
+        if (cancelledRef.current || runIdRef.current !== myRunId) {
           cleanup();
           reject(new Error("cancelled"));
         }
@@ -580,8 +740,6 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, []);
 
-  // Returns (or lazily creates) the persistent AudioContext singleton.
-  // Must be called during or before a user gesture to ensure iOS allows playback.
   const getAudioCtx = useCallback((): AudioContext | null => {
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
       return audioCtxRef.current;
@@ -597,17 +755,12 @@ function useTTSImpl(): UseTTSReturn {
   }, []);
 
   const unlockAudio = useCallback(() => {
-    // Resume (or create) the persistent AudioContext within the user gesture.
-    // Unlike the old approach of creating+closing a temporary context, keeping
-    // the context alive means Web Audio API playback works even after a long
-    // async WASM synthesis delay — the iOS permission persists with the context.
     try {
       const ctx = getAudioCtx();
       if (ctx && ctx.state === "suspended") {
         ctx.resume().catch(() => {});
       }
       if (!audioUnlockedRef.current) {
-        // Play a silent 1-sample buffer to satisfy iOS autoplay policy.
         if (ctx) {
           const src = ctx.createBufferSource();
           src.buffer = ctx.createBuffer(1, 1, ctx.sampleRate);
@@ -620,8 +773,6 @@ function useTTSImpl(): UseTTSReturn {
       // ignore — audio unlock is best-effort
     }
   }, [getAudioCtx]);
-
-  // ── Float32Array → WAV Blob converter (runs on main thread) ─────────────
 
   function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
     const numChannels = 1;
@@ -660,12 +811,14 @@ function useTTSImpl(): UseTTSReturn {
     return new Blob([buf], { type: "audio/wav" });
   }
 
-  // ── Kokoro worker bridge (SharedWorker preferred, DedicatedWorker fallback) ──
+  // ── Kokoro DedicatedWorker bridge ─────────────────────────────────────────
+  // IMPORTANT: `new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" })`
+  // MUST be written inline so Vite's static analyzer compiles `tts.worker.ts` and its
+  // npm dependencies (`kokoro-js`, `@huggingface/transformers`) into a JS worker bundle
+  // rather than copying the raw TypeScript source file into `/assets/*.ts`.
 
   const getWorker = useCallback((): WorkerBridge => {
     if (workerRef.current) return workerRef.current;
-
-    const workerUrl = new URL("../workers/tts.worker.ts", import.meta.url);
 
     const onMessage = ({ data }: MessageEvent) => {
       const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc, percent } = data as {
@@ -680,18 +833,19 @@ function useTTSImpl(): UseTTSReturn {
         percent?: number;
       };
 
-      // Progress broadcasts (id === -1) are not tied to any pending request.
       if (type === "progress") {
         if (percent !== undefined) setKokoroDownloadPercent(percent);
         if ((data as { phase?: string }).phase) {
           setKokoroDownloadPhase((data as { phase: "download" | "compile" }).phase);
         }
-        // Passive tabs (not the initiating tab) may receive progress broadcasts
-        // before they call ensureKokoroInit. Set loading=true so the progress UI
-        // renders immediately on those tabs too.
         if (!workerReadyRef.current) {
           setKokoroLoading(true);
         }
+        return;
+      }
+
+      if (type === "error" && id === -1) {
+        console.error("[TTS] Unhandled worker error:", message);
         return;
       }
 
@@ -703,14 +857,13 @@ function useTTSImpl(): UseTTSReturn {
         if (engine) setKokoroEngine(engine);
         if (lms !== undefined) setKokoroLoadMs(lms);
         if (fc !== undefined) setKokoroFromCache(fc);
-        // Clear download progress and any prior load error now that the model is ready.
         setKokoroDownloadPercent(null);
         setKokoroDownloadPhase(null);
         setKokoroLoadError(null);
         p.resolve(undefined);
       } else if (type === "audio") {
+        if (engine) setKokoroEngine(engine);
         if (samples && sampleRate) {
-          // Convert the raw Float32Array from the worker to a WAV Blob on the main thread.
           const blob = float32ToWav(samples, sampleRate);
           p.resolve(blob);
         } else {
@@ -722,18 +875,25 @@ function useTTSImpl(): UseTTSReturn {
     };
 
     const createDedicatedWorker = (): WorkerBridge => {
-      const w = new Worker(workerUrl, { type: "module" });
+      const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), {
+        type: "module",
+      });
       w.onmessage = onMessage;
       w.onerror = onError;
-      return { postMessage: (data: unknown) => w.postMessage(data) };
+      return {
+        postMessage: (data: unknown) => w.postMessage(data),
+        terminate: () => w.terminate(),
+      };
     };
 
     const onError = (event: ErrorEvent) => {
-      console.error(`[TTS] Worker error: ${event.message} at ${event.filename}:${event.lineno}`);
-      Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error(`Worker error: ${event.message}`)));
+      const detail = event.message || "Worker script failed to load";
+      console.error(`[TTS] Worker error: ${detail} at ${event.filename}:${event.lineno}`);
+      Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error(`Worker error: ${detail}`)));
       pendingRef.current.clear();
       workerReadyRef.current = false;
       workerReadyPromiseRef.current = null;
+      workerRef.current = null;
       setKokoroReady(false);
       setKokoroLoading(false);
       setKokoroDownloadPercent(null);
@@ -741,73 +901,29 @@ function useTTSImpl(): UseTTSReturn {
 
       if (workerRetryCount.current < 1) {
         workerRetryCount.current++;
-        console.log("[TTS] Retrying with DedicatedWorker…");
+        console.log("[TTS] Retrying with fresh DedicatedWorker…");
         try {
           workerRef.current = createDedicatedWorker();
         } catch (e) {
           console.error("[TTS] DedicatedWorker retry failed:", e);
-          setKokoroLoadError("Kokoro worker crashed — please refresh the page.");
+          setKokoroLoadError("Kokoro worker failed to initialize — try Browser TTS or Qwen Cloud.");
         }
         return;
       }
 
-      setKokoroLoadError("Kokoro worker crashed — please refresh the page.");
+      setKokoroLoadError("Kokoro worker failed to initialize — try Browser TTS or Qwen Cloud.");
     };
 
-    let bridge: WorkerBridge | null = null;
-
-    if (typeof SharedWorker !== "undefined") {
-      try {
-        // SharedWorker: one model instance shared across all open tabs.
-        // Wrapped in try/catch because some browsers declare SharedWorker but
-        // do not support module workers, throwing on construction.
-        const sw = new SharedWorker(workerUrl, { type: "module" });
-        let gotMessage = false;
-
-        sw.port.onmessage = (e) => { gotMessage = true; onMessage(e); };
-        sw.onerror = (e) => { gotMessage = true; onError(e); };
-        sw.port.start();
-
-        bridge = { postMessage: (data: unknown) => sw.port.postMessage(data) };
-
-        // Connection timeout: if the port doesn't connect within 3 seconds, fall back to DedicatedWorker.
-        setTimeout(() => {
-          if (!gotMessage && workerRef.current === bridge) {
-            console.debug("[TTS] SharedWorker connection timeout, falling back to DedicatedWorker");
-            try { sw.port.close(); } catch { /* ignore */ }
-            workerRef.current = null;
-          }
-        }, 3000);
-      } catch (swErr) {
-        console.debug("[TTS] SharedWorker unavailable, falling back to Worker:", swErr);
-      }
-    }
-
-    if (!bridge) {
-      bridge = createDedicatedWorker();
-    }
-
+    const bridge = createDedicatedWorker();
     workerRef.current = bridge;
     return bridge;
   }, []);
-
-  // Early Kokoro worker connection: when the selected preset is Kokoro and the
-  // worker hasn't been created yet, eagerly connect it so the SharedWorker
-  // registers this tab and can broadcast progress events to it even before
-  // the user presses Listen.
-  useEffect(() => {
-    if (serverVoicePreset === "kokoro" && !workerRef.current && !kokoroReady) {
-      getWorker();
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [serverVoicePreset, kokoroReady]);
 
   const ensureKokoroInit = useCallback(async (): Promise<void> => {
     if (workerReadyRef.current) return;
     if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
 
     setKokoroLoading(true);
-    // Clear any previous load error so the UI returns to the progress bar state.
     setKokoroLoadError(null);
     workerReadyPromiseRef.current = new Promise<void>((resolve, reject) => {
       const id = ++msgIdRef.current;
@@ -824,11 +940,9 @@ function useTTSImpl(): UseTTSReturn {
           setKokoroDownloadPercent(null);
           setKokoroDownloadPhase(null);
           const msg = err instanceof Error ? err.message : "Kokoro failed to load";
-          // Mark incompatible for known capability errors so we skip Kokoro on future attempts
           if (msg.includes("lacks WebGPU") || msg.includes("insufficient memory")) {
             setKokoroIncompatible(true);
           }
-          // Surface the error so the TTS button can display it.
           setKokoroLoadError(msg);
           reject(err);
         },
@@ -854,25 +968,32 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, [ensureKokoroInit, getWorker]);
 
-  // ── Sentence splitter for Kokoro chunking ─────────────────────────────────
-  // Splits text at sentence boundaries so each chunk is synthesised and played
-  // independently. Users hear audio within seconds rather than waiting for an
-  // entire paragraph to be processed by the WASM runtime.
-  function splitIntoSentences(text: string): string[] {
-    // Split at sentence-ending punctuation followed by whitespace or end of string.
-    // Keeps the delimiter with the preceding sentence.
+  function splitIntoSentences(rawText: string): string[] {
+    const text = cleanTextForTTS(rawText);
+    if (!text) return [];
     const raw = text
       .replace(/([.!?;])\s+/g, "$1\n")
       .split("\n")
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
-    // Merge very short fragments (< 20 chars) with the following sentence to
-    // avoid generating near-silent audio blobs for things like "Dr." or "e.g.".
     const merged: string[] = [];
     for (const s of raw) {
-      if (merged.length > 0 && merged[merged.length - 1].length < 20) {
+      if (merged.length > 0 && merged[merged.length - 1].length < 25) {
         merged[merged.length - 1] += " " + s;
+      } else if (s.length > 350) {
+        // Split very long sentences at clause boundaries so Kokoro synthesizes quickly
+        const parts = s.split(/(?<=[,:—])\s+/);
+        let acc = "";
+        for (const p of parts) {
+          if (acc.length + p.length + 1 <= 280) {
+            acc = acc ? `${acc} ${p}` : p;
+          } else {
+            if (acc) merged.push(acc);
+            acc = p;
+          }
+        }
+        if (acc) merged.push(acc);
       } else {
         merged.push(s);
       }
@@ -880,9 +1001,7 @@ function useTTSImpl(): UseTTSReturn {
     return merged.length > 0 ? merged : [text];
   }
 
-  // Wraps kokoroSpeak with a per-chunk synthesis timeout. Uses a generous 90s
-  // because the first call also performs the one-time model download + compile.
-  const KOKORO_SYNTH_TIMEOUT_MS = 90_000;
+  const KOKORO_SYNTH_TIMEOUT_MS = 180_000;
   const kokoroSpeakWithTimeout = useCallback(async (text: string, voice: string): Promise<Blob> => {
     let timeoutHandle: ReturnType<typeof setTimeout> | null = null;
     const timeoutPromise = new Promise<never>((_, reject) => {
@@ -898,18 +1017,13 @@ function useTTSImpl(): UseTTSReturn {
     }
   }, [kokoroSpeak]);
 
-  // ── Blob audio player (Web Audio API) ────────────────────────────────────
-  // Uses the persistent AudioContext so playback works on iOS even after long
-  // async WASM synthesis (the gesture unlock persists with the context lifetime).
-
-  const playBlobAudio = useCallback(async (blob: Blob): Promise<void> => {
-    if (cancelledRef.current) throw new Error("cancelled");
+  const playBlobAudio = useCallback(async (blob: Blob, myRunId: number): Promise<void> => {
+    if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
 
     const ctx = getAudioCtx();
     if (!ctx) {
-      // Web Audio API unavailable — fall back to HTMLAudioElement
       return new Promise((resolve, reject) => {
-        if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+        if (cancelledRef.current || runIdRef.current !== myRunId) { reject(new Error("cancelled")); return; }
         let blobUrl: string | null = URL.createObjectURL(blob);
         const audio = new Audio(blobUrl);
         audio.playbackRate = Math.max(0.5, Math.min(4, rateRef.current));
@@ -917,35 +1031,38 @@ function useTTSImpl(): UseTTSReturn {
         const cleanup = () => { if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; } };
         audio.onended = () => { audioRef.current = null; cleanup(); resolve(); };
         audio.onerror = () => { audioRef.current = null; cleanup(); reject(new Error("audio_error")); };
-        audio.onpause = () => { if (cancelledRef.current) { cleanup(); reject(new Error("cancelled")); } };
+        audio.onpause = () => {
+          if (cancelledRef.current || runIdRef.current !== myRunId) {
+            cleanup();
+            reject(new Error("cancelled"));
+          }
+        };
         audio.play().catch((err) => { cleanup(); reject(err); });
       });
     }
 
-    // Resume context if suspended (e.g. browser auto-suspends after inactivity).
     if (ctx.state === "suspended") {
       await ctx.resume();
     }
 
     const arrayBuffer = await blob.arrayBuffer();
-    if (cancelledRef.current) throw new Error("cancelled");
+    if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
 
     const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (cancelledRef.current) throw new Error("cancelled");
+    if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
 
     return new Promise<void>((resolve, reject) => {
-      if (cancelledRef.current) { reject(new Error("cancelled")); return; }
+      if (cancelledRef.current || runIdRef.current !== myRunId) { reject(new Error("cancelled")); return; }
 
       const src = ctx.createBufferSource();
       src.buffer = audioBuffer;
-      // Apply playback speed via detune (cents) or playbackRate.
       src.playbackRate.value = Math.max(0.5, Math.min(4, rateRef.current));
       src.connect(ctx.destination);
       audioSrcNodeRef.current = src;
 
       src.onended = () => {
         audioSrcNodeRef.current = null;
-        if (cancelledRef.current) reject(new Error("cancelled"));
+        if (cancelledRef.current || runIdRef.current !== myRunId) reject(new Error("cancelled"));
         else resolve();
       };
 
@@ -953,14 +1070,14 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, [getAudioCtx]);
 
-  // Helper to build the voiceConfig object sent to the server for Qwen TTS.
-  // Only include fields that have real values — sending null for unset optionals
-  // trips server-side schema validation.
-  const getVoiceConfig = useCallback(() => {
+  const getVoiceConfig = useCallback((overridePreset?: string) => {
     const cfg: Record<string, unknown> = {
       speaker: qwenVoiceRef.current,
       qwenMode: qwenModeRef.current,
     };
+    if (overridePreset) {
+      cfg.preset = overridePreset;
+    }
     const style = qwenStyleInstructionRef.current?.trim();
     const desc = qwenVoiceDescriptionRef.current?.trim();
     const refText = refTextRef.current?.trim();
@@ -970,53 +1087,121 @@ function useTTSImpl(): UseTTSReturn {
     return cfg;
   }, []);
 
+  /** Stop any currently active audio element, Web Audio buffer, or SpeechSynthesis utterance. */
+  const cancelActivePlayback = useCallback(() => {
+    cancelledRef.current = true;
+    if (BROWSER_SPEECH_SUPPORTED) {
+      try {
+        if (window.speechSynthesis.speaking || window.speechSynthesis.pending || window.speechSynthesis.paused) {
+          window.speechSynthesis.cancel();
+        }
+      } catch { /* ignore */ }
+    }
+    if (audioRef.current) {
+      try { audioRef.current.pause(); } catch { /* ignore */ }
+      audioRef.current = null;
+    }
+    if (audioSrcNodeRef.current) {
+      try { audioSrcNodeRef.current.stop(); } catch { /* ignore */ }
+      audioSrcNodeRef.current = null;
+    }
+  }, []);
+
   // ─────────────────────────────────────────────────────────────────────────
 
-  const speak = useCallback(async (text: string, unitId?: number) => {
-    if (!text.trim()) return;
+  const speak = useCallback(async (rawText: string, unitId?: number) => {
+    const text = cleanTextForTTS(rawText);
+    if (!text) return;
 
-    // Unlock iOS audio context synchronously within user gesture before any await
     unlockAudio();
+    cancelActivePlayback();
+    const myRunId = ++runIdRef.current;
+    await new Promise<void>(resolve => setTimeout(resolve, 0));
+    if (runIdRef.current !== myRunId) return;
 
     cancelledRef.current = false;
+    activeSectionsRef.current = [];
     setState(prev => ({
       ...prev,
       isLoading: true,
+      isSpeaking: false,
       isPaused: false,
       error: null,
       usingServerTTS: false,
       currentSectionIndex: -1,
       totalSections: 0,
+      currentSectionLabel: null,
     }));
 
     const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
-    // Wait for browser voices to load (fixes Chrome/Android async voice population)
-    const browserVoices = await waitForBrowserVoices();
-    const noVoicesAvailable = browserVoices.length === 0;
-    // Server TTS is the ultimate fallback; browser TTS is preferred when Kokoro/cloud fail.
-    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
 
-    /** Helper: speak via Browser TTS */
-    const speakViaBrowser = async (txt: string) => {
-      if (!BROWSER_SPEECH_SUPPORTED || noVoicesAvailable) return false;
-      if (BROWSER_SPEECH_SUPPORTED) window.speechSynthesis.cancel();
-      chunksRef.current = splitIntoChunks(txt);
-      currentChunkRef.current = 0;
-      setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-      for (let i = 0; i < chunksRef.current.length; i++) {
-        if (cancelledRef.current) break;
-        currentChunkRef.current = i;
-        setState(prev => ({ ...prev, progress: Math.round(((i + 1) / chunksRef.current.length) * 100) }));
-        await speakChunk(chunksRef.current[i]);
+    /** Helper: speak via local Kokoro (WebGPU / WASM) */
+    const speakViaKokoro = async (txt: string): Promise<boolean> => {
+      if (kokoroIncompatibleRef.current) return false;
+      try {
+        const sentences = splitIntoSentences(txt);
+        if (sentences.length === 0) return false;
+
+        let nextBlobPromise: Promise<Blob> | null = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+
+        for (let si = 0; si < sentences.length; si++) {
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+          const blob = await nextBlobPromise;
+          if (si + 1 < sentences.length && !cancelledRef.current && runIdRef.current === myRunId) {
+            nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
+          }
+          if (!blob || cancelledRef.current || runIdRef.current !== myRunId) return true;
+          setState(prev => ({
+            ...prev,
+            isLoading: false,
+            isSpeaking: true,
+            usingServerTTS: false,
+            progress: Math.round(((si + 1) / sentences.length) * 100),
+          }));
+          await playBlobAudio(blob, myRunId);
+        }
+        if (!cancelledRef.current && runIdRef.current === myRunId) {
+          setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100, usingServerTTS: false }));
+        }
+        return true;
+      } catch (kokoroErr) {
+        if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return true;
+        console.warn("[TTS] Kokoro local failed:", kokoroErr);
+        return false;
       }
-      if (!cancelledRef.current) {
-        setState(prev => ({ ...prev, isSpeaking: false, progress: 100 }));
-      }
-      return true;
     };
 
-    /** Helper: try server TTS */
+    /** Helper: speak via Browser TTS */
+    const speakViaBrowser = async (txt: string): Promise<boolean> => {
+      if (!BROWSER_SPEECH_SUPPORTED) return false;
+      await waitForBrowserVoices(300);
+      if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+      await resetBrowserSpeech();
+      const chunks = splitIntoChunks(txt);
+      if (chunks.length === 0) return false;
+      chunksRef.current = chunks;
+      currentChunkRef.current = 0;
+      setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
+      try {
+        for (let i = 0; i < chunks.length; i++) {
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+          currentChunkRef.current = i;
+          setState(prev => ({ ...prev, progress: Math.round(((i + 1) / chunks.length) * 100) }));
+          await speakChunk(chunks[i], myRunId);
+        }
+        if (!cancelledRef.current && runIdRef.current === myRunId) {
+          setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100 }));
+        }
+        return true;
+      } catch (browserErr) {
+        if (browserErr instanceof Error && browserErr.message === "cancelled") return true;
+        console.warn("[TTS] Browser speech failed:", browserErr);
+        return false;
+      }
+    };
+
+    /** Helper: try server TTS (Qwen / OpenAI fallback) */
     const speakViaServer = async (txt: string, uid?: number, vcfg?: object): Promise<boolean> => {
       if (uid) {
         let isCached = false;
@@ -1030,63 +1215,70 @@ function useTTSImpl(): UseTTSReturn {
 
         if (isCached) {
           const serverResult = await fetchServerTTSAudio(uid, vcfg);
-          if (serverResult && !cancelledRef.current) {
+          if (serverResult && !cancelledRef.current && runIdRef.current === myRunId) {
             setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
             try {
-              await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
-              if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+              await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rateRef.current, myRunId);
+              if (!cancelledRef.current && runIdRef.current === myRunId) {
+                setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100, usingServerTTS: false }));
+              }
               return true;
             } catch (audioErr: unknown) {
-              if (audioErr instanceof Error && audioErr.message === "cancelled") throw audioErr;
+              if (audioErr instanceof Error && audioErr.message === "cancelled") return true;
             }
           }
         } else {
           const introResult = await fetchServerTTSIntro(uid, vcfg);
-
-          if (introResult && !cancelledRef.current) {
+          if (introResult && !cancelledRef.current && runIdRef.current === myRunId) {
             const { restText } = introResult;
-            const restPromise = restText ? fetchServerTTSText(restText, vcfg) : Promise.resolve(null);
-            setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
+            const cleanedRest = restText ? cleanTextForTTS(restText) : null;
+            const restPromise = cleanedRest ? fetchServerTTSText(cleanedRest, vcfg) : Promise.resolve(null);
+            setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 25, usingServerTTS: true }));
             try {
-              await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rate);
-              if (!cancelledRef.current && restText) {
+              await playServerAudio(introResult.audioData, introResult.audioFormat, introResult.playbackSpeed || rateRef.current, myRunId);
+              if (!cancelledRef.current && runIdRef.current === myRunId && cleanedRest) {
+                setState(prev => ({ ...prev, progress: 65 }));
                 const restResult = await restPromise;
-                if (restResult && !cancelledRef.current) {
-                  await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rate);
+                if (restResult && !cancelledRef.current && runIdRef.current === myRunId) {
+                  await playServerAudio(restResult.audioData, restResult.audioFormat, restResult.playbackSpeed || rateRef.current, myRunId);
                 }
               }
-              if (!cancelledRef.current) {
-                setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+              if (!cancelledRef.current && runIdRef.current === myRunId) {
+                setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100, usingServerTTS: false }));
                 queryClient.invalidateQueries({ queryKey: [`/api/tts/cache-status/${uid}`] });
               }
               return true;
             } catch (audioErr: unknown) {
-              if (audioErr instanceof Error && audioErr.message === "cancelled") throw audioErr;
+              if (audioErr instanceof Error && audioErr.message === "cancelled") return true;
             }
           } else if (!introResult) {
             const serverResult = await fetchServerTTSAudio(uid, vcfg);
-            if (serverResult && !cancelledRef.current) {
+            if (serverResult && !cancelledRef.current && runIdRef.current === myRunId) {
               setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
               try {
-                await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
-                if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rateRef.current, myRunId);
+                if (!cancelledRef.current && runIdRef.current === myRunId) {
+                  setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100, usingServerTTS: false }));
+                }
                 return true;
               } catch (audioErr: unknown) {
-                if (audioErr instanceof Error && audioErr.message === "cancelled") throw audioErr;
+                if (audioErr instanceof Error && audioErr.message === "cancelled") return true;
               }
             }
           }
         }
       } else {
         const serverResult = await fetchServerTTSText(txt, vcfg);
-        if (serverResult && !cancelledRef.current) {
+        if (serverResult && !cancelledRef.current && runIdRef.current === myRunId) {
           setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: true }));
           try {
-            await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rate);
-            if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
+            await playServerAudio(serverResult.audioData, serverResult.audioFormat, serverResult.playbackSpeed || rateRef.current, myRunId);
+            if (!cancelledRef.current && runIdRef.current === myRunId) {
+              setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, progress: 100, usingServerTTS: false }));
+            }
             return true;
           } catch (audioErr: unknown) {
-            if (audioErr instanceof Error && audioErr.message === "cancelled") throw audioErr;
+            if (audioErr instanceof Error && audioErr.message === "cancelled") return true;
           }
         }
       }
@@ -1094,198 +1286,190 @@ function useTTSImpl(): UseTTSReturn {
     };
 
     try {
-      // ── Tier 1: Local Kokoro (offline-capable, free) ────────────────────────
-      // Load on-demand here (kokoroSpeak → ensureKokoroInit) rather than gating
-      // behind `kokoroReady`. The ready-gate deadlocked first-time use — the model
-      // never initialized, so it always fell through to browser TTS (which fails
-      // on devices with no system speech voices).
-      if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
-        let kokoroDone = false;
-        try {
-          const sentences = splitIntoSentences(text);
-          setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0, usingServerTTS: false }));
-
-          let nextBlobPromise: Promise<Blob> | null = null;
-          if (sentences.length > 0) {
-            nextBlobPromise = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
-          }
-
-          for (let si = 0; si < sentences.length; si++) {
-            if (cancelledRef.current) break;
-            const blob = await nextBlobPromise;
-            if (si + 1 < sentences.length && !cancelledRef.current) {
-              nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
-            }
-            if (!blob || cancelledRef.current) break;
-            await playBlobAudio(blob);
-          }
-          if (!cancelledRef.current) setState(prev => ({ ...prev, isSpeaking: false, progress: 100, usingServerTTS: false }));
-          kokoroDone = true;
-          return;
-        } catch (kokoroErr) {
-          if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
-          console.warn("[TTS] Kokoro local failed:", kokoroErr);
-        }
-
-        // Fallback: fall through to browser TTS (free and instant)
+      // 1. Local Kokoro selected
+      if (voiceTier === "local") {
+        if (await speakViaKokoro(text)) return;
+        if (await speakViaBrowser(text)) return;
+        if (await speakViaServer(text, unitId, getVoiceConfig("qwen"))) return;
       }
-
-      // ── Tier 2: Server Qwen TTS (qwen / custom presets) ────────────────────
-      if (voiceTier === "cloud") {
+      // 2. Cloud Qwen selected
+      else if (voiceTier === "cloud") {
         try {
-          const vcfg = getVoiceConfig();
-          if (await speakViaServer(text, unitId, vcfg)) return;
+          if (await speakViaServer(text, unitId, getVoiceConfig())) return;
         } catch (cloudErr) {
-          if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
           if (cloudErr instanceof HfTokenRequiredError) {
             toast({
               title: "Hugging Face token required",
               description: cloudErr.serverMessage,
             });
           } else {
-            console.warn("[TTS] Server Qwen TTS failed, falling back to browser:", cloudErr);
+            console.warn("[TTS] Server Qwen TTS failed, falling back:", cloudErr);
           }
         }
-        // Fall through to browser TTS
+        if (await speakViaKokoro(text)) return;
+        if (await speakViaBrowser(text)) return;
+      }
+      // 3. Browser TTS selected
+      else {
+        if (await speakViaBrowser(text)) return;
+        // Browser speech unavailable or failed on this OS/browser — fall back to Kokoro or Qwen
+        if (!browserFallbackNotifiedRef.current) {
+          browserFallbackNotifiedRef.current = true;
+          toast({
+            title: "Using AI voice fallback",
+            description: "Your browser's native speech engine is unavailable on this device — using AI voice synthesis instead.",
+          });
+        }
+        if (await speakViaKokoro(text)) return;
+        try {
+          if (await speakViaServer(text, unitId, getVoiceConfig("qwen"))) return;
+        } catch { /* ignore */ }
       }
 
-      // ── Tier 3: Browser TTS (free, instant, works on nearly every device) ──
-      if (await speakViaBrowser(text)) return;
-
-      // ── Tier 4: Server fallback (last resort) ─────────────────────────────
-      if (shouldTryServer) {
-        if (await speakViaServer(text, unitId)) return;
-      }
-
-      // Nothing worked
+      if (cancelledRef.current || runIdRef.current !== myRunId) return;
       setState(prev => ({
         ...prev,
         isLoading: false,
         isSpeaking: false,
         isPaused: false,
-        error: noVoicesAvailable
-          ? "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio."
-          : "Audio unavailable. Choose an AI voice preset in settings to enable audio on this device.",
+        error: "Audio unavailable. Try selecting Kokoro (Offline) or Qwen TTS in Voice Settings.",
         isSupported: true,
       }));
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "cancelled") return;
-      // Browser TTS failure codes that warrant a server TTS retry.
-      const BROWSER_TTS_FAILURES = new Set([
-        "speech_synthesis_error", "synthesis-failed", "synthesis-unavailable",
-        "audio-hardware", "network",
-      ]);
-      if (error instanceof Error && BROWSER_TTS_FAILURES.has(error.message)) {
-        try {
-          if (await speakViaServer(text, unitId)) return;
-        } catch { /* server TTS also failed — fall through to error state */ }
-      }
       console.error("TTS error:", error);
-      setState(prev => ({ ...prev, isLoading: false, isSpeaking: false, isPaused: false, usingServerTTS: false, error: error instanceof Error ? error.message : "TTS failed" }));
+      if (runIdRef.current === myRunId) {
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          isSpeaking: false,
+          isPaused: false,
+          usingServerTTS: false,
+          error: error instanceof Error ? error.message : "TTS failed",
+        }));
+      }
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig, kokoroReady]);
+  }, [unlockAudio, cancelActivePlayback, kokoroSpeakWithTimeout, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
-  // Pre-fetches the next section's audio while the current section plays to minimize gaps.
   const speakSections = useCallback(async (sections: TTSSection[], startIndex = 0) => {
     if (sections.length === 0) return;
 
-    // Unlock iOS audio context synchronously within user gesture before any await
     unlockAudio();
-
-    // Cancel any currently running playback before starting new section sequence
-    cancelledRef.current = true;
-    if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
-    if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
-    if (audioSrcNodeRef.current) {
-      try { audioSrcNodeRef.current.stop(); } catch { /* ignore */ }
-      audioSrcNodeRef.current = null;
-    }
-    // Yield one tick so pending promise rejections from old playback settle
+    cancelActivePlayback();
+    const myRunId = ++runIdRef.current;
     await new Promise<void>(resolve => setTimeout(resolve, 0));
+    if (runIdRef.current !== myRunId) return;
 
     cancelledRef.current = false;
+    activeSectionsRef.current = sections;
     const start = Math.max(0, Math.min(startIndex, sections.length - 1));
 
     setState(prev => ({
       ...prev,
       isLoading: true,
+      isSpeaking: false,
       isPaused: false,
       error: null,
       usingServerTTS: false,
       currentSectionIndex: start,
       totalSections: sections.length,
+      currentSectionLabel: sections[start]?.label ?? null,
     }));
 
     const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
-    const browserVoices = await waitForBrowserVoices();
-    const noVoicesAvailable = browserVoices.length === 0;
-    const shouldTryServer = currentPreset !== "browser" || !BROWSER_SPEECH_SUPPORTED || noVoicesAvailable;
+
+    /** Helper: speak one section via Kokoro */
+    const speakSectionViaKokoro = async (txt: string, sectionIdx: number): Promise<boolean> => {
+      if (kokoroIncompatibleRef.current) return false;
+      try {
+        const sentences = splitIntoSentences(txt);
+        if (sentences.length === 0) return true;
+
+        let nextBlobPromise: Promise<Blob> | null = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+
+        for (let si = 0; si < sentences.length; si++) {
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+          const blob = await nextBlobPromise;
+          if (si + 1 < sentences.length && !cancelledRef.current && runIdRef.current === myRunId) {
+            nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
+          }
+          if (!blob || cancelledRef.current || runIdRef.current !== myRunId) return true;
+          const sectionProgress = Math.round(((sectionIdx + (si + 1) / sentences.length) / sections.length) * 100);
+          setState(prev => ({
+            ...prev,
+            isLoading: false,
+            isSpeaking: true,
+            usingServerTTS: false,
+            progress: sectionProgress,
+          }));
+          await playBlobAudio(blob, myRunId);
+        }
+        return true;
+      } catch (kokoroErr) {
+        if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return true;
+        console.warn("[TTS sections] Kokoro failed for section", sectionIdx, ":", kokoroErr);
+        return false;
+      }
+    };
 
     /** Helper: speak one section via Browser TTS */
-    const speakSectionViaBrowser = async (txt: string, isFirst: boolean) => {
-      if (!BROWSER_SPEECH_SUPPORTED || noVoicesAvailable) return false;
-      setState(prev => ({ ...prev, usingServerTTS: false }));
-      if (isFirst) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
-      const chunks = splitIntoChunks(txt);
-      for (const chunk of chunks) {
-        if (cancelledRef.current) break;
-        await speakChunk(chunk);
+    const speakSectionViaBrowser = async (txt: string, isFirst: boolean, sectionIdx: number): Promise<boolean> => {
+      if (!BROWSER_SPEECH_SUPPORTED) return false;
+      if (isFirst) {
+        await waitForBrowserVoices(300);
+        if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+        await resetBrowserSpeech();
       }
-      return true;
+      const chunks = splitIntoChunks(txt);
+      if (chunks.length === 0) return true;
+      setState(prev => ({
+        ...prev,
+        isLoading: false,
+        isSpeaking: true,
+        usingServerTTS: false,
+      }));
+      try {
+        for (let ci = 0; ci < chunks.length; ci++) {
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+          const sectionProgress = Math.round(((sectionIdx + (ci + 1) / chunks.length) / sections.length) * 100);
+          setState(prev => ({ ...prev, progress: sectionProgress }));
+          await speakChunk(chunks[ci], myRunId);
+        }
+        return true;
+      } catch (browserErr) {
+        if (browserErr instanceof Error && browserErr.message === "cancelled") return true;
+        console.warn("[TTS sections] Browser speech failed for section", sectionIdx, ":", browserErr);
+        return false;
+      }
     };
 
     try {
-      setState(prev => ({ ...prev, isLoading: false, isSpeaking: true, progress: 0 }));
-
-      // Pre-fetch next section's audio while the current one plays (server path only).
       let nextFetch: Promise<{ audioData: string; audioFormat: string; playbackSpeed: number } | null> | null = null;
 
       for (let i = start; i < sections.length; i++) {
-        if (cancelledRef.current) break;
+        if (cancelledRef.current || runIdRef.current !== myRunId) break;
 
         setState(prev => ({
           ...prev,
           currentSectionIndex: i,
+          currentSectionLabel: sections[i]?.label ?? null,
           progress: Math.round((i / sections.length) * 100),
         }));
 
-        const sectionText = sections[i].text;
+        const sectionText = cleanTextForTTS(sections[i].text);
+        if (!sectionText) continue;
 
-        // ── Tier 1: Local Kokoro (offline-capable) ───────────────────────────
-        if (voiceTier === "local" && !kokoroIncompatibleRef.current) {
-          let kokoroDone = false;
-          try {
-            const sentences = splitIntoSentences(sectionText);
-            setState(prev => ({ ...prev, usingServerTTS: false }));
-
-            let nextBlobPromise: Promise<Blob> | null = null;
-            if (sentences.length > 0) {
-              nextBlobPromise = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
-            }
-
-            for (let si = 0; si < sentences.length; si++) {
-              if (cancelledRef.current) break;
-              const blob = await nextBlobPromise;
-              if (si + 1 < sentences.length && !cancelledRef.current) {
-                nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
-              }
-              if (!blob || cancelledRef.current) break;
-              await playBlobAudio(blob);
-            }
-            kokoroDone = !cancelledRef.current;
-          } catch (kokoroErr) {
-            if (kokoroErr instanceof Error && kokoroErr.message === "cancelled") return;
-            console.warn("[TTS sections] Kokoro failed for section", i, ":", kokoroErr);
-          }
-          if (kokoroDone) continue;
-
-          // Fall through to browser TTS
+        // ── Tier 1: Local Kokoro ─────────────────────────────────────────────
+        if (voiceTier === "local") {
+          if (await speakSectionViaKokoro(sectionText, i)) continue;
+          if (await speakSectionViaBrowser(sectionText, i === start, i)) continue;
         }
 
-        // ── Tier 2: Server Qwen TTS (cloud presets) ───────────────────────
+        // ── Tier 2: Server Qwen TTS ──────────────────────────────────────────
         if (voiceTier === "cloud") {
+          let cloudHandled = false;
           try {
             const vcfg = getVoiceConfig();
             let result: { audioData: string; audioFormat: string; playbackSpeed: number } | null;
@@ -1297,26 +1481,21 @@ function useTTSImpl(): UseTTSReturn {
               result = await fetchServerTTSText(sectionText, vcfg);
             }
 
-            // Pre-fetch next section while playing this one
-            if (i + 1 < sections.length && !cancelledRef.current) {
-              nextFetch = fetchServerTTSText(sections[i + 1].text, vcfg);
+            if (i + 1 < sections.length && !cancelledRef.current && runIdRef.current === myRunId) {
+              const nextClean = cleanTextForTTS(sections[i + 1].text);
+              if (nextClean) nextFetch = fetchServerTTSText(nextClean, vcfg);
             }
 
-            if (result && !cancelledRef.current) {
-              setState(prev => ({ ...prev, usingServerTTS: true }));
-              try {
-                await playServerAudio(result.audioData, result.audioFormat, result.playbackSpeed || rate);
-                continue;
-              } catch (audioErr: unknown) {
-                if (audioErr instanceof Error && audioErr.message === "cancelled") return;
-                // Server audio failed — nothing left to try
-                setState(prev => ({
-                  ...prev, isLoading: false, isSpeaking: false, isPaused: false,
-                  usingServerTTS: false,
-                  error: "Audio unavailable. Choose an AI voice preset in settings.",
-                }));
-                return;
-              }
+            if (result && !cancelledRef.current && runIdRef.current === myRunId) {
+              setState(prev => ({
+                ...prev,
+                isLoading: false,
+                isSpeaking: true,
+                usingServerTTS: true,
+                progress: Math.round(((i + 0.5) / sections.length) * 100),
+              }));
+              await playServerAudio(result.audioData, result.audioFormat, result.playbackSpeed || rateRef.current, myRunId);
+              cloudHandled = true;
             }
           } catch (cloudErr) {
             if (cloudErr instanceof Error && cloudErr.message === "cancelled") return;
@@ -1329,100 +1508,115 @@ function useTTSImpl(): UseTTSReturn {
               console.warn("[TTS sections] Server Qwen failed for section", i, ":", cloudErr);
             }
           }
-          // Fall through to browser TTS
+          if (cloudHandled) continue;
+          if (await speakSectionViaKokoro(sectionText, i)) continue;
+          if (await speakSectionViaBrowser(sectionText, i === start, i)) continue;
         }
 
-        // ── Tier 3: Browser TTS (free, instant) ───────────────────────────
-        if (await speakSectionViaBrowser(sectionText, i === start)) continue;
-
-        // ── Tier 4: Server fallback (last resort) ───────────────────────────
-        if (shouldTryServer && voiceTier !== "cloud") {
-          let result: { audioData: string; audioFormat: string; playbackSpeed: number } | null;
-
-          if (nextFetch !== null) {
-            result = await nextFetch;
-            nextFetch = null;
-          } else {
-            result = await fetchServerTTSText(sectionText);
+        // ── Tier 3: Browser TTS ──────────────────────────────────────────────
+        if (voiceTier === "server") {
+          if (await speakSectionViaBrowser(sectionText, i === start, i)) continue;
+          if (!browserFallbackNotifiedRef.current) {
+            browserFallbackNotifiedRef.current = true;
+            toast({
+              title: "Using AI voice fallback",
+              description: "Your browser's native speech engine is unavailable on this device — using AI voice synthesis instead.",
+            });
           }
+          if (await speakSectionViaKokoro(sectionText, i)) continue;
+        }
 
-          // Pre-fetch next section while playing this one
-          if (i + 1 < sections.length && !cancelledRef.current) {
-            nextFetch = fetchServerTTSText(sections[i + 1].text);
-          }
-
-          if (result && !cancelledRef.current) {
-            setState(prev => ({ ...prev, usingServerTTS: true }));
-            try {
-              await playServerAudio(result.audioData, result.audioFormat, result.playbackSpeed || rate);
-            } catch (audioErr: unknown) {
-              if (audioErr instanceof Error && audioErr.message === "cancelled") return;
-              // Server audio failed — nothing left to try
+        // ── Tier 4: Server Qwen fallback (last resort) ───────────────────────
+        if (!cancelledRef.current && runIdRef.current === myRunId) {
+          try {
+            const fallbackCfg = getVoiceConfig("qwen");
+            const result = await fetchServerTTSText(sectionText, fallbackCfg);
+            if (result && !cancelledRef.current && runIdRef.current === myRunId) {
               setState(prev => ({
-                ...prev, isLoading: false, isSpeaking: false, isPaused: false,
-                usingServerTTS: false,
-                error: "Audio unavailable. Choose an AI voice preset in settings.",
+                ...prev,
+                isLoading: false,
+                isSpeaking: true,
+                usingServerTTS: true,
               }));
-              return;
+              await playServerAudio(result.audioData, result.audioFormat, result.playbackSpeed || rateRef.current, myRunId);
+              continue;
             }
-          } else if (!cancelledRef.current) {
-            setState(prev => ({
-              ...prev, isLoading: false, isSpeaking: false, isPaused: false,
-              usingServerTTS: false,
-              error: noVoicesAvailable
-                ? "No device voices found. Select an AI voice preset (Settings → Voice) to enable audio."
-                : "Audio unavailable. Choose an AI voice preset in settings.",
-            }));
-            return;
+          } catch (fallbackErr) {
+            if (fallbackErr instanceof Error && fallbackErr.message === "cancelled") return;
           }
-        } else {
+        }
+
+        // Nothing worked for this section
+        if (!cancelledRef.current && runIdRef.current === myRunId) {
           setState(prev => ({
-            ...prev, isLoading: false, isSpeaking: false, isPaused: false,
+            ...prev,
+            isLoading: false,
+            isSpeaking: false,
+            isPaused: false,
             usingServerTTS: false,
-            error: "Audio unavailable. Choose an AI voice preset in settings.",
+            error: "Audio unavailable. Try selecting Kokoro (Offline) or Qwen TTS in Voice Settings.",
           }));
           return;
         }
       }
 
-      if (!cancelledRef.current) {
+      if (!cancelledRef.current && runIdRef.current === myRunId) {
         setState(prev => ({
           ...prev,
+          isLoading: false,
           isSpeaking: false,
           progress: 100,
           usingServerTTS: false,
           currentSectionIndex: -1,
           totalSections: 0,
+          currentSectionLabel: null,
         }));
       }
     } catch (error: unknown) {
       if (error instanceof Error && error.message === "cancelled") return;
       console.error("TTS sections error:", error);
-      setState(prev => ({
-        ...prev,
-        isLoading: false,
-        isSpeaking: false,
-        isPaused: false,
-        usingServerTTS: false,
-        error: error instanceof Error ? error.message : "TTS failed",
-        currentSectionIndex: -1,
-        totalSections: 0,
-      }));
+      if (runIdRef.current === myRunId) {
+        setState(prev => ({
+          ...prev,
+          isLoading: false,
+          isSpeaking: false,
+          isPaused: false,
+          usingServerTTS: false,
+          error: error instanceof Error ? error.message : "TTS failed",
+          currentSectionIndex: -1,
+          totalSections: 0,
+          currentSectionLabel: null,
+        }));
+      }
     }
-  }, [serverVoicePreset, rate, speakChunk, playServerAudio, unlockAudio, kokoroSpeakWithTimeout, playBlobAudio, getVoiceConfig, kokoroReady]);
+  }, [unlockAudio, cancelActivePlayback, kokoroSpeakWithTimeout, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
+
+  const jumpToSection = useCallback((index: number) => {
+    const sects = activeSectionsRef.current;
+    if (!sects || sects.length === 0) return;
+    const clamped = Math.max(0, Math.min(index, sects.length - 1));
+    void speakSections(sects, clamped);
+  }, [speakSections]);
+
+  const nextSection = useCallback(() => {
+    const sects = activeSectionsRef.current;
+    if (!sects || sects.length === 0) return;
+    const nextIdx = state.currentSectionIndex + 1;
+    if (nextIdx < sects.length) {
+      void speakSections(sects, nextIdx);
+    }
+  }, [speakSections, state.currentSectionIndex]);
+
+  const prevSection = useCallback(() => {
+    const sects = activeSectionsRef.current;
+    if (!sects || sects.length === 0) return;
+    const prevIdx = Math.max(0, state.currentSectionIndex - 1);
+    void speakSections(sects, prevIdx);
+  }, [speakSections, state.currentSectionIndex]);
 
   const stop = useCallback(() => {
-    cancelledRef.current = true;
-    if (BROWSER_SPEECH_SUPPORTED) { try { window.speechSynthesis.cancel(); } catch { /* ignore */ } }
-    if (audioRef.current) {
-      audioRef.current.pause();
-      audioRef.current = null;
-    }
-    // Stop any in-progress Web Audio API playback.
-    if (audioSrcNodeRef.current) {
-      try { audioSrcNodeRef.current.stop(); } catch { /* ignore — already stopped */ }
-      audioSrcNodeRef.current = null;
-    }
+    runIdRef.current++;
+    cancelActivePlayback();
     setState(prev => ({
       ...prev,
       isSpeaking: false,
@@ -1431,17 +1625,14 @@ function useTTSImpl(): UseTTSReturn {
       usingServerTTS: false,
       currentSectionIndex: -1,
       totalSections: 0,
+      currentSectionLabel: null,
     }));
-  }, []);
+  }, [cancelActivePlayback]);
 
-  // pause: suspend playback without cancelling the session.
-  // isSpeaking stays true so the async loop continues to wait on the audio element.
-  // isPaused flag is set true so UI knows we're in a paused-but-active state.
   const pause = useCallback(() => {
     if (audioRef.current) {
       audioRef.current.pause();
     } else if (audioCtxRef.current && audioCtxRef.current.state === "running") {
-      // Suspend the Web Audio context — pauses AudioBufferSourceNode playback.
       audioCtxRef.current.suspend().catch(() => {});
     } else if (BROWSER_SPEECH_SUPPORTED) {
       try { window.speechSynthesis.pause(); } catch { /* ignore */ }
@@ -1453,7 +1644,6 @@ function useTTSImpl(): UseTTSReturn {
     if (audioRef.current) {
       audioRef.current.play().catch(console.error);
     } else if (audioCtxRef.current && audioCtxRef.current.state === "suspended") {
-      // Resume the Web Audio context to continue AudioBufferSourceNode playback.
       audioCtxRef.current.resume().catch(console.error);
     } else if (BROWSER_SPEECH_SUPPORTED) {
       try { window.speechSynthesis.resume(); } catch { /* ignore */ }
@@ -1466,7 +1656,12 @@ function useTTSImpl(): UseTTSReturn {
   const setRate = useCallback((newRate: number) => {
     const clamped = Math.max(0.5, Math.min(3, newRate));
     setRateState(clamped);
+    rateRef.current = clamped;
+    try { localStorage.setItem(SPEED_STORAGE_KEY, String(clamped)); } catch { /* ignore */ }
     if (audioRef.current) audioRef.current.playbackRate = clamped;
+    if (audioSrcNodeRef.current) {
+      try { audioSrcNodeRef.current.playbackRate.value = clamped; } catch { /* ignore */ }
+    }
     if (persistSpeedTimerRef.current) clearTimeout(persistSpeedTimerRef.current);
     persistSpeedTimerRef.current = setTimeout(() => {
       fetch("/api/tts/settings", {
@@ -1474,33 +1669,35 @@ function useTTSImpl(): UseTTSReturn {
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ playbackSpeed: clamped }),
-      }).catch(e => console.warn("Failed to persist TTS speed:", e));
+      }).catch(() => {});
     }, 600);
   }, []);
 
   const setSelectedVoice = useCallback((voiceName: string) => {
     setSelectedVoiceState(voiceName);
+    voiceRef.current = voiceName;
+    try { localStorage.setItem(BROWSER_VOICE_KEY, voiceName); } catch { /* ignore */ }
   }, []);
 
   const setServerVoicePreset = useCallback(async (preset: string) => {
-    // Update ref synchronously so speak/speakSections immediately see the new engine
-    // even if called before the React re-render completes.
     serverVoicePresetRef.current = preset;
     setServerVoicePresetState(preset);
+    setState(prev => ({ ...prev, error: null }));
     try {
       localStorage.setItem("tts_engine_pinned", "1");
+      localStorage.setItem(PRESET_STORAGE_KEY, preset);
     } catch { /* ignore */ }
     try {
       await fetch("/api/tts/settings", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
-        body: JSON.stringify({ voicePreset: preset, playbackSpeed: rate }),
+        body: JSON.stringify({ voicePreset: preset, playbackSpeed: rateRef.current }),
       });
     } catch (e) {
       console.warn("Failed to save TTS preset:", e);
     }
-  }, [rate]);
+  }, []);
 
   const isAudioCached = useCallback(async (unitId: number): Promise<boolean> => {
     try {
@@ -1579,6 +1776,9 @@ function useTTSImpl(): UseTTSReturn {
     ...state,
     speak,
     speakSections,
+    jumpToSection,
+    nextSection,
+    prevSection,
     stop,
     pause,
     resume,

@@ -18,12 +18,14 @@ const KOKORO_LANGUAGE: Record<string, string> = {
 };
 
 const KOKORO_IDS = [
-  "af_alloy", "af_aoede", "af_bella", "af_heart", "af_jessica", "af_kore",
-  "af_nicole", "af_nova", "af_river", "af_sarah", "af_sky",
-  "am_adam", "am_echo", "am_eric", "am_fenrir", "am_liam", "am_michael",
-  "am_onyx", "am_puck", "am_santa",
-  "bf_alice", "bf_emma", "bf_isabella", "bf_lily",
-  "bm_daniel", "bm_fable", "bm_george", "bm_lewis",
+  // Top-graded American & British English voices first
+  "af_heart", "af_bella", "af_nicole", "af_kore", "af_sarah", "af_aoede",
+  "af_nova", "af_alloy", "af_sky", "af_jessica", "af_river",
+  "am_michael", "am_fenrir", "am_puck", "am_echo", "am_eric", "am_liam",
+  "am_onyx", "am_adam", "am_santa",
+  "bf_emma", "bf_isabella", "bf_alice", "bf_lily",
+  "bm_george", "bm_fable", "bm_lewis", "bm_daniel",
+  // Additional international voices
   "ef_dora", "em_alex", "em_santa",
   "ff_siwis",
   "hf_alpha", "hf_beta", "hm_omega", "hm_psi",
@@ -36,10 +38,12 @@ const KOKORO_IDS = [
 
 export const KOKORO_VOICES = KOKORO_IDS.map((id) => {
   const gender = id.charAt(1) === "f" ? "female" : "male";
-  const style = KOKORO_LANGUAGE[id.charAt(0)] ?? "English";
+  const langCode = id.charAt(0);
+  const style = KOKORO_LANGUAGE[langCode] ?? "English";
   const raw = id.split("_")[1];
   const name = raw.charAt(0).toUpperCase() + raw.slice(1);
-  return { id, name, gender, style };
+  const isEnglish = langCode === "a" || langCode === "b" || langCode === "e";
+  return { id, name, gender, style, isEnglish };
 });
 
 /**
@@ -77,6 +81,87 @@ export function getVoiceTier(presetId: EnginePreset | string): VoiceTier {
   if (presetId === "browser") return "server";
   if (presetId === "qwen" || presetId === "custom") return "cloud";
   return "server";
+}
+
+/**
+ * Clean markdown & LaTeX syntax from lesson prose so TTS engines (Kokoro, Browser, Qwen)
+ * speak natural words instead of reading raw punctuation ("hash hash", "asterisk", "backslash frac").
+ */
+export function cleanTextForTTS(raw: string): string {
+  if (!raw) return "";
+  let s = raw;
+
+  // Replace fenced code blocks with a brief spoken cue
+  s = s.replace(/```[\s\S]*?```/g, " See the code example in the lesson. ");
+
+  // Convert display math $$...$$ and inline math $...$ into readable text
+  const cleanLatex = (math: string): string => {
+    return math
+      .replace(/\\frac\s*\{([^{}]*)\}\s*\{([^{}]*)\}/g, "$1 over $2")
+      .replace(/\\sqrt\s*\{([^{}]*)\}/g, "square root of $1")
+      .replace(/\\(?:mathbf|mathrm|mathit|mathcal|text|operatorname)\s*\{([^{}]*)\}/g, "$1")
+      .replace(/\\Delta\b/g, "delta ")
+      .replace(/\\delta\b/g, "delta ")
+      .replace(/\\alpha\b/g, "alpha ")
+      .replace(/\\beta\b/g, "beta ")
+      .replace(/\\gamma\b/g, "gamma ")
+      .replace(/\\theta\b/g, "theta ")
+      .replace(/\\lambda\b/g, "lambda ")
+      .replace(/\\sigma\b/g, "sigma ")
+      .replace(/\\omega\b/g, "omega ")
+      .replace(/\\Omega\b/g, "omega ")
+      .replace(/\\pi\b/g, "pi ")
+      .replace(/\\mu\b/g, "mu ")
+      .replace(/\\tau\b/g, "tau ")
+      .replace(/\\rho\b/g, "rho ")
+      .replace(/\\phi\b/g, "phi ")
+      .replace(/\\epsilon\b/g, "epsilon ")
+      .replace(/\\infty\b/g, "infinity ")
+      .replace(/\\approx\b/g, " approximately equals ")
+      .replace(/\\neq\b/g, " is not equal to ")
+      .replace(/\\leq\b/g, " is less than or equal to ")
+      .replace(/\\geq\b/g, " is greater than or equal to ")
+      .replace(/\\(?:times|cdot)\b/g, " times ")
+      .replace(/\\(?:rightarrow|to|implies)\b/g, " leads to ")
+      .replace(/\\sum\b/g, " sum ")
+      .replace(/\\int\b/g, " integral ")
+      .replace(/\\[a-zA-Z]+/g, " ")
+      .replace(/[{}^_]/g, " ")
+      .replace(/=/g, " equals ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
+  s = s.replace(/\$\$([\s\S]*?)\$\$/g, (_m, inner) => ` ${cleanLatex(inner)}. `);
+  s = s.replace(/\$([^$\n]+)\$/g, (_m, inner) => ` ${cleanLatex(inner)} `);
+
+  // Strip markdown links [label](url) -> label, and bare URLs
+  s = s.replace(/\[([^\]]+)\]\((?:https?:\/\/|\/)[^)]+\)/g, "$1");
+  s = s.replace(/https?:\/\/\S+/g, "");
+
+  // Convert markdown headings and list items into clean sentence breaks
+  s = s.replace(/^[ \t]*#{1,6}[ \t]+(.+)$/gm, "$1.");
+  s = s.replace(/^[ \t]*[-*+][ \t]+/gm, "");
+  s = s.replace(/^[ \t]*\d+[.)][ \t]+/gm, "");
+  s = s.replace(/^[ \t]*>[ \t]*/gm, "");
+  s = s.replace(/^[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*$/gm, " ");
+
+  // Strip inline formatting (**bold**, *italic*, `code`, ~~strike~~)
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  s = s.replace(/\*([^*\n]+)\*/g, "$1");
+  s = s.replace(/__([^_]+)__/g, "$1");
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/~~([^~]+)~~/g, "$1");
+
+  // Ensure paragraph/line breaks become sentence pauses if not already punctuated
+  s = s
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => (/[.!?;:]$/.test(line) ? line : `${line}.`))
+    .join(" ");
+
+  return s.replace(/\s{2,}/g, " ").trim();
 }
 
 /**

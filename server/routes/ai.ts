@@ -346,8 +346,13 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
     // Load TTS settings (user's saved preferences, overridable by voiceConfig)
     const ttsSettings = await storage.getTtsSettings(userId);
     const voicePreset = voiceConfig?.preset || ttsSettings.voicePreset;
-    // Only apply stored reference audio when preset is "custom"; other presets must not use it
-    const referenceAudio = (voicePreset === "custom")
+    const qwenMode = (
+      voiceConfig?.qwenMode ||
+      (voicePreset === "custom" ? "voice_clone" : ttsSettings.qwenMode) ||
+      "custom_voice"
+    ) as "custom_voice" | "voice_design" | "voice_clone";
+
+    const referenceAudio = (voicePreset === "custom" || qwenMode === "voice_clone")
       ? (voiceConfig?.referenceAudio || ttsSettings.referenceAudio || undefined)
       : (voiceConfig?.referenceAudio || undefined);
     const playbackSpeed = voiceConfig?.playbackSpeed || ttsSettings.playbackSpeed;
@@ -357,19 +362,11 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
     }
 
     const { hashVoiceConfig, hashBase64, generateTTSAudio, callTTSDirect, buildIntroText, buildRestText } = await import("../tts-service");
-    const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
-    const configHash = hashVoiceConfig(voicePreset, refHash);
 
     // Build Qwen3-TTS mode options from stored settings + client overrides
     const userProfile = await storage.getUserProfile(userId);
-    // Token priority: user's own HF token (BYOK) → platform env token (server-managed
-    // fallback so the platform can offer Qwen without per-user tokens). If neither is
-    // available we still TRY anonymous ZeroGPU (works while the Space allows it) and
-    // only return 428 when generation actually fails without a token.
     const hfToken = userProfile?.huggingFaceToken || process.env.HF_TOKEN || undefined;
 
-    // Uniform error response for the two Qwen presets: guide users to add a token
-    // only when generation failed AND they have no token available at all.
     const failNoAudio = () => {
       if ((voicePreset === "qwen" || voicePreset === "custom") && !hfToken) {
         return res.status(428).json({
@@ -379,13 +376,16 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
           fallbackToBrowser: true,
         });
       }
-      return failNoAudio();
+      return res.status(503).json({
+        error: "TTS_UNAVAILABLE",
+        message: "Server voice synthesis is temporarily unavailable.",
+        fallbackToBrowser: true,
+      });
     };
 
-    const qwenMode = (voiceConfig?.qwenMode || ttsSettings.qwenMode) as "custom_voice" | "voice_design" | "voice_clone";
     const buildQwenOptions = (): import("../tts-service").QwenTTSOptions => ({
       mode: qwenMode,
-      speaker: voiceConfig?.speaker || undefined, // client-selected preset speaker (e.g. "Ryan")
+      speaker: voiceConfig?.speaker || undefined,
       styleInstruction: voiceConfig?.qwenStyleInstruction || ttsSettings.qwenStyleInstruction || undefined,
       voiceDescription: voiceConfig?.qwenVoiceDescription || ttsSettings.qwenVoiceDescription || undefined,
       referenceAudio: referenceAudio,
@@ -394,6 +394,9 @@ app.post("/api/tts/generate", isAuthenticated, async (req: any, res: Response) =
       language: "English",
       modelSize: "1.7B",
     });
+
+    const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
+    const configHash = hashVoiceConfig(voicePreset, refHash, buildQwenOptions());
 
     // Intro-only fast path: generate just the opening section for immediate play,
     // then kick off background full-audio caching so subsequent listens are instant.
@@ -624,7 +627,7 @@ export async function revalidateUnitLinks(unitId: number, content: unknown): Pro
 export async function preTTSForUnit(userId: string, unitId: number, content: unknown, isNextGen: boolean): Promise<void> {
   try {
     const ttsSettings = await storage.getTtsSettings(userId);
-    if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser") return;
+    if (!ttsSettings.voicePreset || ttsSettings.voicePreset === "browser" || ttsSettings.voicePreset === "kokoro") return;
 
     const { hashVoiceConfig, hashBase64, generateTTSAudio } = await import("../tts-service");
     // Only include referenceAudio in hash when preset is "custom" — must match /api/tts/generate and /api/tts/cache-status

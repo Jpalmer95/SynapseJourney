@@ -17,6 +17,7 @@ import { PasskeySettings } from "@/components/passkey-settings";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useTTS } from "@/hooks/use-tts";
 import { cn } from "@/lib/utils";
 
 interface CategoryPreference {
@@ -380,6 +381,8 @@ export default function SettingsPage() {
     retry: false,
   });
 
+  const { setServerVoicePreset: syncContextPreset, setRate: syncContextRate } = useTTS();
+
   const [localVoicePreset, setLocalVoicePreset] = useState<string>("kokoro");
   const [localSpeed, setLocalSpeed] = useState<number>(1.0);
   const [ttsUploading, setTtsUploading] = useState(false);
@@ -397,6 +400,7 @@ export default function SettingsPage() {
 
   const setPresetMutation = useMutation({
     mutationFn: async (preset: string) => {
+      await syncContextPreset(preset);
       return apiRequest("PUT", "/api/tts/settings", { voicePreset: preset, playbackSpeed: localSpeed });
     },
     onSuccess: (_data, preset) => {
@@ -410,6 +414,7 @@ export default function SettingsPage() {
 
   const setSpeedMutation = useMutation({
     mutationFn: async (speed: number) => {
+      syncContextRate(speed);
       return apiRequest("PUT", "/api/tts/settings", { playbackSpeed: speed });
     },
     onSuccess: (_data, speed) => {

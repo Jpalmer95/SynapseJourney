@@ -87,8 +87,15 @@ export async function getAudioDurationSeconds(buffer: Buffer): Promise<number | 
   }
 }
 
-export function hashVoiceConfig(preset: string, referenceAudioHash?: string): string {
-  const input = `${preset}:${referenceAudioHash || ""}`;
+export function hashVoiceConfig(
+  preset: string,
+  referenceAudioHash?: string,
+  qwenExtra?: { mode?: string; speaker?: string; styleInstruction?: string; voiceDescription?: string },
+): string {
+  const extra = qwenExtra
+    ? `${qwenExtra.mode || ""}:${qwenExtra.speaker || ""}:${qwenExtra.styleInstruction || ""}:${qwenExtra.voiceDescription || ""}`
+    : "";
+  const input = `${preset}:${referenceAudioHash || ""}:${extra}`;
   return createHash("sha256").update(input).digest("hex").slice(0, 16);
 }
 
@@ -127,6 +134,14 @@ function buildLessonText(content: any, isNextGen: boolean): string {
     if (content.keyTakeaways?.length > 0) {
       parts.push(`Key takeaways: ${content.keyTakeaways.join(". ")}`);
     }
+    if (Array.isArray(content.sections)) {
+      for (const s of content.sections) {
+        if (s?.heading) parts.push(`${s.heading}.`);
+        if (Array.isArray(s?.paragraphs)) parts.push(s.paragraphs.join(" "));
+        if (Array.isArray(s?.list)) parts.push(s.list.join(". "));
+        if (typeof s?.agentBrief === "string" && s.agentBrief.trim()) parts.push(s.agentBrief);
+      }
+    }
   }
   return parts.join(" ").replace(/\n+/g, " ").trim();
 }
@@ -164,6 +179,12 @@ export function buildIntroText(content: any, isNextGen: boolean): string {
     const parts: string[] = [];
     if (content.concept) parts.push(content.concept);
     if (content.analogy) parts.push(`Think of it this way: ${content.analogy}`);
+    if (parts.length === 0 && Array.isArray(content.sections) && content.sections.length > 0) {
+      const s0 = content.sections[0];
+      if (s0?.heading) parts.push(`${s0.heading}.`);
+      if (Array.isArray(s0?.paragraphs)) parts.push(s0.paragraphs.join(" "));
+      if (Array.isArray(s0?.list)) parts.push(s0.list.join(". "));
+    }
     intro = parts.join(" ");
   }
   intro = intro.replace(/\n+/g, " ").trim();
@@ -455,13 +476,9 @@ async function callQwen3TTS(text: string, opts: QwenTTSOptions): Promise<Buffer 
         hfToken,
       );
     } else if (opts.mode === "voice_clone") {
-      // Voice Clone mode — requires reference audio + transcript
+      // Voice Clone mode — requires reference audio; transcript is optional (falls back to x-vector mode)
       if (!opts.referenceAudio) {
         console.info("[TTS] Qwen3-TTS voice_clone: no reference audio provided — skipping");
-        return null;
-      }
-      if (!opts.refText) {
-        console.info("[TTS] Qwen3-TTS voice_clone: no reference text provided — skipping");
         return null;
       }
 
@@ -472,21 +489,23 @@ async function callQwen3TTS(text: string, opts: QwenTTSOptions): Promise<Buffer 
         return null;
       }
 
-      // Step 2: Call generate_voice_clone with the uploaded file path
+      // Step 2: Call generate_voice_clone with Gradio 5 FileData object
       const modelSize = opts.modelSize || "1.7B";
+      const refTextClean = opts.refText?.trim() || "";
+      const useXVectorOnly = !refTextClean;
       audioUrl = await gradioPredict(
         "generate_voice_clone",
         [
-          uploadedPath,       // ref_audio (filepath from upload)
-          opts.refText,       // ref_text (transcript of reference audio)
-          text,               // target_text (text to synthesize)
-          language,           // language
-          false,              // use_xvector_only (false = better quality)
-          modelSize,           // model_size ("0.6B" or "1.7B")
+          { path: uploadedPath, meta: { _type: "gradio.FileData" } },
+          refTextClean,
+          text,
+          language,
+          useXVectorOnly,
+          modelSize,
         ],
         hfToken,
         15_000,
-        90_000, // voice clone may take longer
+        90_000,
       );
     } else {
       // Custom Voice mode (default) — preset speakers
@@ -539,7 +558,7 @@ export async function generateTTSAudio(opts: TTSGenerateOptions): Promise<TTSRes
   const { unitId, content, isNextGen, voicePreset, referenceAudio, hfToken, qwenOptions } = opts;
 
   const refHash = referenceAudio ? hashBase64(referenceAudio) : undefined;
-  const configHash = hashVoiceConfig(voicePreset, refHash);
+  const configHash = hashVoiceConfig(voicePreset, refHash, qwenOptions);
 
   const cached = await getCachedAudio(unitId, configHash);
   if (cached) {
@@ -634,7 +653,7 @@ export async function preGenerateTTSForUnit(
   hfToken?: string,
   qwenOptions?: QwenTTSOptions,
 ): Promise<void> {
-  if (!voicePreset || voicePreset === "browser") return;
+  if (!voicePreset || voicePreset === "browser" || voicePreset === "kokoro") return;
   generateTTSAudio({ unitId, content, isNextGen, voicePreset, referenceAudio, hfToken, qwenOptions })
     .catch((err: unknown) => console.warn("[TTS] Background pre-generation failed:", err instanceof Error ? err.message : String(err)));
 }

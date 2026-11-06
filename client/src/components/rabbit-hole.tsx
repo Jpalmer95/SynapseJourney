@@ -46,6 +46,7 @@ import {
   Coins,
   Play,
   Target,
+  Volume2,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -937,24 +938,139 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const isTabLocked = (_difficulty: string) => false;
 
   // TTS section-level state shared with TTSButton via context
-  const { currentSectionIndex, speakSections } = useTTS();
+  const { currentSectionIndex, isSpeaking: isTtsSpeaking, speakSections } = useTTS();
 
   // Build ordered sections from lesson content for section-by-section listening
+  // across ALL unit flavors: Standard LessonContent, NextGen Frontier, and Agent Playbook sections.
   const lessonSections = useMemo((): TTSSection[] => {
     const content = unitContent?.content;
-    if (!content || unitContent?.isNextGen) return [];
-    const lc = content as LessonContent;
+    if (!content) return [];
+    const isNg = unitContent?.isNextGen || selectedUnit?.difficulty === "nextgen";
     const sects: TTSSection[] = [];
+
+    if (isNg) {
+      const ng = content as NextGenContent & Record<string, any>;
+      if (ng.researchContext) {
+        sects.push({ label: "Research Context", text: ng.researchContext });
+      }
+      if (ng.industryChallenge?.title || ng.industryChallenge?.description) {
+        const icParts = [
+          ng.industryChallenge.title ? `Industry Challenge: ${ng.industryChallenge.title}.` : "",
+          ng.industryChallenge.description || "",
+          ng.industryChallenge.currentApproaches?.length
+            ? `Current approaches: ${ng.industryChallenge.currentApproaches.join(". ")}.`
+            : "",
+          ng.industryChallenge.openQuestions?.length
+            ? `Open questions: ${ng.industryChallenge.openQuestions.join(" ")}`
+            : "",
+        ].filter(Boolean);
+        sects.push({ label: "Industry Challenge", text: icParts.join(" ") });
+      }
+      if (ng.thoughtExercises?.length) {
+        const teText = ng.thoughtExercises
+          .map((e: any, idx: number) =>
+            [
+              `Thought Exercise ${idx + 1}: ${e.prompt}`,
+              e.hints?.length ? `Hints: ${e.hints.join(". ")}` : "",
+            ]
+              .filter(Boolean)
+              .join(". "),
+          )
+          .join(" ");
+        sects.push({ label: "Thought Exercises", text: teText });
+      }
+      if (ng.emergingTrends?.length) {
+        const etText = ng.emergingTrends
+          .map(
+            (t: any) =>
+              `${t.trend}. Implications: ${t.implications}. Potential breakthroughs: ${t.potentialBreakthroughs}`,
+          )
+          .join(". ");
+        sects.push({ label: "Emerging Trends", text: etText });
+      }
+      if (ng.creativeSynthesis?.challenge) {
+        const csParts = [
+          ng.creativeSynthesis.challenge,
+          ng.creativeSynthesis.suggestedConnections?.length
+            ? `Suggested connections: ${ng.creativeSynthesis.suggestedConnections.join(". ")}`
+            : "",
+        ].filter(Boolean);
+        sects.push({ label: "Creative Synthesis", text: csParts.join(". ") });
+      }
+      if (Array.isArray(ng.openRoadblocks) && ng.openRoadblocks.length > 0) {
+        const rbText = ng.openRoadblocks
+          .map((r: any) => `${r.title}. ${r.description}. ${r.whyItMatters ? `Why it matters: ${r.whyItMatters}` : ""}`)
+          .join(" ");
+        sects.push({ label: "Open SOTA Roadblocks", text: rbText });
+      }
+      if (Array.isArray(ng.crossDomainInsights) && ng.crossDomainInsights.length > 0) {
+        const cdText = ng.crossDomainInsights
+          .map((c: any) => `${c.distantDomain}: ${c.insight}. ${c.example || ""}`)
+          .join(" ");
+        sects.push({ label: "Cross-Domain Bridges", text: cdText });
+      }
+      if (ng.pitchFramework?.title || ng.experimentDesign?.hypothesis) {
+        const pfParts = [
+          ng.pitchFramework?.title && ng.pitchFramework.title !== "Content Unavailable"
+            ? `${ng.pitchFramework.title}. Gap: ${ng.pitchFramework.problemStatement || ""}. Proposed angle: ${ng.pitchFramework.proposedApproach || ""}. Next step: ${ng.pitchFramework.nextStep || ""}.`
+            : "",
+          ng.experimentDesign?.hypothesis
+            ? `Minimal Viable Experiment: ${ng.experimentDesign.title || ""}. Hypothesis: ${ng.experimentDesign.hypothesis}. Method: ${ng.experimentDesign.method || ""}.`
+            : "",
+        ].filter(Boolean);
+        if (pfParts.length > 0) {
+          sects.push({ label: "Open Science Pitch", text: pfParts.join(" ") });
+        }
+      }
+      return sects;
+    }
+
+    const lc = content as LessonContent & { sections?: any[] };
     if (lc.keyTakeaways?.length) {
       sects.push({ label: "Key Takeaways", text: lc.keyTakeaways.join(". ") });
     }
     if (lc.concept) sects.push({ label: "Concept", text: lc.concept });
     if (lc.analogy) sects.push({ label: "Analogy", text: lc.analogy });
     if (lc.example?.content) {
-      sects.push({ label: lc.example.title || "Example", text: lc.example.content });
+      sects.push({
+        label: lc.example.title || "Example",
+        text: `${lc.example.title ? `${lc.example.title}. ` : ""}${lc.example.content}`,
+      });
+    }
+    if (Array.isArray(lc.sections)) {
+      for (const s of lc.sections) {
+        if (!s) continue;
+        const label = s.heading || "Section";
+        const body = [
+          s.heading,
+          ...(Array.isArray(s.paragraphs) ? s.paragraphs : []),
+          ...(Array.isArray(s.list) ? s.list : []),
+          typeof s.agentBrief === "string" ? s.agentBrief : "",
+        ]
+          .filter(Boolean)
+          .join(". ");
+        if (body.trim()) {
+          sects.push({ label, text: body });
+        }
+      }
+    }
+    if (lc.crossLinks?.length) {
+      sects.push({
+        label: "Connections",
+        text: lc.crossLinks.map((l) => `${l.topicTitle}: ${l.connection}`).join(". "),
+      });
+    }
+    const quizList = onDemandQuiz || (lc.quiz?.length ? lc.quiz : null);
+    if (quizList?.length) {
+      sects.push({
+        label: "Quiz",
+        text: quizList
+          .map((q, i) => `Question ${i + 1}: ${q.question}. Options: ${q.options.join(". ")}`)
+          .join(". "),
+      });
     }
     return sects;
-  }, [unitContent]);
+  }, [unitContent, selectedUnit?.difficulty, onDemandQuiz]);
 
   // Map section labels to indices for quick highlight lookup
   const sectionIndexMap = useMemo(() => {
@@ -1007,6 +1123,21 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
             <Button
               variant="outline"
               size="sm"
+              onClick={() => {
+                const next = contentView === "full" ? "skim" : "full";
+                setContentView(next);
+                saveTopicPrefs({ contentView: next });
+              }}
+              className="gap-1 shrink-0 text-xs"
+              title="Toggle between Full lesson view and Skim summary view"
+              data-testid="button-toggle-unit-content-view"
+            >
+              <BookOpen className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">{contentView === "skim" ? "Show Full Lesson" : "Full View"}</span>
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
               onClick={() => saveMutation.mutate()}
               className={cn("gap-1 sm:gap-2 shrink-0", isSaved && "text-red-500 border-red-500/50")}
               disabled={!mainCardId || saveMutation.isPending}
@@ -1054,42 +1185,92 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
             ) : nextGenContent ? (
               /* Next Gen Content - Frontier Research View */
               <div className="space-y-8 w-full min-w-0 max-w-full">
-                {/* Header Badge */}
-                <div className="flex items-center justify-center gap-4">
+                {/* Header Badge + Section-Aware Audio Player */}
+                <div className="flex flex-col items-center gap-3 w-full">
                   <Badge className="bg-purple-500/20 text-purple-600 dark:text-purple-400 border-purple-500/30 text-sm px-4 py-1">
                     <Rocket className="h-4 w-4 mr-2" />
                     Next Gen Analysis
                   </Badge>
                   <TTSButton
-                    text={`${selectedUnit.title}. Research Context: ${nextGenContent.researchContext}. ${nextGenContent.industryChallenge ? `Industry Challenge: ${nextGenContent.industryChallenge.title}. ${nextGenContent.industryChallenge.description}` : ''}`}
+                    text={
+                      lessonSections.length > 0
+                        ? `${selectedUnit.title}. ${lessonSections.map((s) => `${s.label}. ${s.text}`).join(" ")}`
+                        : `${selectedUnit.title}. Research Context: ${nextGenContent.researchContext || ""}`
+                    }
                     unitId={selectedUnit.id}
                     showLabel
                     variant="outline"
-                    size="sm"
+                    size="default"
+                    sections={lessonSections}
+                    className={lessonSections.length > 0 ? "w-full" : undefined}
                   />
                 </div>
 
                 {/* Research Context */}
-                <section>
+                {(() => {
+                  const rcIdx = sectionIndexMap["Research Context"] ?? -1;
+                  const rcActive = isTtsSpeaking && rcIdx >= 0 && currentSectionIndex === rcIdx;
+                  return (
+                <section className={cn("transition-all", rcActive && "border-l-2 border-primary pl-3 -ml-3")}>
                   <div className="flex items-center gap-2 mb-4">
                     <FlaskConical className="h-5 w-5 text-purple-500" />
-                    <h2 className="text-xl font-semibold">Research Context</h2>
+                    <h2 className="text-xl font-semibold flex-1">Research Context</h2>
+                    {rcIdx >= 0 && (
+                      <button
+                        type="button"
+                        onClick={() => speakSections(lessonSections, rcIdx)}
+                        className={cn(
+                          "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                          rcActive
+                            ? "bg-primary/15 text-primary font-medium"
+                            : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                        )}
+                        title="Listen from here"
+                        data-testid="button-tts-nextgen-research"
+                      >
+                        <Volume2 className="h-3.5 w-3.5" />
+                        <span>{rcActive ? "Playing" : "Listen"}</span>
+                      </button>
+                    )}
                   </div>
                   <Card className="border-purple-500/20 overflow-hidden">
                     <CardContent className="p-4 sm:p-6">
-                      <p className="text-muted-foreground leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
-                        {nextGenContent.researchContext}
-                      </p>
+                      <LessonMarkdown
+                        text={nextGenContent.researchContext}
+                        className="text-muted-foreground leading-relaxed break-words [overflow-wrap:anywhere]"
+                      />
                     </CardContent>
                   </Card>
                 </section>
+                  );
+                })()}
 
                 {/* Industry Challenge */}
-                {nextGenContent.industryChallenge && (
-                  <section>
+                {nextGenContent.industryChallenge && (() => {
+                  const icIdx = sectionIndexMap["Industry Challenge"] ?? -1;
+                  const icActive = isTtsSpeaking && icIdx >= 0 && currentSectionIndex === icIdx;
+                  return (
+                  <section className={cn("transition-all", icActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
                       <Rocket className="h-5 w-5 text-orange-500" />
-                      <h2 className="text-xl font-semibold">Industry Challenge</h2>
+                      <h2 className="text-xl font-semibold flex-1">Industry Challenge</h2>
+                      {icIdx >= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => speakSections(lessonSections, icIdx)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            icActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                          title="Listen from here"
+                          data-testid="button-tts-nextgen-challenge"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{icActive ? "Playing" : "Listen"}</span>
+                        </button>
+                      )}
                     </div>
                     <Card className="border-orange-500/20 bg-orange-500/5 overflow-hidden">
                       <CardContent className="p-4 sm:p-6 space-y-4">
@@ -1116,14 +1297,35 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       </CardContent>
                     </Card>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* Thought Exercises */}
-                {nextGenContent.thoughtExercises && nextGenContent.thoughtExercises.length > 0 && (
-                  <section>
+                {nextGenContent.thoughtExercises && nextGenContent.thoughtExercises.length > 0 && (() => {
+                  const teIdx = sectionIndexMap["Thought Exercises"] ?? -1;
+                  const teActive = isTtsSpeaking && teIdx >= 0 && currentSectionIndex === teIdx;
+                  return (
+                  <section className={cn("transition-all", teActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
                       <Compass className="h-5 w-5 text-blue-500" />
-                      <h2 className="text-xl font-semibold">Thought Exercises</h2>
+                      <h2 className="text-xl font-semibold flex-1">Thought Exercises</h2>
+                      {teIdx >= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => speakSections(lessonSections, teIdx)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            teActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                          title="Listen from here"
+                          data-testid="button-tts-nextgen-exercises"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{teActive ? "Playing" : "Listen"}</span>
+                        </button>
+                      )}
                     </div>
                     <div className="space-y-4">
                       {nextGenContent.thoughtExercises.map((exercise: any, i: number) => (
@@ -1157,14 +1359,35 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       ))}
                     </div>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* Emerging Trends */}
-                {nextGenContent.emergingTrends && nextGenContent.emergingTrends.length > 0 && (
-                  <section>
+                {nextGenContent.emergingTrends && nextGenContent.emergingTrends.length > 0 && (() => {
+                  const etIdx = sectionIndexMap["Emerging Trends"] ?? -1;
+                  const etActive = isTtsSpeaking && etIdx >= 0 && currentSectionIndex === etIdx;
+                  return (
+                  <section className={cn("transition-all", etActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
                       <TrendingUp className="h-5 w-5 text-green-500" />
-                      <h2 className="text-xl font-semibold">Emerging Trends</h2>
+                      <h2 className="text-xl font-semibold flex-1">Emerging Trends</h2>
+                      {etIdx >= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => speakSections(lessonSections, etIdx)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            etActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                          title="Listen from here"
+                          data-testid="button-tts-nextgen-trends"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{etActive ? "Playing" : "Listen"}</span>
+                        </button>
+                      )}
                     </div>
                     <div className="space-y-4">
                       {nextGenContent.emergingTrends.map((trend: any, i: number) => (
@@ -1178,7 +1401,8 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       ))}
                     </div>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* Creative Synthesis */}
                 {nextGenContent.creativeSynthesis && (
@@ -1495,8 +1719,8 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   )}
                 </section>
 
-                {/* Mark Complete Button for Next Gen */}
-                <div className="flex justify-center pt-4">
+                {/* Mark Complete Button + Linear Navigation for Next Gen */}
+                <div className="flex flex-wrap items-center justify-center gap-3 pt-4">
                   <Button
                     onClick={() => selectedUnit && completeLessonMutation.mutate({ unitId: selectedUnit.id })}
                     disabled={completeLessonMutation.isPending}
@@ -1510,10 +1734,6 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     )}
                     Mark as Explored
                   </Button>
-                </div>
-
-                {/* AI Chat Button */}
-                <div className="flex justify-center">
                   <Button
                     variant="outline"
                     onClick={() => setShowChat(true)}
@@ -1524,16 +1744,17 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </Button>
                 </div>
               </div>
-            ) : lessonContent && (lessonContent as any).sections && Array.isArray((lessonContent as any).sections) ? (
-              /* Agent Playbook view — copyable brief for the learner's AI agent */
-              <AgentPlaybookView content={lessonContent as any} unitTitle={selectedUnit.title} />
             ) : lessonContent ? (
-              /* Standard Lesson Content View */
+              /* Standard & Playbook Lesson Content View */
               <div className="space-y-8 w-full min-w-0 max-w-full flex flex-col">
                 {/* Listen Button / Audio Player */}
                 <div className="flex justify-center">
                   <TTSButton
-                    text={`${selectedUnit.title}. ${lessonContent.concept}. Think of it like this: ${lessonContent.analogy}. ${lessonContent.example.title}. ${lessonContent.example.content}`}
+                    text={
+                      lessonSections.length > 0
+                        ? `${selectedUnit.title}. ${lessonSections.map((s) => `${s.label}. ${s.text}`).join(" ")}`
+                        : `${selectedUnit.title}. ${lessonContent.concept || ""}. ${lessonContent.analogy || ""}. ${lessonContent.example?.title || ""}. ${lessonContent.example?.content || ""}`
+                    }
                     unitId={selectedUnit.id}
                     showLabel
                     variant="outline"
@@ -1543,21 +1764,44 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   />
                 </div>
 
-                {(quizFirst || depthMode === "speed_run") && (
-                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm flex items-center justify-between gap-3" data-testid="banner-speed-run">
+                {(quizFirst || depthMode === "speed_run" || contentView === "skim") && (
+                  <div className="rounded-lg border border-primary/30 bg-primary/5 p-3 text-sm flex flex-wrap items-center justify-between gap-3" data-testid="banner-speed-run">
                     <span>
-                      <strong>Speed-run:</strong> skim takeaways, then quiz yourself. Deep content is optional.
+                      {contentView === "skim" ? (
+                        <>
+                          <strong>Skim view active:</strong> showing takeaways &amp; quiz. Switch to Full view to read Concept, Analogy &amp; Examples.
+                        </>
+                      ) : (
+                        <>
+                          <strong>Speed-run:</strong> skim takeaways, then quiz yourself. Deep content is optional.
+                        </>
+                      )}
                     </span>
-                    <Button size="sm" variant="secondary" onClick={generateQuiz} disabled={quizGenerating}>
-                      {quizGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : "Quiz now"}
-                    </Button>
+                    <div className="flex items-center gap-2">
+                      {contentView === "skim" && (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => {
+                            setContentView("full");
+                            saveTopicPrefs({ contentView: "full" });
+                          }}
+                          data-testid="button-banner-show-full"
+                        >
+                          Show Full Content
+                        </Button>
+                      )}
+                      <Button size="sm" variant="secondary" onClick={generateQuiz} disabled={quizGenerating}>
+                        {quizGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : "Quiz now"}
+                      </Button>
+                    </div>
                   </div>
                 )}
 
                 {/* Key Takeaways Section */}
                 {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (() => {
                   const ktIdx = sectionIndexMap["Key Takeaways"] ?? -1;
-                  const ktActive = ktIdx >= 0 && currentSectionIndex === ktIdx;
+                  const ktActive = isTtsSpeaking && ktIdx >= 0 && currentSectionIndex === ktIdx;
                   return (
                   <section
                     className={cn("min-w-0 w-full group transition-all", ktActive && "border-l-2 border-primary pl-3 -ml-3")}
@@ -1568,12 +1812,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       <h2 className="text-xl font-semibold flex-1">Key Takeaways</h2>
                       {lessonSections.length > 0 && ktIdx >= 0 && (
                         <button
+                          type="button"
                           onClick={() => speakSections(lessonSections, ktIdx)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            ktActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
                           title="Listen from here"
                           data-testid="button-tts-section-takeaways"
                         >
-                          <Play className="h-3.5 w-3.5" />
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{ktActive ? "Playing" : "Listen"}</span>
                         </button>
                       )}
                     </div>
@@ -1597,9 +1848,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 })()}
 
                 {/* Concept Section */}
-                {contentView === "full" && (() => {
+                {contentView === "full" && lessonContent.concept && (() => {
                   const cIdx = sectionIndexMap["Concept"] ?? -1;
-                  const cActive = cIdx >= 0 && currentSectionIndex === cIdx;
+                  const cActive = isTtsSpeaking && cIdx >= 0 && currentSectionIndex === cIdx;
                   return (
                   <section className={cn("min-w-0 w-full group transition-all", cActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
@@ -1607,12 +1858,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       <h2 className="text-xl font-semibold flex-1">Concept</h2>
                       {lessonSections.length > 0 && cIdx >= 0 && (
                         <button
+                          type="button"
                           onClick={() => speakSections(lessonSections, cIdx)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            cActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
                           title="Listen from here"
                           data-testid="button-tts-section-concept"
                         >
-                          <Play className="h-3.5 w-3.5" />
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{cActive ? "Playing" : "Listen"}</span>
                         </button>
                       )}
                     </div>
@@ -1644,9 +1902,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 )}
 
                 {/* Analogy Section */}
-                {contentView === "full" && (() => {
+                {contentView === "full" && lessonContent.analogy && (() => {
                   const aIdx = sectionIndexMap["Analogy"] ?? -1;
-                  const aActive = aIdx >= 0 && currentSectionIndex === aIdx;
+                  const aActive = isTtsSpeaking && aIdx >= 0 && currentSectionIndex === aIdx;
                   return (
                   <section className={cn("min-w-0 w-full group transition-all", aActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
@@ -1654,12 +1912,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       <h2 className="text-xl font-semibold flex-1">Think of it like...</h2>
                       {lessonSections.length > 0 && aIdx >= 0 && (
                         <button
+                          type="button"
                           onClick={() => speakSections(lessonSections, aIdx)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            aActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
                           title="Listen from here"
                           data-testid="button-tts-section-analogy"
                         >
-                          <Play className="h-3.5 w-3.5" />
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{aActive ? "Playing" : "Listen"}</span>
                         </button>
                       )}
                     </div>
@@ -1676,23 +1941,30 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 })()}
 
                 {/* Example Section */}
-                {contentView === "full" && (() => {
+                {contentView === "full" && lessonContent.example?.content && (() => {
                   const exLabel = lessonContent.example.title || "Example";
                   const exIdx = sectionIndexMap[exLabel] ?? -1;
-                  const exActive = exIdx >= 0 && currentSectionIndex === exIdx;
+                  const exActive = isTtsSpeaking && exIdx >= 0 && currentSectionIndex === exIdx;
                   return (
                   <section className={cn("min-w-0 w-full group transition-all", exActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
                       <Sparkles className="h-5 w-5 text-blue-500 shrink-0" />
-                      <h2 className="text-xl font-semibold break-words [overflow-wrap:anywhere] flex-1">{lessonContent.example.title}</h2>
+                      <h2 className="text-xl font-semibold break-words [overflow-wrap:anywhere] flex-1">{lessonContent.example.title || "Example"}</h2>
                       {lessonSections.length > 0 && exIdx >= 0 && (
                         <button
+                          type="button"
                           onClick={() => speakSections(lessonSections, exIdx)}
-                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground shrink-0"
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors shrink-0",
+                            exActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
                           title="Listen from here"
                           data-testid="button-tts-section-example"
                         >
-                          <Play className="h-3.5 w-3.5" />
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{exActive ? "Playing" : "Listen"}</span>
                         </button>
                       )}
                     </div>
@@ -1713,12 +1985,42 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   );
                 })()}
 
+                {/* Structured Playbook / Custom Sections (when present on capstone or agent-authored units) */}
+                {Array.isArray((lessonContent as any).sections) && (lessonContent as any).sections.length > 0 && (
+                  <AgentPlaybookView
+                    content={lessonContent as any}
+                    unitTitle={selectedUnit.title}
+                    allSections={lessonSections}
+                    sectionIndexMap={sectionIndexMap}
+                  />
+                )}
+
                 {/* Cross-links Section */}
-                {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (
-                  <section className="min-w-0 w-full">
+                {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (() => {
+                  const clIdx = sectionIndexMap["Connections"] ?? -1;
+                  const clActive = isTtsSpeaking && clIdx >= 0 && currentSectionIndex === clIdx;
+                  return (
+                  <section className={cn("min-w-0 w-full transition-all", clActive && "border-l-2 border-primary pl-3 -ml-3")}>
                     <div className="flex items-center gap-2 mb-4">
                       <Zap className="h-5 w-5 text-purple-500 shrink-0" />
-                      <h2 className="text-xl font-semibold">Connections to What You Know</h2>
+                      <h2 className="text-xl font-semibold flex-1">Connections to What You Know</h2>
+                      {lessonSections.length > 0 && clIdx >= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => speakSections(lessonSections, clIdx)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors shrink-0",
+                            clActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                          title="Listen from here"
+                          data-testid="button-tts-section-connections"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{clActive ? "Playing" : "Listen"}</span>
+                        </button>
+                      )}
                     </div>
                     <div className="space-y-3">
                       {lessonContent.crossLinks.map((link, i) => (
@@ -1731,7 +2033,8 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       ))}
                     </div>
                   </section>
-                )}
+                  );
+                })()}
 
                 {/* Quiz Section — on-demand generation when empty */}
                 {(() => {
@@ -2211,8 +2514,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
             animate={{ opacity: 1, y: 0 }}
             className="mb-8"
           >
-            <h2 className="text-3xl md:text-4xl font-bold mb-4">{topic.title}</h2>
-            <p className="text-lg text-muted-foreground">{topic.description}</p>
+            <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
+              <div className="flex-1 min-w-0">
+                <h2 className="text-3xl md:text-4xl font-bold mb-3">{topic.title}</h2>
+                <p className="text-lg text-muted-foreground">{topic.description}</p>
+              </div>
+              <TTSButton
+                text={`${topic.title}. ${topic.description || ""}. ${orderedLinearUnits.length > 0 ? `Course curriculum (${orderedLinearUnits.length} lessons): ` + orderedLinearUnits.map(u => `Lesson ${u.globalStep}: ${u.title}`).join(". ") : ""}`}
+                showLabel
+                variant="outline"
+                size="sm"
+                className="shrink-0 mt-1"
+              />
+            </div>
 
             {/* Donate / support builder — optional, not gated compute */}
             <div className="mt-4 p-3 rounded-lg bg-primary/5 border border-primary/15 text-sm text-muted-foreground">
