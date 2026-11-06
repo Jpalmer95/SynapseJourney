@@ -53,6 +53,8 @@ export function registerWellKnownRoutes(app: Express) {
           "synapse.ingest_course",
           "synapse.log_learning",
           "synapse.get_prior_knowledge",
+          "synapse.architect_pathway",
+          "synapse.get_pathway_timeline",
           "synapse.list_sota_bottlenecks",
           "synapse.propose_sota_bottleneck",
           "synapse.submit_hypothesis",

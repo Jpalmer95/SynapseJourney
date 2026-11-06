@@ -255,6 +255,12 @@ public on creation, so per-user JIT courses leaked into the shared catalogue.
   - Opening any course queries `GET /api/learn/topics/:topicId/prior-knowledge`.
   - `RabbitHole` renders a **Prior & Scattered Progress Recognized** banner listing concepts already learned via JIT, Agent Chat, or Hermes MCP, badges overlapping units (`Prior Coverage`), offers 1-click **Credit Prior Progress** (`POST /api/learn/topics/:topicId/apply-prior`), and provides a **Jump to Next Uncovered Lesson** button.
   - `planCourseWithAI` and `/api/ai/chat` automatically inject the learner's `promptContextBlock` so new courses and tutoring sessions build on prior knowledge instead of repeating basics.
+- [x] **8.5 Role, Industry & Classical Mastery Roadmap Architect + Dynamic Timeline Simulator (`server/pathway-architect.ts`, migration `0015`)**
+  - `POST /api/pathways/architect` and MCP `synapse.architect_pathway` curate multi-phase building-block roadmaps for any target role, frontier industry, or classical discipline (e.g., *"Frontier XR Chip Engineer"*):
+    - Reuses canonical reviewed catalog courses for `Phase 1: Mathematical & Physical Underlayment` and `Phase 2: Core Disciplinary Pillars`.
+    - Synthesizes specialized domain/role courses (with 4-stage Linear Spine unit outlines) for `Phase 3: Highest-Impact Building Blocks (80/20 Pareto Core)` and `Phase 4: Frontier SOTA & Bottlenecks`.
+    - Wires prerequisite DAG edges (`prerequisiteTopicIds`), Pareto `impactScore` (`1–100`), `estimatedHours`, and `whyItMatters` rationale.
+  - `GET /api/pathways/:id/timeline` and MCP `synapse.get_pathway_timeline` compute a live completion timeline that automatically discounts hours for prior/scattered knowledge in `user_knowledge_ledger` and adapts to user-selected `dailyMinutes` (`15–480m/day`), `paceMode` (`fast_track` `1.35x` | `balanced` `1.0x` | `rigorous` `0.75x`), and ordering mode (`Sequential Phases` vs `Highest-Impact First 80/20` vs `DAG Skill Tree`).
 
 ---
 

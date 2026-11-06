@@ -204,6 +204,52 @@ export const MCP_TOOLS = [
       },
     },
   },
+  {
+    name: "synapse.architect_pathway",
+    description:
+      "Architect a complete Role, Industry, or Classical Mastery Roadmap (e.g. 'Frontier XR Chip Engineer') broken into 4 sequential phases and Pareto impact scores (1-100), reusing canonical catalog courses for foundations and creating specialized building-block courses with prerequisite DAG edges and a personalized timeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        targetGoal: {
+          type: "string",
+          description: "Target role, frontier industry, or classical discipline (e.g. 'Frontier XR Chip Engineer')",
+        },
+        trackType: {
+          type: "string",
+          enum: ["role_career", "industry_frontier", "classical_science"],
+          description: "Roadmap orientation (default: role_career)",
+        },
+        priorBackground: {
+          type: "string",
+          description: "Optional summary of what the learner already knows",
+        },
+        dailyMinutes: {
+          type: "number",
+          description: "Daily study commitment in minutes for timeline projection (default 60)",
+        },
+      },
+      required: ["targetGoal"],
+    },
+  },
+  {
+    name: "synapse.get_pathway_timeline",
+    description:
+      "Compute a personalized learning timeline and impact-ordered building blocks for any pathway, discounting hours for the learner's prior & scattered knowledge ledger.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pathwayId: { type: "number", description: "Numeric pathwayId" },
+        dailyMinutes: { type: "number", description: "Daily study minutes (15-480, default 60)" },
+        paceMode: {
+          type: "string",
+          enum: ["fast_track", "balanced", "rigorous"],
+          description: "Learning speed multiplier (default balanced)",
+        },
+      },
+      required: ["pathwayId"],
+    },
+  },
 ];
 
 export function registerMcpRoutes(app: Express) {
@@ -561,6 +607,51 @@ export function registerMcpRoutes(app: Express) {
           const report = await getPriorKnowledgeForTopic(storage, userId, {
             topicId: args.topicId ? Number(args.topicId) : undefined,
             query: args.query ? String(args.query) : undefined,
+          });
+          return sendResult({
+            content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+          });
+        }
+
+        if (toolName === "synapse.architect_pathway") {
+          const targetGoal = String(args.targetGoal || "").trim();
+          if (!targetGoal) return sendError(-32602, "targetGoal is required");
+          const trackType = ["role_career", "industry_frontier", "classical_science"].includes(args.trackType)
+            ? args.trackType
+            : "role_career";
+          const { architectMasteryRoadmap } = await import("../pathway-architect");
+          const result = await architectMasteryRoadmap(storage, userId, {
+            targetGoal,
+            trackType,
+            priorBackground: args.priorBackground ? String(args.priorBackground) : undefined,
+            dailyMinutes: Number(args.dailyMinutes) || 60,
+          });
+          return sendResult({
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify(
+                  {
+                    ...result,
+                    pathwayUrl: `/pathway/${result.pathway.id}`,
+                  },
+                  null,
+                  2,
+                ),
+              },
+            ],
+          });
+        }
+
+        if (toolName === "synapse.get_pathway_timeline") {
+          const pathwayId = Number(args.pathwayId);
+          if (!pathwayId) return sendError(-32602, "pathwayId is required");
+          const paceMode =
+            args.paceMode === "fast_track" || args.paceMode === "rigorous" ? args.paceMode : "balanced";
+          const { computePathwayTimeline } = await import("../pathway-architect");
+          const report = await computePathwayTimeline(storage, userId, pathwayId, {
+            dailyMinutes: Number(args.dailyMinutes) || 60,
+            paceMode,
           });
           return sendResult({
             content: [{ type: "text", text: JSON.stringify(report, null, 2) }],

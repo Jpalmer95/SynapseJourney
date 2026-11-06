@@ -254,7 +254,7 @@ export const ttsAudioCache = pgTable("tts_audio_cache", {
   unitVoiceUnique: uniqueIndex("tts_audio_cache_unit_voice_unique").on(table.unitId, table.voiceConfigHash),
 }));
 
-// Learning Pathways (curated groupings like Physics, Engineering, etc.)
+// Learning Pathways (curated groupings like Physics, Engineering, Role/Career Roadmaps, etc.)
 export const pathways = pgTable("pathways", {
   id: serial("id").primaryKey(),
   name: text("name").notNull(),
@@ -263,6 +263,9 @@ export const pathways = pgTable("pathways", {
   color: text("color").notNull(),
   difficulty: text("difficulty").default("mixed"), // beginner, intermediate, advanced, mixed
   estimatedHours: integer("estimated_hours"),
+  trackType: text("track_type").default("classical_science").notNull(), // role_career | industry_frontier | classical_science
+  targetRole: text("target_role"),
+  roadmapMeta: jsonb("roadmap_meta"),
   isActive: boolean("is_active").default(true).notNull(),
   createdByUserId: varchar("created_by_user_id"), // null = system pathway, set = user-created custom pathway
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -276,6 +279,11 @@ export const pathwayTopics = pgTable("pathway_topics", {
   order: integer("order").default(0).notNull(), // kept for general top-down ordering constraint
   prerequisiteTopicIds: integer("prerequisite_topic_ids").array(), // For DAG explicit graph branches mapping topicIds
   isRequired: boolean("is_required").default(true).notNull(),
+  impactScore: integer("impact_score").default(80).notNull(), // 1-100 Pareto impact ranking
+  impactTier: text("impact_tier").default("core").notNull(), // foundation | core | high_impact | frontier
+  estimatedHours: integer("estimated_hours").default(8).notNull(), // per-course estimated hours
+  phaseLabel: text("phase_label"), // e.g. "Phase 1: Foundations"
+  whyItMatters: text("why_it_matters"), // why this building block is critical for the role/field
 });
 
 // User Pathway Enrollment

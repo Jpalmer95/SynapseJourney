@@ -1743,4 +1743,100 @@ Respond with ONLY a JSON array of 2 objects:
       res.status(500).json({ error: "Failed to navigate branch", message: error?.message || String(error) });
     }
   });
+
+  // ── Role, Industry & Classical Mastery Roadmap Architect + Timeline ────────
+
+  const architectPathwaySchema = z.object({
+    targetGoal: z.string().min(3).max(200),
+    trackType: z.enum(["role_career", "industry_frontier", "classical_science"]).default("role_career"),
+    priorBackground: z.string().max(600).optional(),
+    dailyMinutes: z.number().int().min(15).max(480).default(60),
+    customBlocks: z
+      .array(
+        z.object({
+          existingTopicId: z.number().int().positive().nullable().optional(),
+          title: z.string().min(2).max(160),
+          description: z.string().min(4).max(600),
+          phaseLabel: z.string().min(2).max(120),
+          impactTier: z.enum(["foundation", "core", "high_impact", "frontier"]).default("core"),
+          impactScore: z.number().int().min(1).max(100).default(85),
+          estimatedHours: z.number().int().min(1).max(200).default(10),
+          isRequired: z.boolean().optional(),
+          whyItMatters: z.string().max(500),
+          prerequisiteIndices: z.array(z.number().int().min(0)).optional(),
+          units: z
+            .array(
+              z.object({
+                title: z.string(),
+                outline: z.string(),
+                difficulty: z.enum(["beginner", "intermediate", "advanced", "nextgen"]),
+                tierLabel: z.string().optional(),
+              }),
+            )
+            .optional(),
+        }),
+      )
+      .optional(),
+  });
+
+  app.post("/api/pathways/architect", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = architectPathwaySchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid roadmap request", details: parsed.error.flatten() });
+      }
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+
+      const { architectMasteryRoadmap } = await import("../pathway-architect");
+      const result = await architectMasteryRoadmap(storage, userId, {
+        ...parsed.data,
+        userConfig,
+      });
+
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: result.timeline.nodesSequential[0]?.topicId ?? null,
+        eventType: "goal_set",
+        metadata: {
+          action: "pathway_architected",
+          pathwayId: result.pathway.id,
+          pathwayName: result.pathway.name,
+          trackType: parsed.data.trackType,
+          createdTopicsCount: result.createdTopicsCount,
+          reusedTopicsCount: result.reusedTopicsCount,
+        },
+      });
+
+      res.status(201).json(result);
+    } catch (error: any) {
+      console.error("Error architecting pathway:", error);
+      res.status(500).json({ error: "Failed to architect pathway", message: error?.message || String(error) });
+    }
+  });
+
+  app.get("/api/pathways/:id/timeline", async (req: any, res: Response) => {
+    try {
+      const pathwayId = parseInt(req.params.id, 10);
+      if (Number.isNaN(pathwayId) || pathwayId <= 0) {
+        return res.status(400).json({ error: "Invalid pathwayId" });
+      }
+      const userId = req.user?.claims?.sub ?? null;
+      const dailyMinutes = req.query.dailyMinutes ? parseInt(String(req.query.dailyMinutes), 10) : 60;
+      const rawPace = String(req.query.paceMode || "balanced");
+      const paceMode =
+        rawPace === "fast_track" || rawPace === "rigorous" ? rawPace : ("balanced" as const);
+
+      const { computePathwayTimeline } = await import("../pathway-architect");
+      const report = await computePathwayTimeline(storage, userId, pathwayId, {
+        dailyMinutes: !Number.isNaN(dailyMinutes) ? dailyMinutes : 60,
+        paceMode,
+      });
+      res.json(report);
+    } catch (error: any) {
+      console.error("Error computing pathway timeline:", error);
+      res.status(404).json({ error: error?.message || "Failed to compute pathway timeline" });
+    }
+  });
 }
