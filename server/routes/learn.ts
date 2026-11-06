@@ -40,7 +40,7 @@ const goalSchema = z.object({
   includeAgentContext: z.boolean().optional(),
   /** Course shape; defaults to rapid_bootstrap for goals */
   archetype: z
-    .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain"])
+    .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain", "case_studio"])
     .optional(),
 });
 
@@ -1748,7 +1748,9 @@ Respond with ONLY a JSON array of 2 objects:
 
   const architectPathwaySchema = z.object({
     targetGoal: z.string().min(3).max(200),
-    trackType: z.enum(["role_career", "industry_frontier", "classical_science"]).default("role_career"),
+    trackType: z
+      .enum(["role_career", "industry_frontier", "classical_science", "alt_degree_mba"])
+      .default("role_career"),
     priorBackground: z.string().max(600).optional(),
     dailyMinutes: z.number().int().min(15).max(480).default(60),
     customBlocks: z
@@ -1837,6 +1839,144 @@ Respond with ONLY a JSON array of 2 objects:
     } catch (error: any) {
       console.error("Error computing pathway timeline:", error);
       res.status(404).json({ error: error?.message || "Failed to compute pathway timeline" });
+    }
+  });
+
+  // 5-Minute Diagnostic Placement Check & Competency Calibration for a Pathway
+  const calibrateSchema = z.object({
+    calibratedBlocks: z
+      .array(
+        z.object({
+          topicId: z.number().int().positive(),
+          masteryPct: z.number().int().min(0).max(100),
+          note: z.string().max(300).optional(),
+        }),
+      )
+      .min(1)
+      .max(30),
+    dailyMinutes: z.number().int().min(15).max(480).optional(),
+    paceMode: z.enum(["fast_track", "balanced", "rigorous"]).optional(),
+  });
+
+  app.post("/api/pathways/:id/calibrate", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const pathwayId = parseInt(req.params.id, 10);
+      if (Number.isNaN(pathwayId) || pathwayId <= 0) {
+        return res.status(400).json({ error: "Invalid pathwayId" });
+      }
+      const parsed = calibrateSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid calibration payload", details: parsed.error.flatten() });
+      }
+
+      const { calibratePathwayPlacement } = await import("../pathway-architect");
+      const result = await calibratePathwayPlacement(storage, userId, pathwayId, parsed.data);
+
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: parsed.data.calibratedBlocks[0]?.topicId ?? null,
+        eventType: "diagnostic_calibrated",
+        metadata: {
+          pathwayId,
+          calibratedCount: result.calibratedCount,
+          priorSavedHours: result.timeline.priorSavedHours,
+        },
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error calibrating pathway placement:", error);
+      res.status(500).json({ error: "Failed to calibrate placement" });
+    }
+  });
+
+  // Spaced Retrieval Interleaving across earlier foundational blocks of a Pathway
+  app.get("/api/pathways/:id/interleaved-review", async (req: any, res: Response) => {
+    try {
+      const pathwayId = parseInt(req.params.id, 10);
+      if (Number.isNaN(pathwayId) || pathwayId <= 0) {
+        return res.status(400).json({ error: "Invalid pathwayId" });
+      }
+      const userId = req.user?.claims?.sub ?? null;
+      const { getInterleavedPathwayReview } = await import("../pathway-architect");
+      const review = await getInterleavedPathwayReview(storage, userId, pathwayId);
+      res.json(review);
+    } catch (error: any) {
+      console.error("Error fetching interleaved review:", error);
+      res.status(500).json({ error: "Failed to fetch interleaved review" });
+    }
+  });
+
+  // Cross-Functional "Knowledge Chemistry" Signature
+  app.get("/api/learn/knowledge-chemistry", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const { computeKnowledgeChemistry } = await import("../pathway-architect");
+      const chemistry = await computeKnowledgeChemistry(storage, userId);
+      res.json(chemistry);
+    } catch (error: any) {
+      console.error("Error computing knowledge chemistry:", error);
+      res.status(500).json({ error: "Failed to compute knowledge chemistry" });
+    }
+  });
+
+  // Proof-of-Work Portfolio Artifacts
+  app.get("/api/learn/portfolio-artifacts", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const pathwayId = req.query.pathwayId ? parseInt(String(req.query.pathwayId), 10) : undefined;
+      const topicId = req.query.topicId ? parseInt(String(req.query.topicId), 10) : undefined;
+      const { getPortfolioArtifacts } = await import("../pathway-architect");
+      const items = await getPortfolioArtifacts(userId, {
+        pathwayId: pathwayId && !Number.isNaN(pathwayId) ? pathwayId : undefined,
+        topicId: topicId && !Number.isNaN(topicId) ? topicId : undefined,
+      });
+      res.json(items);
+    } catch (error: any) {
+      console.error("Error fetching portfolio artifacts:", error);
+      res.status(500).json({ error: "Failed to fetch portfolio artifacts" });
+    }
+  });
+
+  const createArtifactSchema = z.object({
+    pathwayId: z.number().int().positive().nullable().optional(),
+    topicId: z.number().int().positive().nullable().optional(),
+    unitId: z.number().int().positive().nullable().optional(),
+    title: z.string().min(3).max(200),
+    artifactType: z
+      .enum(["architecture_memo", "code_simulation", "financial_case_model", "derivation_proof", "sota_hypothesis"])
+      .default("architecture_memo"),
+    summary: z.string().min(10).max(2400),
+    artifactUrl: z.string().max(400).nullable().optional(),
+    metricsJson: z.any().optional(),
+  });
+
+  app.post("/api/learn/portfolio-artifacts", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = createArtifactSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid artifact payload", details: parsed.error.flatten() });
+      }
+      const { createPortfolioArtifact } = await import("../pathway-architect");
+      const created = await createPortfolioArtifact(userId, parsed.data);
+      await storage.addXp(userId, 25).catch(() => {});
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: created.topicId ?? null,
+        eventType: "artifact_published",
+        metadata: {
+          artifactId: created.id,
+          title: created.title,
+          artifactType: created.artifactType,
+          pathwayId: created.pathwayId,
+        },
+      });
+      res.status(201).json({ artifact: created, xpAwarded: 25 });
+    } catch (error: any) {
+      console.error("Error creating portfolio artifact:", error);
+      res.status(500).json({ error: "Failed to create portfolio artifact" });
     }
   });
 }

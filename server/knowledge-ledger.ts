@@ -27,7 +27,7 @@ import {
 import { eq, and, desc } from "drizzle-orm";
 import type { IStorage } from "./storage";
 
-export type LearningStream = "jit" | "linear" | "agent_chat" | "mcp_agent";
+export type LearningStream = "jit" | "linear" | "agent_chat" | "mcp_agent" | "diagnostic";
 export type ConceptDepthLevel = "intro" | "core" | "advanced" | "frontier";
 
 export interface LedgerLogInput {

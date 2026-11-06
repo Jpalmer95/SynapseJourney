@@ -217,8 +217,8 @@ export const MCP_TOOLS = [
         },
         trackType: {
           type: "string",
-          enum: ["role_career", "industry_frontier", "classical_science"],
-          description: "Roadmap orientation (default: role_career)",
+          enum: ["role_career", "industry_frontier", "classical_science", "alt_degree_mba"],
+          description: "Roadmap orientation (role_career, industry_frontier, classical_science, or alt_degree_mba)",
         },
         priorBackground: {
           type: "string",
@@ -248,6 +248,40 @@ export const MCP_TOOLS = [
         },
       },
       required: ["pathwayId"],
+    },
+  },
+  {
+    name: "synapse.calibrate_placement",
+    description:
+      "Calibrate a learner's diagnostic placement across building blocks in a pathway (0-100% mastery per topic), logging diagnostic entries to the Unified Knowledge Ledger and recalculating the discounted timeline.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        pathwayId: { type: "number", description: "Numeric pathwayId" },
+        calibratedBlocks: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              topicId: { type: "number" },
+              masteryPct: { type: "number", description: "0-100 competency level" },
+              note: { type: "string" },
+            },
+            required: ["topicId", "masteryPct"],
+          },
+        },
+        dailyMinutes: { type: "number" },
+      },
+      required: ["pathwayId", "calibratedBlocks"],
+    },
+  },
+  {
+    name: "synapse.get_knowledge_chemistry",
+    description:
+      "Compute the learner's cross-functional Knowledge Chemistry profile across STEM, Hardware, AI, Math, and Business/Economics/Venture — including rare domain intersections and collaboration superpower.",
+    inputSchema: {
+      type: "object",
+      properties: {},
     },
   },
 ];
@@ -616,7 +650,12 @@ export function registerMcpRoutes(app: Express) {
         if (toolName === "synapse.architect_pathway") {
           const targetGoal = String(args.targetGoal || "").trim();
           if (!targetGoal) return sendError(-32602, "targetGoal is required");
-          const trackType = ["role_career", "industry_frontier", "classical_science"].includes(args.trackType)
+          const trackType = [
+            "role_career",
+            "industry_frontier",
+            "classical_science",
+            "alt_degree_mba",
+          ].includes(args.trackType)
             ? args.trackType
             : "role_career";
           const { architectMasteryRoadmap } = await import("../pathway-architect");
@@ -655,6 +694,35 @@ export function registerMcpRoutes(app: Express) {
           });
           return sendResult({
             content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
+          });
+        }
+
+        if (toolName === "synapse.calibrate_placement") {
+          const pathwayId = Number(args.pathwayId);
+          const calibratedBlocks = Array.isArray(args.calibratedBlocks) ? args.calibratedBlocks : [];
+          if (!pathwayId || calibratedBlocks.length === 0) {
+            return sendError(-32602, "pathwayId and calibratedBlocks are required");
+          }
+          const { calibratePathwayPlacement } = await import("../pathway-architect");
+          const result = await calibratePathwayPlacement(storage, userId, pathwayId, {
+            calibratedBlocks: calibratedBlocks.map((b: any) => ({
+              topicId: Number(b.topicId),
+              masteryPct: Number(b.masteryPct) || 0,
+              note: b.note ? String(b.note) : undefined,
+            })),
+            dailyMinutes: Number(args.dailyMinutes) || 60,
+          });
+          return sendResult({
+            content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+          });
+        }
+
+        if (toolName === "synapse.get_knowledge_chemistry") {
+          const { computeKnowledgeChemistry, getPortfolioArtifacts } = await import("../pathway-architect");
+          const chemistry = await computeKnowledgeChemistry(storage, userId);
+          const artifacts = await getPortfolioArtifacts(userId);
+          return sendResult({
+            content: [{ type: "text", text: JSON.stringify({ chemistry, artifacts }, null, 2) }],
           });
         }
 

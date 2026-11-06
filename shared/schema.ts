@@ -771,12 +771,27 @@ export const userKnowledgeLedger = pgTable("user_knowledge_ledger", {
   conceptTitle: text("concept_title").notNull(),
   normalizedConcept: text("normalized_concept").notNull(),
   summary: text("summary").notNull(),
-  stream: text("stream").default("linear").notNull(), // jit | linear | agent_chat | mcp_agent
+  stream: text("stream").default("linear").notNull(), // jit | linear | agent_chat | mcp_agent | diagnostic
   depthLevel: text("depth_level").default("core").notNull(), // intro | core | advanced | frontier
   confidence: integer("confidence").default(80).notNull(), // 0-100 mastery confidence
   tags: text("tags").array(),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Proof-of-Work Portfolio Artifacts (verifiable deliverables across STEM, Role Roadmaps & Alt-MBA Case Studios)
+export const userPortfolioArtifacts = pgTable("user_portfolio_artifacts", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  pathwayId: integer("pathway_id").references(() => pathways.id),
+  topicId: integer("topic_id").references(() => topics.id),
+  unitId: integer("unit_id").references(() => lessonUnits.id),
+  title: text("title").notNull(),
+  artifactType: text("artifact_type").default("architecture_memo").notNull(), // architecture_memo | code_simulation | financial_case_model | derivation_proof | sota_hypothesis
+  summary: text("summary").notNull(),
+  artifactUrl: text("artifact_url"),
+  metricsJson: jsonb("metrics_json"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Relations
@@ -878,6 +893,7 @@ export const insertLearningGoalSchema = createInsertSchema(learningGoals).omit({
 export const insertLearningTimelineSchema = createInsertSchema(learningTimeline).omit({ id: true, createdAt: true });
 export const insertTopicLearningPrefsSchema = createInsertSchema(topicLearningPrefs).omit({ id: true, updatedAt: true });
 export const insertUserKnowledgeLedgerSchema = createInsertSchema(userKnowledgeLedger).omit({ id: true, createdAt: true, updatedAt: true });
+export const insertUserPortfolioArtifactSchema = createInsertSchema(userPortfolioArtifacts).omit({ id: true, createdAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -1006,6 +1022,8 @@ export type TopicLearningPrefs = typeof topicLearningPrefs.$inferSelect;
 export type InsertTopicLearningPrefs = z.infer<typeof insertTopicLearningPrefsSchema>;
 export type UserKnowledgeLedgerEntry = typeof userKnowledgeLedger.$inferSelect;
 export type InsertUserKnowledgeLedgerEntry = z.infer<typeof insertUserKnowledgeLedgerSchema>;
+export type UserPortfolioArtifact = typeof userPortfolioArtifacts.$inferSelect;
+export type InsertUserPortfolioArtifact = z.infer<typeof insertUserPortfolioArtifactSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

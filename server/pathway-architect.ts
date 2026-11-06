@@ -24,7 +24,7 @@ import { computeConceptOverlap, getPriorKnowledgeForTopic } from "./knowledge-le
 import { generateByokOrPool, validateByokCredentials, type ProviderConfig } from "./ai-providers";
 import { indexTopicToFlywheel } from "./embeddings";
 
-export type TrackType = "role_career" | "industry_frontier" | "classical_science";
+export type TrackType = "role_career" | "industry_frontier" | "classical_science" | "alt_degree_mba";
 export type ImpactTier = "foundation" | "core" | "high_impact" | "frontier";
 
 export interface RoadmapBlockSpec {
@@ -356,6 +356,306 @@ function buildDeterministicBlocks(
       blocks,
       capstoneBottleneck:
         "Design a <1.5W always-on XR perception & display co-processor architecture achieving <5ms motion-to-photon latency with 6DoF VIO and eye-tracked foveated reprojection.",
+    };
+  }
+
+  // High-precision blueprint for Alt-MBA / Executive / Venture / Cross-Functional Business & Economics
+  const isAltMbaOrBusiness =
+    trackType === "alt_degree_mba" ||
+    q.includes("mba") ||
+    q.includes("business") ||
+    q.includes("venture") ||
+    q.includes("founder") ||
+    q.includes("corporate finance") ||
+    q.includes("valuation") ||
+    q.includes("executive") ||
+    q.includes("commercialization");
+
+  if (isAltMbaOrBusiness) {
+    const micro = findCatalog("Microeconomics");
+    const prob = findCatalog("Probability & Statistics", "Probability");
+    const logic = findCatalog("Logic", "Graph Theory");
+
+    const blocks: RoadmapBlockSpec[] = [
+      {
+        existingTopicId: micro?.id ?? null,
+        title: micro?.title || "Microeconomics",
+        description:
+          micro?.description ||
+          "Supply and demand elasticity, marginal cost pricing, market structure, and game-theoretic competition.",
+        phaseLabel: "Phase 1: Economic & Quantitative Foundations",
+        impactTier: "foundation",
+        impactScore: 90,
+        estimatedHours: 10,
+        isRequired: true,
+        whyItMatters:
+          "Every pricing, unit-economics, and competitive moat decision is applied microeconomics.",
+        prerequisiteIndices: [],
+      },
+      {
+        existingTopicId: prob?.id ?? null,
+        title: prob?.title || "Probability & Statistics",
+        description:
+          prob?.description ||
+          "Expected value, Bayesian updating, risk distributions, hypothesis testing, and Monte Carlo simulation.",
+        phaseLabel: "Phase 1: Economic & Quantitative Foundations",
+        impactTier: "foundation",
+        impactScore: 88,
+        estimatedHours: 10,
+        isRequired: true,
+        whyItMatters:
+          "Capital allocation, cohort retention modeling, and venture bets require rigorous probabilistic reasoning under uncertainty.",
+        prerequisiteIndices: [],
+      },
+      {
+        title: "Financial Accounting, Cash Flow Mechanics & Unit Economics",
+        description:
+          "Three-statement accounting linkage (Income Statement, Balance Sheet, Cash Flow), accrual vs cash conversion cycles, LTV:CAC, contribution margin, and burn multiples.",
+        phaseLabel: "Phase 1: Economic & Quantitative Foundations",
+        impactTier: "foundation",
+        impactScore: 95,
+        estimatedHours: 12,
+        isRequired: true,
+        whyItMatters:
+          "Accounting is the language of business — you cannot allocate capital or diagnose operational health without reading cash flows and unit economics.",
+        prerequisiteIndices: [0],
+        units: [
+          {
+            title: "Intro Course: The Accounting Identity & Three-Statement Linkage",
+            outline: "Assets = Liabilities + Equity; how every operational transaction flows across the Income Statement, Balance Sheet, and Statement of Cash Flows.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Accrual vs Cash, Working Capital & The Cash Conversion Cycle",
+            outline: "Why profitable companies go bankrupt: AR, inventory, AP, deferred revenue, and negative working capital engines.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "Unit Economics: Contribution Margin, Cohort LTV, CAC & Payback Period",
+            outline: "Decomposing gross margin vs contribution margin, cohort retention curves, and magic number / burn multiple diagnostics.",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Forensic Financial Analysis & SEC 10-K / S-1 Dissection",
+            outline: "Spotting aggressive revenue recognition, capitalized expenses, and structural margin leverage in public filings.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+      {
+        title: "Corporate Finance, DCF Valuation & Capital Allocation",
+        description:
+          "Time value of money, cost of capital (CAPM/WACC), Discounted Cash Flow (DCF) modeling, ROIC vs WACC spread, and executive capital allocation (R&D, M&A, buybacks, debt).",
+        phaseLabel: "Phase 2: Corporate Finance, Valuation & Operations",
+        impactTier: "core",
+        impactScore: 96,
+        estimatedHours: 14,
+        isRequired: true,
+        whyItMatters:
+          "The CEO and CFO's primary lever for compounding long-term intrinsic value is allocating capital where ROIC exceeds the cost of capital.",
+        prerequisiteIndices: [1, 2],
+        units: [
+          {
+            title: "Intro Course: Time Value of Money, NPV, IRR & Opportunity Cost",
+            outline: "Discounting future cash flows, risk premia, and why NPV dominates IRR in mutually exclusive capital decisions.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Cost of Capital (WACC), Free Cash Flow to Firm (FCFF) & DCF Valuation",
+            outline: "Building a ground-up Damodaran-style DCF: operating cash flows, reinvestment rate, terminal value, and sensitivity matrices.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "ROIC vs WACC, Capital Structure & The Outsiders Capital Allocation Playbook",
+            outline: "When to reinvest in organic R&D, acquire, pay dividends, or repurchase shares — lessons from high-compounding operators.",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Real Options, Venture Valuation & Asymmetric R&D Bets",
+            outline: "Valuing pre-revenue deep-tech and platform bets where traditional static DCF fails.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+      {
+        title: "Operations Research, Supply Chains & Theory of Constraints",
+        description:
+          "Little's Law, queuing theory, inventory optimization (EOQ/newsvendor), Goldratt's Theory of Constraints, and high-reliability production systems.",
+        phaseLabel: "Phase 2: Corporate Finance, Valuation & Operations",
+        impactTier: "core",
+        impactScore: 91,
+        estimatedHours: 12,
+        isRequired: true,
+        whyItMatters:
+          "Turns strategy into physical and digital throughput — eliminating bottlenecks, variance, and inventory drag across hardware, software, or retail ops.",
+        prerequisiteIndices: [1],
+        units: [
+          {
+            title: "Intro Course: Little's Law, Throughput, Work-in-Progress & Cycle Time",
+            outline: "L = lambda * W: the governing conservation law of every factory, cloud queue, and service operation.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Queuing Theory, Utilization Cliffs & Kingman's Equation",
+            outline: "Why pushing utilization from 80% to 95% causes exponential latency explosions when arrival or service variance is non-zero.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "Inventory Models (EOQ, Newsvendor, Safety Stock) & Bullwhip Dynamics",
+            outline: "Balancing stockout cost against holding cost under stochastic demand and lead-time variance.",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Theory of Constraints & Autonomous AI-Driven Operations",
+            outline: "Identifying the single binding system bottleneck, subordinating non-bottlenecks, and closing the loop with telemetry.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+      {
+        title: "Competitive Strategy, Structural Moats & Industrial Organization",
+        description:
+          "Hamilton Helmer's 7 Powers (scale economies, network economies, counter-positioning, switching costs, cornered resource, process power, branding) and value-chain capture.",
+        phaseLabel: "Phase 3: Highest-Impact Strategy, GTM & Leadership (80/20 Core)",
+        impactTier: "high_impact",
+        impactScore: 99,
+        estimatedHours: 13,
+        isRequired: true,
+        whyItMatters:
+          "Without a structural barrier to arbitrage, operational excellence is competed away to zero economic profit.",
+        prerequisiteIndices: [0, 3],
+        units: [
+          {
+            title: "Intro Course: Statics vs Dynamics of Strategy & The 7 Powers Framework",
+            outline: "Benefit + Barrier: why a true moat requires both a cash-flow advantage and an arbitrage-blocking mechanism.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Counter-Positioning, Switching Costs & Network Economics",
+            outline: "Modeling incumbent collateral damage in counter-positioning and direct vs indirect network effect tipping points.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "Value Chain Modularity vs Integration (Conservation of Attractive Profits)",
+            outline: "Clayton Christensen's law: where to integrate vertically vs open modular interfaces in technical ecosystems.",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Cross-Functional Strategy: Combining STEM IP with Business Model Moats",
+            outline: "How deep-tech, hardware, and AI companies pair cornered technical resources with recurring economic flywheels.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+      {
+        title: "Go-To-Market Architecture, Pricing Power & Compounding Growth Loops",
+        description:
+          "Willingness-to-pay segmentation, value-metric pricing, Product-Led Growth (PLG) vs enterprise sales physics, and self-reinforcing acquisition/retention loops.",
+        phaseLabel: "Phase 3: Highest-Impact Strategy, GTM & Leadership (80/20 Core)",
+        impactTier: "high_impact",
+        impactScore: 97,
+        estimatedHours: 11,
+        isRequired: true,
+        whyItMatters:
+          "Distribution and pricing architecture determine whether superior product engineering translates into market adoption and margin expansion.",
+        prerequisiteIndices: [0, 2],
+        units: [
+          {
+            title: "Intro Course: Price-Market Fit, Value Metrics & Willingness-to-Pay",
+            outline: "Designing pricing tiers around usage/value metrics that scale naturally with customer surplus.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Growth Loops (Viral, Content, Paid, Sales) vs Linear Funnels",
+            outline: "Mathematical modeling of loop reinvestment coefficients, cycle times, and channel saturation.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "Enterprise Sales Physics vs Self-Serve PLG Motion",
+            outline: "Matching ACV (Annual Contract Value) to CAC channel economics, sales cycle length, and net dollar retention (NDR).",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Zero-CAC Community, Open-Source & Ecosystem Distribution",
+            outline: "Building developer/creator commons that compound trust and inbound demand without paid ad arbitrage.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+      {
+        title: "Deep-Tech Commercialization, Venture Cap Tables & Knowledge Chemistry Capstone",
+        description:
+          "Venture financing mechanics (SAFE/priced rounds, liquidation preferences, dilution), IP/licensing strategy, cross-functional team design, and an end-to-end Operating & Investment Thesis.",
+        phaseLabel: "Phase 4: Venture Creation & Cross-Functional Capstone",
+        impactTier: "frontier",
+        impactScore: 95,
+        estimatedHours: 12,
+        isRequired: true,
+        whyItMatters:
+          "Synthesizes technical invention, financial modeling, and organizational design so engineers, scientists, and operators can build enduring ventures together.",
+        prerequisiteIndices: [3, 4, 5, 6],
+        units: [
+          {
+            title: "Intro Course: Cap Table Math, Dilution, Liquidation Preferences & Control",
+            outline: "Pre-money vs post-money SAFEs, option pools, pro-rata rights, and waterfall payouts across exit scenarios.",
+            difficulty: "beginner",
+            tierLabel: "Intro & Analytical Framework",
+          },
+          {
+            title: "Deep-Tech Commercialization: Crossing the Valley of Death (TRL 1 to TRL 9)",
+            outline: "Sequencing non-dilutive grants, NRE partnerships, pilot contracts, and venture capital for hardware/science ventures.",
+            difficulty: "intermediate",
+            tierLabel: "Quantitative & Financial Model",
+          },
+          {
+            title: "Knowledge Chemistry: Designing High-Velocity Cross-Functional Teams",
+            outline: "Pairing domain specialists (physics/silicon/ML) with systems operators and commercial architects to maximize invention rate.",
+            difficulty: "advanced",
+            tierLabel: "Case Dissection & Trade-Offs",
+          },
+          {
+            title: "Capstone Studio: Full Operating Plan, 5-Year Financial Model & S-1 Memo",
+            outline: "Author a complete, falsifiable operating thesis with unit economics, moat defense, and capital allocation milestones.",
+            difficulty: "nextgen",
+            tierLabel: "Executive Decision & Capstone Memo",
+          },
+        ],
+      },
+    ];
+
+    if (logic && !blocks.some((b) => b.existingTopicId === logic.id)) {
+      blocks[0].whyItMatters += ` Pairs directly with formal decision logic and game theory.`;
+    }
+
+    return {
+      pathwayName: targetGoal.toLowerCase().includes("mba") ? targetGoal.trim() : `Alt-MBA: ${targetGoal.trim()}`,
+      pathwayDescription:
+        "Non-accredited, full-rigor M7/Sloan-grade curriculum: microeconomics, 3-statement accounting & unit economics, Damodaran-style DCF valuation, operations research, 7 Powers competitive strategy, GTM physics, and deep-tech venture commercialization.",
+      icon: "Boxes",
+      color: "amber",
+      blocks,
+      capstoneBottleneck:
+        "Author a complete Proof-of-Work Operating & Investment Memo: 3-statement unit economics model, WACC/DCF valuation, 7-Powers moat analysis, and a 24-month capital allocation plan.",
     };
   }
 
@@ -881,3 +1181,424 @@ export async function computePathwayTimeline(
     nodesHighImpactFirst,
   };
 }
+
+/**
+ * 5-Minute Diagnostic Placement & Competency Calibration:
+ * Lets a learner calibrate their starting point across a Pathway (or Topic) by declaring
+ * or demonstrating proficiency in specific building blocks (`calibratedBlocks`).
+ * Automatically writes `[DIAGNOSTIC]` entries into `user_knowledge_ledger`, updates
+ * `user_progress.mastery`, and recalculates the discounted timeline.
+ */
+export async function calibratePathwayPlacement(
+  storage: IStorage,
+  userId: string,
+  pathwayId: number,
+  input: {
+    calibratedBlocks: {
+      topicId: number;
+      masteryPct: number; // 0 - 100
+      note?: string;
+    }[];
+    dailyMinutes?: number;
+    paceMode?: "fast_track" | "balanced" | "rigorous";
+  },
+): Promise<{
+  calibratedCount: number;
+  xpAwarded: number;
+  timeline: PathwayTimelineReport;
+}> {
+  const { logAndReconcileKnowledge } = await import("./knowledge-ledger");
+  const ledgerInputs = [];
+  let calibratedCount = 0;
+
+  for (const item of input.calibratedBlocks) {
+    const topic = await storage.getTopicById(item.topicId);
+    if (!topic) continue;
+    const masteryPct = Math.min(100, Math.max(0, Math.round(item.masteryPct)));
+    const status = masteryPct >= 80 ? "mastered" : masteryPct > 0 ? "learning" : "discovered";
+
+    await storage.upsertProgress({
+      userId,
+      topicId: topic.id,
+      mastery: masteryPct,
+      status,
+    });
+
+    if (masteryPct > 0) {
+      calibratedCount++;
+      ledgerInputs.push({
+        conceptTitle: `${topic.title} (Diagnostic Placement: ${masteryPct}%)`,
+        summary:
+          item.note?.trim() ||
+          `Calibrated prior competency in ${topic.title} at ${masteryPct}% via Diagnostic Placement Check.`,
+        stream: "diagnostic" as const,
+        depthLevel: masteryPct >= 80 ? ("advanced" as const) : ("core" as const),
+        confidence: masteryPct,
+        topicId: topic.id,
+        topicTitle: topic.title,
+        createMapNodeIfMissing: false,
+      });
+    }
+  }
+
+  if (ledgerInputs.length > 0) {
+    await logAndReconcileKnowledge(storage, userId, ledgerInputs);
+  }
+
+  const xpAwarded = calibratedCount * 20;
+  if (xpAwarded > 0) {
+    await storage.addXp(userId, xpAwarded).catch(() => {});
+  }
+
+  const timeline = await computePathwayTimeline(storage, userId, pathwayId, {
+    dailyMinutes: input.dailyMinutes || 60,
+    paceMode: input.paceMode || "balanced",
+  });
+
+  return {
+    calibratedCount,
+    xpAwarded,
+    timeline,
+  };
+}
+
+/**
+ * Spaced Retrieval Interleaving Across Active Pathways:
+ * Extracts 4-6 high-signal retrieval prompts/questions from Phase 1-2 foundational
+ * courses in the pathway so foundational equations/frameworks never decay while the
+ * learner advances into Phase 3-4 frontier blocks.
+ */
+export async function getInterleavedPathwayReview(
+  storage: IStorage,
+  userId: string | null | undefined,
+  pathwayId: number,
+): Promise<{
+  cards: {
+    id: string;
+    topicId: number;
+    topicTitle: string;
+    unitTitle: string;
+    phaseLabel: string;
+    prompt: string;
+    answer: string;
+    options?: string[];
+    correctIndex?: number;
+  }[];
+}> {
+  const pathwayTopics = await storage.getPathwayTopics(pathwayId);
+  const sorted = [...pathwayTopics].sort((a, b) => a.order - b.order);
+  const cards: {
+    id: string;
+    topicId: number;
+    topicTitle: string;
+    unitTitle: string;
+    phaseLabel: string;
+    prompt: string;
+    answer: string;
+    options?: string[];
+    correctIndex?: number;
+  }[] = [];
+
+  for (const pt of sorted) {
+    if (cards.length >= 6) break;
+    const units = await storage.getLessonUnits(pt.topic.id);
+    for (const u of units.slice(0, 3)) {
+      if (cards.length >= 6) break;
+      const cj = (u.contentJson || {}) as any;
+      if (Array.isArray(cj.quiz) && cj.quiz.length > 0) {
+        const q = cj.quiz[0];
+        cards.push({
+          id: `quiz-${u.id}-0`,
+          topicId: pt.topic.id,
+          topicTitle: pt.topic.title,
+          unitTitle: u.title,
+          phaseLabel: pt.phaseLabel || `Block ${pt.order}`,
+          prompt: q.question,
+          answer: q.explanation || q.options?.[q.correctIndex] || "",
+          options: Array.isArray(q.options) ? q.options : undefined,
+          correctIndex: typeof q.correctIndex === "number" ? q.correctIndex : undefined,
+        });
+      } else if (Array.isArray(cj.keyTakeaways) && cj.keyTakeaways.length > 0) {
+        cards.push({
+          id: `takeaway-${u.id}`,
+          topicId: pt.topic.id,
+          topicTitle: pt.topic.title,
+          unitTitle: u.title,
+          phaseLabel: pt.phaseLabel || `Block ${pt.order}`,
+          prompt: `Recall the core principle and governing mechanism of: "${u.title}" (${pt.topic.title})`,
+          answer: cj.keyTakeaways.slice(0, 2).join(" • "),
+        });
+      } else if (u.outline) {
+        cards.push({
+          id: `outline-${u.id}`,
+          topicId: pt.topic.id,
+          topicTitle: pt.topic.title,
+          unitTitle: u.title,
+          phaseLabel: pt.phaseLabel || `Block ${pt.order}`,
+          prompt: `Explain how "${u.title}" functions as a building block in ${pt.topic.title}:`,
+          answer: u.outline.replace(/\s*\[[^\]]+\]\s*$/, ""),
+        });
+      }
+    }
+  }
+
+  return { cards };
+}
+
+/**
+ * Cross-Functional "Knowledge Chemistry" Signature:
+ * Computes the learner's unique multi-domain blend across STEM, Engineering, Computing,
+ * and Business/Economics/Strategy — surfacing their rare cross-domain intersections and
+ * what "knowledge chemistry" they bring to an invention or venture team.
+ */
+export async function computeKnowledgeChemistry(
+  storage: IStorage,
+  userId: string,
+): Promise<{
+  signatureTitle: string;
+  collaborationSuperpower: string;
+  totalActiveTopics: number;
+  totalLedgerConcepts: number;
+  domainComposition: {
+    domain: string;
+    topicCount: number;
+    avgMasteryPct: number;
+    weightPct: number;
+    sampleTopics: string[];
+  }[];
+  rareIntersections: {
+    bridge: string;
+    whyItCompounds: string;
+  }[];
+}> {
+  const { db } = await import("./db");
+  const { userKnowledgeLedger } = await import("@shared/schema");
+  const { eq } = await import("drizzle-orm");
+
+  const progressRows = await storage.getUserProgress(userId);
+  const ledgerRows = await db
+    .select()
+    .from(userKnowledgeLedger)
+    .where(eq(userKnowledgeLedger.userId, userId));
+  const categories = await storage.getCategories();
+  const catMap = new Map(categories.map((c) => [c.id, c.name]));
+
+  const inferMacroDomain = (title: string, desc: string, catName?: string): string => {
+    const t = `${title} ${desc} ${catName || ""}`.toLowerCase();
+    if (
+      t.includes("mba") ||
+      t.includes("econom") ||
+      t.includes("finance") ||
+      t.includes("valuation") ||
+      t.includes("accounting") ||
+      t.includes("strategy") ||
+      t.includes("market") ||
+      t.includes("venture") ||
+      t.includes("operations")
+    ) {
+      return "Economics, Strategy & Venture";
+    }
+    if (
+      t.includes("vlsi") ||
+      t.includes("silicon") ||
+      t.includes("chip") ||
+      t.includes("rtl") ||
+      t.includes("hardware") ||
+      t.includes("circuit") ||
+      t.includes("orbital") ||
+      t.includes("robotics") ||
+      t.includes("display")
+    ) {
+      return "Hardware, Silicon & Aerospace Systems";
+    }
+    if (
+      t.includes("neural") ||
+      t.includes("machine learning") ||
+      t.includes("algorithm") ||
+      t.includes("data structure") ||
+      t.includes("database") ||
+      t.includes("software") ||
+      t.includes("ai")
+    ) {
+      return "AI, Algorithms & Computing";
+    }
+    if (
+      t.includes("physics") ||
+      t.includes("mechanics") ||
+      t.includes("electromagnet") ||
+      t.includes("optics") ||
+      t.includes("thermodynam") ||
+      t.includes("chemistry") ||
+      t.includes("biology")
+    ) {
+      return "Hard Sciences (Physics, Chem & Bio)";
+    }
+    if (
+      t.includes("algebra") ||
+      t.includes("calculus") ||
+      t.includes("probability") ||
+      t.includes("graph theory") ||
+      t.includes("logic") ||
+      t.includes("differential")
+    ) {
+      return "Mathematics & Formal Logic";
+    }
+    return catName || "Interdisciplinary & Creative";
+  };
+
+  const domainMap = new Map<
+    string,
+    { topicCount: number; masterySum: number; topics: string[] }
+  >();
+
+  const touchedTopicIds = new Set<number>();
+  for (const p of progressRows) {
+    if ((p.mastery ?? 0) > 0 || p.status === "learning" || p.status === "mastered") {
+      touchedTopicIds.add(p.topicId);
+    }
+  }
+  for (const l of ledgerRows) {
+    if (l.topicId) touchedTopicIds.add(l.topicId);
+  }
+
+  for (const tid of Array.from(touchedTopicIds)) {
+    const topic = await storage.getTopicById(tid);
+    if (!topic) continue;
+    const prog = progressRows.find((p) => p.topicId === tid);
+    const mastery = Math.max(20, prog?.mastery ?? 35);
+    const catName = topic.categoryId ? catMap.get(topic.categoryId) : undefined;
+    const domain = inferMacroDomain(topic.title, topic.description, catName);
+    const entry = domainMap.get(domain) || { topicCount: 0, masterySum: 0, topics: [] };
+    entry.topicCount++;
+    entry.masterySum += mastery;
+    if (entry.topics.length < 4) entry.topics.push(topic.title);
+    domainMap.set(domain, entry);
+  }
+
+  const totalScore = Array.from(domainMap.values()).reduce((s, d) => s + d.masterySum, 0) || 1;
+  const domainComposition = Array.from(domainMap.entries())
+    .map(([domain, data]) => ({
+      domain,
+      topicCount: data.topicCount,
+      avgMasteryPct: Math.round(data.masterySum / Math.max(1, data.topicCount)),
+      weightPct: Math.max(5, Math.round((data.masterySum / totalScore) * 100)),
+      sampleTopics: data.topics,
+    }))
+    .sort((a, b) => b.weightPct - a.weightPct);
+
+  const topDomains = domainComposition.map((d) => d.domain);
+  const hasStem = topDomains.some(
+    (d) =>
+      d.includes("Hard Sciences") ||
+      d.includes("Hardware") ||
+      d.includes("AI") ||
+      d.includes("Mathematics"),
+  );
+  const hasBusiness = topDomains.some((d) => d.includes("Economics, Strategy & Venture"));
+  const hasHardware = topDomains.some((d) => d.includes("Hardware"));
+
+  let signatureTitle = "Emerging Polymath Explorer";
+  let collaborationSuperpower =
+    "Builds first-principles bridges across domains — able to translate between mathematical/scientific mechanisms and real-world engineering execution.";
+
+  if (hasStem && hasBusiness && hasHardware) {
+    signatureTitle = "Deep-Tech Silicon, Science & Venture Architect";
+    collaborationSuperpower =
+      "Rare triple-threat knowledge chemistry: combines physical/silicon engineering and mathematical rigor with unit economics, DCF capital allocation, and competitive moat design.";
+  } else if (hasStem && hasBusiness) {
+    signatureTitle = "Technical Founder & Quantitative Strategist";
+    collaborationSuperpower =
+      "Bridges hard STEM engineering with M7-grade economics, valuation, and go-to-market physics — spots where technical breakthroughs create defensible economic moats.";
+  } else if (topDomains.length >= 3) {
+    signatureTitle = `Cross-Domain Systems Polymath (${topDomains.slice(0, 2).map((d) => d.split(",")[0]).join(" × ")})`;
+    collaborationSuperpower =
+      "Synthesizes mechanisms across multiple technical disciplines to attack frontier SOTA bottlenecks that single-specialty teams miss.";
+  } else if (topDomains.length >= 1) {
+    signatureTitle = `${topDomains[0].split(",")[0]} Specialist`;
+  }
+
+  const rareIntersections: { bridge: string; whyItCompounds: string }[] = [];
+  if (domainComposition.length >= 2) {
+    for (let i = 0; i < Math.min(3, domainComposition.length - 1); i++) {
+      const a = domainComposition[i];
+      const b = domainComposition[i + 1];
+      rareIntersections.push({
+        bridge: `${a.sampleTopics[0] || a.domain} × ${b.sampleTopics[0] || b.domain}`,
+        whyItCompounds: `Combining ${a.domain.toLowerCase()} with ${b.domain.toLowerCase()} lets you model both the physical/algorithmic constraint and the system-level or economic payoff.`,
+      });
+    }
+  }
+
+  return {
+    signatureTitle,
+    collaborationSuperpower,
+    totalActiveTopics: touchedTopicIds.size,
+    totalLedgerConcepts: ledgerRows.length,
+    domainComposition,
+    rareIntersections,
+  };
+}
+
+/**
+ * Create a Proof-of-Work Portfolio Artifact (architecture memo, financial/case model,
+ * simulation, derivation proof, or SOTA hypothesis deliverable).
+ */
+export async function createPortfolioArtifact(
+  userId: string,
+  input: {
+    pathwayId?: number | null;
+    topicId?: number | null;
+    unitId?: number | null;
+    title: string;
+    artifactType?: string;
+    summary: string;
+    artifactUrl?: string | null;
+    metricsJson?: unknown;
+  },
+) {
+  const { db } = await import("./db");
+  const { userPortfolioArtifacts } = await import("@shared/schema");
+  const [created] = await db
+    .insert(userPortfolioArtifacts)
+    .values({
+      userId,
+      pathwayId: input.pathwayId ?? null,
+      topicId: input.topicId ?? null,
+      unitId: input.unitId ?? null,
+      title: input.title.trim(),
+      artifactType: input.artifactType || "architecture_memo",
+      summary: input.summary.trim(),
+      artifactUrl: input.artifactUrl?.trim() || null,
+      metricsJson: input.metricsJson ?? null,
+    })
+    .returning();
+  return created;
+}
+
+/**
+ * List Proof-of-Work Portfolio Artifacts for a user (optionally filtered by pathwayId or topicId).
+ */
+export async function getPortfolioArtifacts(
+  userId: string,
+  filters?: { pathwayId?: number; topicId?: number },
+) {
+  const { db } = await import("./db");
+  const { userPortfolioArtifacts } = await import("@shared/schema");
+  const { eq, desc, and } = await import("drizzle-orm");
+
+  const conditions = [eq(userPortfolioArtifacts.userId, userId)];
+  if (filters?.pathwayId) {
+    conditions.push(eq(userPortfolioArtifacts.pathwayId, filters.pathwayId));
+  }
+  if (filters?.topicId) {
+    conditions.push(eq(userPortfolioArtifacts.topicId, filters.topicId));
+  }
+
+  return db
+    .select()
+    .from(userPortfolioArtifacts)
+    .where(conditions.length === 1 ? conditions[0] : and(...conditions))
+    .orderBy(desc(userPortfolioArtifacts.createdAt));
+}
+
+

@@ -101,7 +101,7 @@ export default function PathwaysPage() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [targetGoal, setTargetGoal] = useState("");
-  const [trackType, setTrackType] = useState<"role_career" | "industry_frontier" | "classical_science">("role_career");
+  const [trackType, setTrackType] = useState<"role_career" | "industry_frontier" | "classical_science" | "alt_degree_mba">("role_career");
   const [priorBackground, setPriorBackground] = useState("");
   const [dailyMinutes, setDailyMinutes] = useState(60);
 
@@ -111,6 +111,27 @@ export default function PathwaysPage() {
 
   const { data: userPathways, isLoading: userPathwaysLoading } = useQuery<UserPathway[]>({
     queryKey: ["/api/user/pathways"],
+  });
+
+  const { data: chemistry } = useQuery<{
+    signatureTitle: string;
+    collaborationSuperpower: string;
+    totalActiveTopics: number;
+    totalLedgerConcepts: number;
+    domainComposition: {
+      domain: string;
+      topicCount: number;
+      avgMasteryPct: number;
+      weightPct: number;
+      sampleTopics: string[];
+    }[];
+    rareIntersections: {
+      bridge: string;
+      whyItCompounds: string;
+    }[];
+  }>({
+    queryKey: ["/api/learn/knowledge-chemistry"],
+    retry: false,
   });
 
   const architectMutation = useMutation({
@@ -219,6 +240,7 @@ export default function PathwaysPage() {
                     { id: "role_career", label: "Target Role / Career", desc: "e.g. Frontier XR Chip Engineer" },
                     { id: "industry_frontier", label: "Frontier Industry", desc: "e.g. Spatial Computing & Photonics" },
                     { id: "classical_science", label: "Classical Hard Science", desc: "e.g. Theoretical Physics & Electrodynamics" },
+                    { id: "alt_degree_mba", label: "Alt-MBA & Cross-Functional", desc: "M7/Sloan-grade Economics, Finance, Strategy & Venture" },
                   ] as const
                 ).map((t) => (
                   <button
@@ -242,7 +264,7 @@ export default function PathwaysPage() {
                 <Input
                   value={targetGoal}
                   onChange={(e) => setTargetGoal(e.target.value)}
-                  placeholder="e.g. Frontier XR Chip Engineer, Robotics Control Architect, Classical Electrodynamics…"
+                  placeholder="e.g. Frontier XR Chip Engineer, Alt-MBA: Technical Founder & Venture Strategy, Classical Electrodynamics…"
                   className="h-9 text-sm bg-background"
                   data-testid="input-architect-target-goal"
                 />
@@ -261,6 +283,7 @@ export default function PathwaysPage() {
                   <span className="text-[11px] text-muted-foreground">Try:</span>
                   {[
                     { label: "Frontier XR Chip Engineer", track: "role_career" as const },
+                    { label: "Alt-MBA: Technical Founder & Venture Strategy", track: "alt_degree_mba" as const },
                     { label: "Autonomous Robotics Control Architect", track: "role_career" as const },
                     { label: "Classical Hard Sciences: Physics & Electrodynamics", track: "classical_science" as const },
                   ].map((preset) => (
@@ -315,6 +338,60 @@ export default function PathwaysPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Cross-Functional "Knowledge Chemistry" Signature */}
+          {chemistry && chemistry.domainComposition.length > 0 && (
+            <Card
+              className="mb-8 border-amber-500/30 bg-gradient-to-br from-amber-500/5 via-background to-purple-500/5"
+              data-testid="card-knowledge-chemistry"
+            >
+              <CardContent className="p-4 sm:p-5 space-y-3">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div>
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <Badge variant="outline" className="border-amber-500/40 text-amber-400 text-xs">
+                        <FlaskConical className="h-3 w-3 mr-1" />
+                        Your Cross-Functional Knowledge Chemistry
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {chemistry.totalActiveTopics} active topics · {chemistry.totalLedgerConcepts} ledger concepts
+                      </span>
+                    </div>
+                    <h3 className="text-base font-bold mt-1">{chemistry.signatureTitle}</h3>
+                    <p className="text-xs text-muted-foreground mt-0.5">{chemistry.collaborationSuperpower}</p>
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  {chemistry.domainComposition.map((d) => (
+                    <div
+                      key={d.domain}
+                      className="rounded-md border border-border/70 bg-background/80 px-2.5 py-1.5 text-xs"
+                    >
+                      <span className="font-semibold text-foreground">{d.domain}</span>{" "}
+                      <span className="text-amber-400 font-mono">{d.weightPct}%</span>{" "}
+                      <span className="text-muted-foreground text-[11px]">({d.avgMasteryPct}% avg mastery)</span>
+                    </div>
+                  ))}
+                </div>
+
+                {chemistry.rareIntersections.length > 0 && (
+                  <div className="pt-1 flex flex-wrap gap-2">
+                    {chemistry.rareIntersections.map((r, i) => (
+                      <Badge
+                        key={i}
+                        variant="secondary"
+                        className="text-[11px]"
+                        title={r.whyItCompounds}
+                      >
+                        Compound Bridge: {r.bridge}
+                      </Badge>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           {/* Your Enrolled Pathways */}
           {userPathways && userPathways.length > 0 && (

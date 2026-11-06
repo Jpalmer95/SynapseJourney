@@ -1,5 +1,5 @@
 import { useState, useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { useParams, useLocation } from "wouter";
 import { motion } from "framer-motion";
 import {
@@ -36,14 +36,23 @@ import {
   Sparkles,
   Calendar,
   TrendingUp,
+  FileText,
+  ExternalLink,
+  Plus,
+  Loader2,
+  RotateCcw,
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { AppLayout } from "@/components/app-layout";
 import { Link } from "wouter";
 import { SkillTree } from "@/components/skill-tree";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import type { Topic } from "@shared/schema";
 
@@ -204,6 +213,16 @@ export default function PathwayDetailPage() {
   const [dailyMinutes, setDailyMinutes] = useState<number>(60);
   const [paceMode, setPaceMode] = useState<"fast_track" | "balanced" | "rigorous">("balanced");
   const [viewMode, setViewMode] = useState<"sequential" | "impact" | "tree">("sequential");
+  const [showCalibrate, setShowCalibrate] = useState(false);
+  const [calibrationDraft, setCalibrationDraft] = useState<Record<number, number>>({});
+  const [showInterleaved, setShowInterleaved] = useState(false);
+  const [revealedCardIds, setRevealedCardIds] = useState<Record<string, boolean>>({});
+  const [showArtifactForm, setShowArtifactForm] = useState(false);
+  const [artifactTitle, setArtifactTitle] = useState("");
+  const [artifactType, setArtifactType] = useState("architecture_memo");
+  const [artifactSummary, setArtifactSummary] = useState("");
+  const [artifactUrl, setArtifactUrl] = useState("");
+  const { toast } = useToast();
 
   const { data, isLoading, error } = useQuery<PathwayDetail>({
     queryKey: [`/api/pathways/${pathwayId}`],
@@ -221,6 +240,107 @@ export default function PathwayDetailPage() {
       return res.json();
     },
     enabled: !!pathwayId,
+  });
+
+  const { data: interleavedData } = useQuery<{
+    cards: {
+      id: string;
+      topicId: number;
+      topicTitle: string;
+      unitTitle: string;
+      phaseLabel: string;
+      prompt: string;
+      answer: string;
+      options?: string[];
+      correctIndex?: number;
+    }[];
+  }>({
+    queryKey: [`/api/pathways/${pathwayId}/interleaved-review`],
+    enabled: !!pathwayId,
+  });
+
+  const { data: artifacts = [] } = useQuery<
+    {
+      id: number;
+      title: string;
+      artifactType: string;
+      summary: string;
+      artifactUrl?: string | null;
+      createdAt: string;
+    }[]
+  >({
+    queryKey: ["/api/learn/portfolio-artifacts", pathwayId],
+    queryFn: async () => {
+      const res = await fetch(`/api/learn/portfolio-artifacts?pathwayId=${pathwayId}`, {
+        credentials: "include",
+      });
+      if (!res.ok) return [];
+      return res.json();
+    },
+    enabled: !!pathwayId,
+  });
+
+  const calibrateMutation = useMutation({
+    mutationFn: async () => {
+      const calibratedBlocks = (timeline?.nodesSequential || []).map((n) => ({
+        topicId: n.topicId,
+        masteryPct: calibrationDraft[n.topicId] ?? n.priorMasteryPct ?? 0,
+      }));
+      const res = await apiRequest("POST", `/api/pathways/${pathwayId}/calibrate`, {
+        calibratedBlocks,
+        dailyMinutes,
+        paceMode,
+      });
+      return res.json();
+    },
+    onSuccess: (resData) => {
+      queryClient.invalidateQueries({ queryKey: [`/api/pathways/${pathwayId}/timeline`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-graph"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/knowledge-chemistry"] });
+      setShowCalibrate(false);
+      toast({
+        title: "Diagnostic Placement Applied!",
+        description: `Saved ${resData.calibratedCount} competency block(s) (+${resData.xpAwarded} XP). Discounted ${resData.timeline?.priorSavedHours || 0}h from your timeline.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Sign in to calibrate placement",
+        description: err?.message || "Could not save placement.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const createArtifactMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/learn/portfolio-artifacts", {
+        pathwayId: Number(pathwayId),
+        title: artifactTitle.trim(),
+        artifactType,
+        summary: artifactSummary.trim(),
+        artifactUrl: artifactUrl.trim() || null,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/portfolio-artifacts", pathwayId] });
+      setArtifactTitle("");
+      setArtifactSummary("");
+      setArtifactUrl("");
+      setShowArtifactForm(false);
+      toast({
+        title: "Proof-of-Work Artifact Published! (+25 XP)",
+        description: "Added to your pathway dossier.",
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Could not save artifact",
+        description: err?.message || "Please sign in and try again.",
+        variant: "destructive",
+      });
+    },
   });
 
   const { data: mastered = [] } = useQuery<{ topicId: number; topicTitle: string }[]>({
@@ -494,6 +614,175 @@ export default function PathwayDetailPage() {
                   ))}
                 </div>
               </div>
+
+              {/* Action Row: 5-Minute Diagnostic Placement Check & Interleaved Foundation Review */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-border/50">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-8 text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
+                    onClick={() => {
+                      const initial: Record<number, number> = {};
+                      for (const n of timeline.nodesSequential) {
+                        initial[n.topicId] = n.priorMasteryPct || 0;
+                      }
+                      setCalibrationDraft(initial);
+                      setShowCalibrate((s) => !s);
+                    }}
+                    data-testid="button-toggle-calibrate-placement"
+                  >
+                    <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                    Calibrate Starting Point (Diagnostic Check)
+                  </Button>
+                  {interleavedData?.cards && interleavedData.cards.length > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-8 text-xs border-amber-500/40 text-amber-400 hover:bg-amber-500/10"
+                      onClick={() => setShowInterleaved((s) => !s)}
+                      data-testid="button-toggle-interleaved-review"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
+                      Interleaved Foundation Refresh ({interleavedData.cards.length} cards)
+                    </Button>
+                  )}
+                </div>
+                <span className="text-[11px] text-muted-foreground">
+                  Already know a block? Calibrate above to discount hours & sync to your 3D Map.
+                </span>
+              </div>
+
+              {/* 5-Minute Diagnostic Placement Check Panel */}
+              {showCalibrate && (
+                <div
+                  className="rounded-xl border border-emerald-500/40 bg-emerald-500/5 p-4 space-y-3"
+                  data-testid="panel-diagnostic-calibration"
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-sm font-bold text-emerald-400">
+                        Diagnostic Placement & Prior-Competency Calibration
+                      </h3>
+                      <p className="text-xs text-muted-foreground">
+                        Set your existing proficiency for each building block — Synapse logs diagnostic entries to your Unified Knowledge Ledger and discounts those hours immediately.
+                      </p>
+                    </div>
+                  </div>
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {timeline.nodesSequential.map((n) => {
+                      const currentVal = calibrationDraft[n.topicId] ?? n.priorMasteryPct ?? 0;
+                      return (
+                        <div
+                          key={n.topicId}
+                          className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 rounded-lg border border-border/70 bg-background/80 p-2.5 text-xs"
+                        >
+                          <div className="min-w-0 flex-1">
+                            <span className="font-semibold">{n.order}. {n.title}</span>
+                            <span className="text-muted-foreground ml-2">({n.grossHours}h)</span>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            {[
+                              { pct: 0, label: "0% New" },
+                              { pct: 40, label: "40% Familiar" },
+                              { pct: 85, label: "85% Proficient" },
+                              { pct: 100, label: "100% Mastered" },
+                            ].map((opt) => (
+                              <button
+                                key={opt.pct}
+                                type="button"
+                                onClick={() =>
+                                  setCalibrationDraft((prev) => ({ ...prev, [n.topicId]: opt.pct }))
+                                }
+                                className={cn(
+                                  "px-2 py-1 rounded border text-[11px] transition-colors",
+                                  currentVal === opt.pct
+                                    ? "border-emerald-500 bg-emerald-500/20 text-emerald-300 font-semibold"
+                                    : "border-border/60 text-muted-foreground hover:text-foreground",
+                                )}
+                                data-testid={`calib-${n.topicId}-${opt.pct}`}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-end gap-2">
+                    <Button size="sm" variant="ghost" onClick={() => setShowCalibrate(false)}>
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      disabled={calibrateMutation.isPending}
+                      onClick={() => calibrateMutation.mutate()}
+                      data-testid="button-apply-calibration"
+                    >
+                      {calibrateMutation.isPending ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <CheckCircle2 className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      Apply Diagnostic Placement & Recalculate Timeline
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Spaced Retrieval Interleaving Deck */}
+              {showInterleaved && interleavedData?.cards && interleavedData.cards.length > 0 && (
+                <div
+                  className="rounded-xl border border-amber-500/40 bg-amber-500/5 p-4 space-y-3"
+                  data-testid="panel-interleaved-review"
+                >
+                  <div>
+                    <h3 className="text-sm font-bold text-amber-400">
+                      Spaced Retrieval Interleaving — Keep Foundational Equations & Frameworks Sharp
+                    </h3>
+                    <p className="text-xs text-muted-foreground">
+                      Active recall checks pulled from earlier building blocks in this roadmap so foundations never decay as you climb into Phase 3–4.
+                    </p>
+                  </div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
+                    {interleavedData.cards.map((card) => {
+                      const revealed = !!revealedCardIds[card.id];
+                      return (
+                        <div
+                          key={card.id}
+                          className="rounded-lg border border-border/70 bg-background/85 p-3 space-y-2 text-xs flex flex-col justify-between"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex items-center justify-between gap-2">
+                              <Badge variant="outline" className="text-[10px]">
+                                {card.topicTitle}
+                              </Badge>
+                              <span className="text-[10px] text-muted-foreground">{card.phaseLabel}</span>
+                            </div>
+                            <p className="font-medium text-foreground pt-1">{card.prompt}</p>
+                            {revealed && (
+                              <div className="mt-2 pt-2 border-t border-border/60 text-emerald-400">
+                                <strong>Key Mechanism:</strong> {card.answer}
+                              </div>
+                            )}
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-[11px] self-start px-2"
+                            onClick={() =>
+                              setRevealedCardIds((prev) => ({ ...prev, [card.id]: !prev[card.id] }))
+                            }
+                          >
+                            {revealed ? "Hide Answer" : "Reveal Answer"}
+                          </Button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
         )}
@@ -677,6 +966,130 @@ export default function PathwayDetailPage() {
             </div>
           )}
         </motion.div>
+
+        {/* Proof-of-Work Portfolio Dossier for this Roadmap */}
+        <Card className="border-purple-500/30 bg-card/60" data-testid="section-proof-of-work-dossier">
+          <CardContent className="p-4 sm:p-5 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <h2 className="text-base font-semibold flex items-center gap-2">
+                  <FileText className="h-4 w-4 text-purple-400" />
+                  Proof-of-Work Portfolio Dossier ({artifacts.length})
+                </h2>
+                <p className="text-xs text-muted-foreground">
+                  Verifiable deliverables built along this roadmap — architecture memos, quantitative DCF/case models, simulations, derivations, and SOTA hypotheses.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 text-xs border-purple-500/40 text-purple-400 hover:bg-purple-500/10"
+                onClick={() => setShowArtifactForm((s) => !s)}
+                data-testid="button-toggle-artifact-form"
+              >
+                <Plus className="h-3.5 w-3.5 mr-1" />
+                Add Proof-of-Work Deliverable (+25 XP)
+              </Button>
+            </div>
+
+            {showArtifactForm && (
+              <div className="rounded-lg border border-border/70 bg-background/80 p-3.5 space-y-3 text-xs">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                  <Input
+                    value={artifactTitle}
+                    onChange={(e) => setArtifactTitle(e.target.value)}
+                    placeholder="Deliverable title (e.g. Sub-2W XR VIO Accelerator RTL Spec, or 5-Yr SaaS DCF Model)"
+                    className="h-8 text-xs sm:col-span-2"
+                    data-testid="input-artifact-title"
+                  />
+                  <select
+                    value={artifactType}
+                    onChange={(e) => setArtifactType(e.target.value)}
+                    className="h-8 rounded-md border border-border bg-background px-2 text-xs"
+                    data-testid="select-artifact-type"
+                  >
+                    <option value="architecture_memo">Architecture / Engineering Memo</option>
+                    <option value="financial_case_model">Financial / Alt-MBA Case Model</option>
+                    <option value="code_simulation">Code / Simulation Benchmark</option>
+                    <option value="derivation_proof">Mathematical / Physics Derivation</option>
+                    <option value="sota_hypothesis">Falsifiable SOTA Hypothesis</option>
+                  </select>
+                </div>
+                <Textarea
+                  value={artifactSummary}
+                  onChange={(e) => setArtifactSummary(e.target.value)}
+                  placeholder="Executive summary, quantitative results, key equations/trade-offs, and conclusions…"
+                  rows={3}
+                  className="text-xs"
+                  data-testid="input-artifact-summary"
+                />
+                <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
+                  <Input
+                    value={artifactUrl}
+                    onChange={(e) => setArtifactUrl(e.target.value)}
+                    placeholder="Optional link to GitHub repo, notebook, spreadsheet, or Open Science hypothesis…"
+                    className="h-8 text-xs flex-1"
+                    data-testid="input-artifact-url"
+                  />
+                  <Button
+                    size="sm"
+                    className="h-8 text-xs shrink-0"
+                    disabled={
+                      createArtifactMutation.isPending ||
+                      artifactTitle.trim().length < 3 ||
+                      artifactSummary.trim().length < 10
+                    }
+                    onClick={() => createArtifactMutation.mutate()}
+                    data-testid="button-submit-artifact"
+                  >
+                    {createArtifactMutation.isPending ? (
+                      <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                    ) : null}
+                    Publish Deliverable (+25 XP)
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {artifacts.length === 0 ? (
+              <p className="text-xs text-muted-foreground italic">
+                No Proof-of-Work deliverables logged for this roadmap yet. Use the First-Principles Sandbox inside any unit or click "Add Proof-of-Work Deliverable" above.
+              </p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                {artifacts.map((art) => (
+                  <div
+                    key={art.id}
+                    className="rounded-lg border border-border/70 bg-background/80 p-3 space-y-1.5 text-xs"
+                    data-testid={`artifact-card-${art.id}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <Badge variant="outline" className="text-[10px] capitalize border-purple-500/40 text-purple-400">
+                        {art.artifactType.replace(/_/g, " ")}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">
+                        {new Date(art.createdAt).toLocaleDateString()}
+                      </span>
+                    </div>
+                    <h4 className="font-semibold text-sm">{art.title}</h4>
+                    <p className="text-muted-foreground leading-relaxed">{art.summary}</p>
+                    {art.artifactUrl && (
+                      <a
+                        href={art.artifactUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-primary hover:underline pt-1"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        View External Artifact
+                      </a>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
       </div>
     </AppLayout>
   );

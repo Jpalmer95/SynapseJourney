@@ -75,6 +75,7 @@ import { cn } from "@/lib/utils";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { AgentPlaybookView } from "@/components/agent-playbook";
+import { FirstPrinciplesSandbox } from "@/components/first-principles-sandbox";
 import type { Topic, Category, LessonContent, NextGenContent } from "@shared/schema";
 
 interface LessonUnit {
@@ -1916,6 +1917,14 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </AnimatePresence>
                   </section>
                 )}
+
+                {/* Interactive First-Principles & Quantitative Trade-Off Sandbox */}
+                <FirstPrinciplesSandbox
+                  topicId={topic.id}
+                  topicTitle={topic.title}
+                  unitId={selectedUnit.id}
+                  unitTitle={selectedUnit.title}
+                />
 
                 {/* Next-Gen Linear Progression + Inline Breadth/Depth Branching + Agentic Studio */}
                 <div className="pt-6 border-t border-border/60 space-y-3" data-testid="unit-footer-navigation">

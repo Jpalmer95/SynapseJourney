@@ -20,7 +20,8 @@ export type CourseArchetype =
   | "foundation"
   | "deep_dive"
   | "frontier_survey"
-  | "cross_domain";
+  | "cross_domain"
+  | "case_studio";
 
 export type PlannerIntent = "survey" | "standard" | "deep" | "speed_run" | "goal";
 export type PlannerLength = "quick" | "standard" | "deep";
@@ -237,6 +238,40 @@ export const ARCHETYPES: Record<CourseArchetype, ArchetypeSpec> = {
       "Every unit must pull from at least two domains. The final unit is a buildable capstone with milestones, not a summary.",
     sectionNotes:
       "Make the connection explicit in every section: which idea comes from A, which constraint from B, and why the combination is new.",
+    hasCapstone: true,
+  },
+
+  case_studio: {
+    id: "case_studio",
+    label: "Case-method & executive studio",
+    promise: "M7 MBA / Sloan-grade analytical frameworks, quantitative models, and real case dissections.",
+    bestFor:
+      "Alt-MBA courses, corporate finance & valuation, competitive strategy, operations research, unit economics, venture building, and cross-functional leadership.",
+    learningIntent: "standard",
+    courseLength: "standard",
+    units: [8, 14],
+    tiers: [3, 4],
+    tierShape: [
+      "Intro & Analytical Framework",
+      "Quantitative & Financial Model",
+      "Case Dissection & Trade-Offs",
+      "Executive Decision & Capstone Memo",
+    ],
+    sectionBudget: {
+      wordsPerSection: [320, 500],
+      conceptSections: [2, 3],
+      takeaways: 5,
+      resources: [3, 5],
+      requiresWorkedExample: true,
+      quizQuestions: [4, 6],
+    },
+    minutesPerUnit: [25, 40],
+    oerPolicy:
+      "Anchor every unit to rigorous open business/economic sources: MIT Sloan OCW (15.xxx), Aswath Damodaran (NYU Stern Valuation & Corporate Finance), CORE Econ, SEC S-1/10-K filings, NBER working papers, or classic strategic case studies.",
+    plannerNotes:
+      "Structure like a top business school + quantitative engineering seminar: Stage 1 establishes the analytical framework and accounting/economic identities; Stage 2 builds the quantitative model (DCF, LTV:CAC, queuing/EOQ, pricing elasticity); Stage 3 dissects real company/industry cases and failure modes; Stage 4 forces an executive capital-allocation or strategic decision.",
+    sectionNotes:
+      "Never write vague management platitudes. State the exact quantitative identity or strategic mechanism, walk through a worked numerical model or real balance-sheet/unit-economics case with numbers carried through, and highlight the second-order trade-offs.",
     hasCapstone: true,
   },
 };
