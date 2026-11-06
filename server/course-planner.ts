@@ -92,8 +92,11 @@ GOAL (if any): "{goalDescription}"
 TARGET COURSE LENGTH: "{targetLength}" ({targetUnitRange} units — respect this unless the topic genuinely cannot fit)
 LEARNER TECHNICAL LEVEL: "{technicalLevel}"
 INCLUDE AGENT CONTEXT: "{includeAgentContext}"
+LEARNER SPECIFIC INTEREST / FOCUS LENS: "{interestFocus}"
 
 {archetypeBlock}
+
+{priorKnowledgeBlock}
 
 Your task: Analyze this topic and design the ideal curriculum shape for this LEARNING INTENT. Consider:
 
@@ -105,11 +108,10 @@ Your task: Analyze this topic and design the ideal curriculum shape for this LEA
    - "interdisciplinary" (e.g., "Quantum Mechanics", "Machine Learning") → 20-30+ units, 4-5 tiers, likely needs sub-topic decomposition
 
 2. INTENT MODIFIERS (CRITICAL — override scope defaults when they conflict):
-   - survey: prioritize BREADTH over depth. Fewer units (cap ~8-12 even for broad topics), wide conceptual map, light practice. Tier names like "Map of the Field", "Core Ideas", "Where to Go Next".
-   - standard: balanced path — optimal for most learners.
-   - deep: prioritize DEPTH. More units, sub-topic decomposition when useful, rigorous foundations before applications.
-   - speed_run: minimal viable path (3-8 units max). Only high-leverage concepts + check understanding. No filler history units.
-   - goal: reverse-engineer from the GOAL above. Sequence only what is needed to accomplish that outcome. Practical, checkpoint-driven unit titles. Drop pure theory that does not serve the goal unless required for safety/correctness.
+   - survey: prioritize BREADTH over depth. Fewer units (cap ~8-12 even for broad topics), wide conceptual map, light practice. Tier names like "Intro Course & Field Map", "Core Ideas", "Where to Go Next".
+   - standard / deep (Generalized Linear Course): MUST begin with a clear Stage 1 "Intro Course & First Principles" (2-4 units giving the big-picture mental model, notation/vocabulary, and intuition), followed by sequentially more advanced stages ("Core Mechanics", "Applied Systems & Practice", "Advanced Mastery & Frontier") where every lesson builds linearly on the previous one.
+   - speed_run / goal (Laser-Focused JIT Mode): reverse-engineer from the GOAL or challenge above. Sequence ONLY the dependency chain needed to solve that challenge today (3-6 surgical units). Practical, checkpoint-driven unit titles. Drop pure history/theory that does not serve the goal.
+   - PRIOR KNOWLEDGE CONTINUITY: If a LEARNER PRIOR & SCATTERED KNOWLEDGE LEDGER is provided above, take their prior progress into account — do not waste units re-teaching basics they already mastered via JIT goals or agent sessions; reference their prior concepts and allocate depth to their uncovered frontier.
 
 3. TIER DESIGN — Choose the RIGHT tier structure:
    - A micro topic might only need "Fundamentals" and "Practice" (2 tiers)
@@ -277,6 +279,10 @@ export async function planCourseWithAI(
     includeAgentContext?: boolean;
     /** Course shape — drives unit count, tier shape and section budget. */
     archetype?: CourseArchetype;
+    /** Optional learner interest lens (e.g., "Audio DSP in Rust") */
+    interestFocus?: string;
+    /** Prior & scattered knowledge ledger block for continuity */
+    priorKnowledgeBlock?: string;
     /** BYOC: use learner's keys first, then platform pool */
     userConfig?: ProviderConfig;
   }
@@ -310,7 +316,9 @@ export async function planCourseWithAI(
     .replace("{targetUnitRange}", `${range.min}–${range.max}`)
     .replace("{technicalLevel}", technicalLevel)
     .replace("{includeAgentContext}", includeAgentContext ? "yes" : "no")
-    .replace("{archetypeBlock}", archetypeBlock);
+    .replace("{interestFocus}", options?.interestFocus || "(general — cover canonical breadth and depth)")
+    .replace("{archetypeBlock}", archetypeBlock)
+    .replace("{priorKnowledgeBlock}", options?.priorKnowledgeBlock || "");
 
   try {
     // Always BYOC-or-fail for dynamic plans — never silent platform spend

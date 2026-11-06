@@ -785,13 +785,13 @@ export class DatabaseStorage implements IStorage {
 
   // Knowledge Graph
   async getKnowledgeGraph(userId: string): Promise<{
-    nodes: { id: number; title: string; category?: string; color: string; x: number; y: number; z: number; mastery: number; status: string }[];
+    nodes: { id: number; title: string; category?: string; color: string; x: number; y: number; z: number; mastery: number; status: string; kind?: string }[];
     edges: { from: number; to: number; strength: number }[];
     stats: { total: number; mastered: number; learning: number };
     axes?: { x: string; y: string; z: string };
   }> {
-    //Knowledge Graph
-    const allTopics = await this.getTopics();
+    // Include published catalog topics + user's own JIT/agent-created knowledge nodes
+    const allTopics = await this.getVisibleTopics(userId);
     const progress = await this.getUserProgress(userId);
     const connections = await db.select().from(topicConnections);
     const allCategories = await this.getCategories();
@@ -1273,6 +1273,34 @@ export class DatabaseStorage implements IStorage {
             metadata: { masteryPct, completedUnits: completedCount, totalUnits: allUnits.length },
           });
         }
+
+        // Cross-stream Knowledge Ledger reconciliation: log this unit into the unified
+        // ledger so JIT completions credit canonical linear courses (and vice versa).
+        const parentTopic = await this.getTopicById(unit.topicId);
+        const isJitTopic = parentTopic?.kind === "jit" || (!parentTopic?.published && parentTopic?.ownerUserId === userId);
+        const depthMap: Record<string, "intro" | "core" | "advanced" | "frontier"> = {
+          beginner: "intro",
+          intermediate: "core",
+          advanced: "advanced",
+          nextgen: "frontier",
+        };
+        const { logAndReconcileKnowledge } = await import("./knowledge-ledger");
+        const takeaways = Array.isArray((unit.contentJson as any)?.keyTakeaways)
+          ? ((unit.contentJson as any).keyTakeaways as string[]).slice(0, 2).join(" ")
+          : "";
+        await logAndReconcileKnowledge(this, userId, [
+          {
+            conceptTitle: unit.title,
+            summary: takeaways || unit.outline || `Completed unit "${unit.title}" in ${parentTopic?.title || "course"}`,
+            stream: isJitTopic ? "jit" : "linear",
+            depthLevel: depthMap[unit.difficulty] || "core",
+            confidence: quizScore != null ? Math.max(70, quizScore) : 85,
+            topicId: unit.topicId,
+            topicTitle: parentTopic?.title || null,
+            matchedUnitId: isJitTopic ? null : unit.id,
+            createMapNodeIfMissing: false,
+          },
+        ]);
       }
     } catch (syncErr) {
       console.warn("[Storage] Failed to sync userProgress on lesson completion:", syncErr);
@@ -3055,6 +3083,8 @@ export class DatabaseStorage implements IStorage {
           depthMode: prefs.depthMode ?? existing.depthMode,
           tutorMode: prefs.tutorMode ?? existing.tutorMode,
           contentView: prefs.contentView ?? existing.contentView,
+          paceMode: prefs.paceMode ?? existing.paceMode ?? "balanced",
+          interestFocus: prefs.interestFocus !== undefined ? prefs.interestFocus : existing.interestFocus,
           updatedAt: new Date(),
         })
         .where(eq(topicLearningPrefs.id, existing.id))
@@ -3067,6 +3097,8 @@ export class DatabaseStorage implements IStorage {
       depthMode: prefs.depthMode || "standard",
       tutorMode: prefs.tutorMode || "direct",
       contentView: prefs.contentView || "full",
+      paceMode: prefs.paceMode || "balanced",
+      interestFocus: prefs.interestFocus ?? null,
     }).returning();
     return created;
   }

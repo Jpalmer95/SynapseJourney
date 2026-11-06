@@ -139,10 +139,10 @@ export function HomePage() {
                       </Badge>
                     </div>
                     <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-                      Learn anything breadthwise, depthwise, or laser-focused JIT.
+                      Three unified learning modes. One persistent 3D Knowledge Web.
                     </h1>
                     <p className="text-sm text-muted-foreground leading-relaxed">
-                      Build adaptive courses tailored to an immediate repair/engineering goal or a multi-tier scientific mastery path. Every course feeds your 3D Knowledge Web, indexes open textbooks/papers, and surfaces unsolved SOTA bottlenecks.
+                      Whether you solve an urgent challenge in <strong>JIT Mode</strong>, progress through a <strong>Linear Intro → Advanced Course</strong> with Breadth/Depth branching, or learn conversationally via <strong>Agentic Open-Ended Chat & Hermes MCP</strong> — every concept is logged to your 3D Knowledge Ledger and recognized whenever you touch that topic again.
                     </p>
                   </div>
 
@@ -151,30 +151,30 @@ export function HomePage() {
                     <div className="p-3 rounded-xl border border-border/60 bg-card/60">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-amber-400">
                         <Target className="h-3.5 w-3.5" />
-                        JIT Goal Mode
+                        1. JIT Laser Focus
                       </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">3–5 surgical units to solve a problem today</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">3–5 surgical units to solve a challenge today</p>
                     </div>
                     <div className="p-3 rounded-xl border border-border/60 bg-card/60">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-cyan-400">
                         <Layers className="h-3.5 w-3.5" />
-                        Dynamic Depth
+                        2. Linear Spine + Branches
                       </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">1-tier survey up to 4-tier + sub-topic trees</p>
-                    </div>
-                    <div className="p-3 rounded-xl border border-border/60 bg-card/60">
-                      <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-400">
-                        <GitBranch className="h-3.5 w-3.5" />
-                        Concept Fusion
-                      </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">Synthesize 2–3 fields into a new curriculum</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Intro primer → sequential depth & breadth nav</p>
                     </div>
                     <div className="p-3 rounded-xl border border-border/60 bg-card/60">
                       <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-400">
                         <Telescope className="h-3.5 w-3.5" />
-                        Feynman & Socratic
+                        3. Agentic Open-Ended
                       </div>
-                      <p className="text-[11px] text-muted-foreground mt-0.5">First-principles tutor & SOTA hypothesis lab</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Scattered AI/Hermes learnings → logged to 3D Map</p>
+                    </div>
+                    <div className="p-3 rounded-xl border border-border/60 bg-card/60">
+                      <div className="flex items-center gap-1.5 text-xs font-semibold text-purple-400">
+                        <GitBranch className="h-3.5 w-3.5" />
+                        Cross-Domain Fusion
+                      </div>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">Synthesize 2–3 fields into a capstone build</p>
                     </div>
                   </div>
                 </div>

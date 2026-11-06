@@ -26,6 +26,8 @@ const topicPrefsSchema = z.object({
   depthMode: z.enum(["survey", "standard", "deep", "speed_run"]).optional(),
   tutorMode: z.enum(tutorModes).optional(),
   contentView: z.enum(contentViews).optional(),
+  paceMode: z.enum(["fast_track", "balanced", "rigorous"]).optional(),
+  interestFocus: z.string().max(240).nullable().optional(),
 });
 
 const goalSchema = z.object({
@@ -135,6 +137,8 @@ export function registerLearnRoutes(app: Express) {
         depthMode: topicPrefs?.depthMode || profile?.defaultDepthMode || "standard",
         tutorMode: topicPrefs?.tutorMode || profile?.preferredTutorMode || "direct",
         contentView: topicPrefs?.contentView || profile?.defaultContentView || "full",
+        paceMode: topicPrefs?.paceMode || "balanced",
+        interestFocus: topicPrefs?.interestFocus || "",
         isTopicOverride: !!topicPrefs,
       });
     } catch (error) {
@@ -951,6 +955,7 @@ export function registerLearnRoutes(app: Express) {
     technicalLevel: z.enum(["beginner", "intermediate", "advanced", "expert"]).default("intermediate"),
     learningIntent: z.enum(["survey", "standard", "deep", "speed_run"]).default("standard"),
     categoryId: z.number().int().positive().optional(),
+    interestFocus: z.string().max(240).optional(),
     archetype: z
       .enum(["rapid_bootstrap", "focused_skill", "foundation", "deep_dive", "frontier_survey", "cross_domain"])
       .optional(),
@@ -963,7 +968,7 @@ export function registerLearnRoutes(app: Express) {
       if (!parsed.success) {
         return res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
       }
-      const { subject, courseLength, technicalLevel, learningIntent, categoryId, archetype } = parsed.data;
+      const { subject, courseLength, technicalLevel, learningIntent, categoryId, interestFocus, archetype } = parsed.data;
 
       const profile = await storage.getUserProfile(userId);
       const userConfig = providerConfigFromProfile(profile);
@@ -1002,6 +1007,7 @@ export function registerLearnRoutes(app: Express) {
             createdByUserId: userId,
             userConfig,
             archetype,
+            interestFocus,
           });
         } catch (genErr: any) {
           const msg = genErr?.message || String(genErr);
@@ -1027,6 +1033,7 @@ export function registerLearnRoutes(app: Express) {
       await storage.upsertTopicLearningPrefs(userId, topic.id, {
         depthMode: learningIntent === "speed_run" ? "speed_run" : learningIntent,
         contentView: "full",
+        interestFocus: interestFocus || null,
       });
       await storage.recordTimelineEvent({
         userId,
@@ -1302,6 +1309,438 @@ Respond with ONLY a JSON array of 10 objects:
     } catch (error: any) {
       console.error("Error fusing course:", error);
       res.status(500).json({ error: "Failed to fuse course", message: error?.message || String(error) });
+    }
+  });
+
+  // ── Unified Knowledge Ledger & Prior Progress Continuity ──────────────────
+
+  // Inspect prior & scattered learnings for a topic or subject query across all 3 streams
+  app.get("/api/learn/prior-knowledge", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = req.query.topicId ? parseInt(String(req.query.topicId), 10) : undefined;
+      const query = typeof req.query.query === "string" ? req.query.query : undefined;
+      const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+      const report = await getPriorKnowledgeForTopic(storage, userId, {
+        topicId: topicId && !Number.isNaN(topicId) ? topicId : undefined,
+        query,
+      });
+      res.json(report);
+    } catch (error: any) {
+      console.error("Error fetching prior knowledge:", error);
+      res.status(500).json({ error: "Failed to fetch prior knowledge" });
+    }
+  });
+
+  app.get("/api/learn/topics/:topicId/prior-knowledge", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topicId" });
+      }
+      const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+      const report = await getPriorKnowledgeForTopic(storage, userId, { topicId });
+      res.json(report);
+    } catch (error: any) {
+      console.error("Error fetching topic prior knowledge:", error);
+      res.status(500).json({ error: "Failed to fetch topic prior knowledge" });
+    }
+  });
+
+  // Apply prior/scattered progress to mark matching units in a linear course as completed
+  app.post("/api/learn/topics/:topicId/apply-prior", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topicId" });
+      }
+      const targetUnitId = req.body?.unitId ? Number(req.body.unitId) : null;
+      const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+      const report = await getPriorKnowledgeForTopic(storage, userId, { topicId });
+
+      const unitsToCredit = report.unitCoverage.filter((u) => {
+        if (targetUnitId) return u.unitId === targetUnitId && !u.completedDirectly;
+        return u.priorCovered && !u.completedDirectly;
+      });
+
+      const creditedIds: number[] = [];
+      for (const u of unitsToCredit) {
+        await storage.completeLesson(userId, u.unitId, 90);
+        creditedIds.push(u.unitId);
+      }
+
+      const updatedReport = await getPriorKnowledgeForTopic(storage, userId, { topicId });
+      res.json({
+        ok: true,
+        creditedUnitIds: creditedIds,
+        recommendedStartUnitId: updatedReport.recommendedStartUnitId,
+        effectiveMasteryPct: updatedReport.effectiveMasteryPct,
+      });
+    } catch (error: any) {
+      console.error("Error applying prior progress:", error);
+      res.status(500).json({ error: "Failed to apply prior progress" });
+    }
+  });
+
+  // Log 1+ learned concepts directly into the Unified Knowledge Ledger (from JIT, Linear, Agent Chat, or MCP)
+  const ledgerPostSchema = z.object({
+    concepts: z
+      .array(
+        z.object({
+          conceptTitle: z.string().min(2).max(160),
+          summary: z.string().min(3).max(1200),
+          stream: z.enum(["jit", "linear", "agent_chat", "mcp_agent"]).default("agent_chat"),
+          depthLevel: z.enum(["intro", "core", "advanced", "frontier"]).default("core"),
+          confidence: z.number().int().min(10).max(100).optional(),
+          topicId: z.number().int().positive().nullable().optional(),
+          topicTitle: z.string().max(120).nullable().optional(),
+          tags: z.array(z.string().max(40)).max(12).optional(),
+          createMapNodeIfMissing: z.boolean().optional(),
+        }),
+      )
+      .min(1)
+      .max(25),
+  });
+
+  app.post("/api/learn/ledger", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = ledgerPostSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid ledger payload", details: parsed.error.flatten() });
+      }
+      const { logAndReconcileKnowledge } = await import("../knowledge-ledger");
+      const result = await logAndReconcileKnowledge(storage, userId, parsed.data.concepts);
+      const xpAwarded = result.entries.length * 15;
+      if (xpAwarded > 0) {
+        await storage.addXp(userId, xpAwarded).catch(() => {});
+      }
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: result.touchedTopics[0]?.topicId ?? null,
+        eventType: "agent_learned",
+        metadata: {
+          conceptsLogged: result.entries.map((e) => e.conceptTitle),
+          matchedUnitsCount: result.matchedUnitsCount,
+          touchedTopics: result.touchedTopics,
+        },
+      });
+      res.status(201).json({ ...result, xpAwarded });
+    } catch (error: any) {
+      console.error("Error logging knowledge ledger:", error);
+      res.status(500).json({ error: "Failed to log knowledge ledger" });
+    }
+  });
+
+  // Distill an open-ended Agentic Learning Conversation into the user's 3D Knowledge Web & Ledger
+  const distillChatSchema = z.object({
+    topicId: z.number().int().positive().optional(),
+    topicTitle: z.string().max(120).optional(),
+    manualSummary: z.string().max(1000).optional(),
+    history: z
+      .array(
+        z.object({
+          role: z.enum(["user", "assistant"]),
+          content: z.string(),
+        }),
+      )
+      .default([]),
+  });
+
+  app.post("/api/learn/ledger/distill-chat", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const parsed = distillChatSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid request", details: parsed.error.flatten() });
+      }
+      const { topicId, topicTitle, manualSummary, history } = parsed.data;
+      const userTurns = history.filter((m) => m.role === "user" && m.content.trim().length > 0);
+      if (userTurns.length === 0 && !manualSummary?.trim()) {
+        return res.status(400).json({ error: "Send at least one message or summary before logging to your 3D map." });
+      }
+
+      const topic = topicId ? await storage.getTopicById(topicId) : undefined;
+      const effectiveTopicTitle = topic?.title || topicTitle || undefined;
+
+      let extracted: {
+        conceptTitle: string;
+        summary: string;
+        depthLevel: "intro" | "core" | "advanced" | "frontier";
+        topicTitle?: string;
+        confidence: number;
+        tags: string[];
+      }[] = [];
+
+      // Try BYOC extraction when user has configured keys; fall back to deterministic distillation
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+      if (validateByokCredentials(userConfig).valid && history.length > 0) {
+        try {
+          const { generateByokOrPool } = await import("../ai-providers");
+          const transcript = history
+            .slice(-12)
+            .map((m) => `${m.role.toUpperCase()}: ${m.content.slice(0, 800)}`)
+            .join("\n\n");
+          const prompt = `You are a knowledge-graph distiller for SynapseJourney.
+Extract 1 to 4 concrete, atomic concepts or skills the learner just explored or learned in this conversation.
+${effectiveTopicTitle ? `Context Topic: "${effectiveTopicTitle}"` : "Infer the canonical academic/technical topic for each concept."}
+${manualSummary ? `Learner note: "${manualSummary}"` : ""}
+
+TRANSCRIPT:
+${transcript}
+
+Respond with ONLY a JSON array of 1-4 objects:
+[
+  {
+    "conceptTitle": "Specific concept name (3-8 words)",
+    "summary": "1-2 sentences summarizing the key mechanism or insight learned",
+    "depthLevel": "intro|core|advanced|frontier",
+    "topicTitle": "Canonical parent field/topic name (e.g. Orbital Mechanics, Databases, Calculus)",
+    "confidence": 85,
+    "tags": ["keyword1", "keyword2", "keyword3"]
+  }
+]`;
+          const aiRes = await generateByokOrPool([{ role: "user", content: prompt }], userConfig, {
+            responseFormat: "json",
+            temperature: 0.4,
+            maxTokens: 1024,
+          });
+          const raw = aiRes.content || "[]";
+          const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+          const arr = JSON.parse(fenceMatch ? fenceMatch[1].trim() : raw.trim());
+          if (Array.isArray(arr)) {
+            extracted = arr
+              .filter((x: any) => x && typeof x.conceptTitle === "string")
+              .slice(0, 4)
+              .map((x: any) => ({
+                conceptTitle: String(x.conceptTitle).slice(0, 140),
+                summary: String(x.summary || x.conceptTitle).slice(0, 600),
+                depthLevel: ["intro", "core", "advanced", "frontier"].includes(x.depthLevel)
+                  ? x.depthLevel
+                  : "core",
+                topicTitle: String(x.topicTitle || effectiveTopicTitle || x.conceptTitle).slice(0, 100),
+                confidence: Number(x.confidence) || 85,
+                tags: Array.isArray(x.tags) ? x.tags.map((t: any) => String(t).slice(0, 32)).slice(0, 6) : [],
+              }));
+          }
+        } catch (aiErr) {
+          console.warn("[DistillChat] AI extraction failed, using deterministic fallback:", aiErr);
+        }
+      }
+
+      // Deterministic fallback so logging scattered learnings always succeeds even without BYOC
+      if (extracted.length === 0) {
+        if (manualSummary?.trim()) {
+          const title = manualSummary.trim().split(/[.!?\n]/)[0].slice(0, 90);
+          extracted.push({
+            conceptTitle: title,
+            summary: manualSummary.trim().slice(0, 600),
+            depthLevel: "core",
+            topicTitle: effectiveTopicTitle || title,
+            confidence: 85,
+            tags: [],
+          });
+        } else {
+          const recentPairs: { q: string; a: string }[] = [];
+          for (let i = 0; i < history.length; i++) {
+            if (history[i].role === "user") {
+              const nextA = history.slice(i + 1).find((m) => m.role === "assistant")?.content || "";
+              recentPairs.push({ q: history[i].content, a: nextA });
+            }
+          }
+          for (const pair of recentPairs.slice(-3)) {
+            const cleanQ = pair.q.replace(/^(explain|what is|how does|teach me|help me with)\s+/i, "").trim();
+            const conceptTitle = cleanQ.split(/[.!?\n]/)[0].slice(0, 90) || (effectiveTopicTitle ?? "Agent Exploration");
+            const firstSentenceA = pair.a
+              .replace(/[#*`]/g, "")
+              .split(/(?<=[.!?])\s+/)
+              .slice(0, 2)
+              .join(" ")
+              .slice(0, 400);
+            extracted.push({
+              conceptTitle,
+              summary: firstSentenceA || pair.q.slice(0, 300),
+              depthLevel: "core",
+              topicTitle: effectiveTopicTitle || conceptTitle,
+              confidence: 80,
+              tags: [],
+            });
+          }
+        }
+      }
+
+      const { logAndReconcileKnowledge } = await import("../knowledge-ledger");
+      const result = await logAndReconcileKnowledge(
+        storage,
+        userId,
+        extracted.map((item) => ({
+          ...item,
+          stream: "agent_chat" as const,
+          topicId: topicId ?? null,
+          createMapNodeIfMissing: true,
+        })),
+      );
+
+      const xpAwarded = result.entries.length * 15;
+      if (xpAwarded > 0) {
+        await storage.addXp(userId, xpAwarded).catch(() => {});
+      }
+      await storage.recordTimelineEvent({
+        userId,
+        topicId: result.touchedTopics[0]?.topicId ?? topicId ?? null,
+        eventType: "agent_learned",
+        metadata: {
+          stream: "agent_chat",
+          conceptsLogged: result.entries.map((e) => e.conceptTitle),
+          touchedTopics: result.touchedTopics,
+        },
+      });
+
+      res.status(201).json({
+        ...result,
+        xpAwarded,
+      });
+    } catch (error: any) {
+      console.error("Error distilling chat to ledger:", error);
+      res.status(500).json({ error: "Failed to distill chat into knowledge ledger" });
+    }
+  });
+
+  // Navigate Breadth or Depth from any unit or linear course
+  const navigateBranchSchema = z.object({
+    unitId: z.number().int().positive().optional(),
+    direction: z.enum(["depth", "breadth"]),
+    interestFocus: z.string().max(240).optional(),
+    paceMode: z.enum(["fast_track", "balanced", "rigorous"]).optional(),
+  });
+
+  app.post("/api/learn/topics/:topicId/navigate", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topicId" });
+      }
+      const parsed = navigateBranchSchema.safeParse(req.body);
+      if (!parsed.success) {
+        return res.status(400).json({ error: "Invalid navigation request", details: parsed.error.flatten() });
+      }
+      const { unitId, direction, interestFocus, paceMode } = parsed.data;
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) return res.status(404).json({ error: "Topic not found" });
+
+      if (interestFocus !== undefined || paceMode !== undefined) {
+        await storage.upsertTopicLearningPrefs(userId, topicId, {
+          ...(interestFocus !== undefined ? { interestFocus } : {}),
+          ...(paceMode !== undefined ? { paceMode } : {}),
+        });
+      }
+
+      const anchorUnit = unitId ? await storage.getLessonUnit(unitId) : undefined;
+      const prefs = await storage.getTopicLearningPrefs(userId, topicId);
+      const effectiveFocus = interestFocus ?? prefs?.interestFocus ?? "";
+
+      const profile = await storage.getUserProfile(userId);
+      const userConfig = providerConfigFromProfile(profile);
+      if (!validateByokCredentials(userConfig).valid) {
+        return res.status(402).json({
+          error: "BYOC_REQUIRED",
+          message:
+            "Add your own AI key in Settings to generate dynamic Breadth/Depth branches in the browser, or ask Hermes Agent to append units via topicId=" +
+            topicId,
+          hermesCommand: `Extend Synapse topicId=${topicId} ("${topic.title}") with a ${direction} branch${anchorUnit ? ` on "${anchorUnit.title}"` : ""}${effectiveFocus ? ` focused on "${effectiveFocus}"` : ""}.`,
+        });
+      }
+
+      const existingUnits = await storage.getLessonUnits(topicId);
+      const existingTitles = new Set(existingUnits.map((u) => u.title.toLowerCase().trim()));
+      const { generateByokOrPool } = await import("../ai-providers");
+
+      const prompt = `You are designing a ${direction === "depth" ? "DEPTH-FIRST DEEP DIVE" : "BREADTH-FIRST LATERAL BRIDGE"} expansion inside the course "${topic.title}".
+${anchorUnit ? `Anchor Unit: "${anchorUnit.title}" (${anchorUnit.outline || ""})` : `Course Description: ${topic.description}`}
+${effectiveFocus ? `Learner Specific Interest / Application Focus: "${effectiveFocus}"` : ""}
+Learner Pace Preference: ${paceMode || prefs?.paceMode || "balanced"}
+
+Existing units in this course (do NOT duplicate titles):
+${existingUnits.map((u) => `- ${u.title}`).join("\n")}
+
+Task:
+${
+  direction === "depth"
+    ? "Design 2 sequential deeper units that unpack the underlying mechanism, mathematical/formal derivation, internal architecture, or failure modes of the Anchor Unit (tailored to the learner's interest focus if set)."
+    : "Design 2 lateral breadth units that connect the Anchor Unit to adjacent subfields, cross-industry applications, or alternative paradigms (tailored to the learner's interest focus if set)."
+}
+
+Respond with ONLY a JSON array of 2 objects:
+[
+  {
+    "title": "Specific Unit Title",
+    "outline": "1-2 sentences describing what this unit covers",
+    "difficulty": "${direction === "depth" ? "advanced" : anchorUnit?.difficulty || "intermediate"}",
+    "tierLabel": "${direction === "depth" ? "Depth Branch" : "Breadth Bridge"}"
+  }
+]`;
+
+      const aiRes = await generateByokOrPool([{ role: "user", content: prompt }], userConfig, {
+        responseFormat: "json",
+        temperature: 0.65,
+        maxTokens: 1024,
+      });
+      const raw = aiRes.content || "[]";
+      const fenceMatch = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+      const planned = JSON.parse(fenceMatch ? fenceMatch[1].trim() : raw.trim());
+
+      const createdUnits = [];
+      if (Array.isArray(planned)) {
+        for (const item of planned.slice(0, 2)) {
+          if (!item?.title) continue;
+          const cleanTitle = String(item.title).trim();
+          if (existingTitles.has(cleanTitle.toLowerCase())) continue;
+          const diff = ["beginner", "intermediate", "advanced", "nextgen"].includes(item.difficulty)
+            ? item.difficulty
+            : direction === "depth"
+            ? "advanced"
+            : "intermediate";
+          const sameDiff = existingUnits.filter((u) => u.difficulty === diff);
+          const nextIdx = sameDiff.length + createdUnits.length;
+          const label = item.tierLabel || (direction === "depth" ? "Depth Branch" : "Breadth Bridge");
+          const created = await storage.createLessonUnit({
+            topicId,
+            difficulty: diff,
+            contentType: "balanced",
+            unitIndex: nextIdx,
+            title: cleanTitle,
+            outline: `${String(item.outline || cleanTitle).trim()} [${label}]`,
+          });
+          createdUnits.push(created);
+          existingTitles.add(cleanTitle.toLowerCase());
+        }
+      }
+
+      await storage.recordTimelineEvent({
+        userId,
+        topicId,
+        eventType: "mode_changed",
+        metadata: {
+          action: `navigate_${direction}`,
+          anchorUnitId: anchorUnit?.id ?? null,
+          interestFocus: effectiveFocus || null,
+          addedUnits: createdUnits.map((u) => u.title),
+        },
+      });
+
+      res.status(201).json({
+        ok: true,
+        direction,
+        createdUnits,
+        firstNewUnit: createdUnits[0] || null,
+      });
+    } catch (error: any) {
+      console.error("Error navigating breadth/depth:", error);
+      res.status(500).json({ error: "Failed to navigate branch", message: error?.message || String(error) });
     }
   });
 }

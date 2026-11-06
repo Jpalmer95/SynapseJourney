@@ -152,6 +152,58 @@ export const MCP_TOOLS = [
       properties: {},
     },
   },
+  {
+    name: "synapse.log_learning",
+    description:
+      "Log open-ended conversational learnings, JIT debugging insights, or mastered concepts from an agent session into the user's Unified Knowledge Ledger & 3D Knowledge Web. Automatically reconciles against canonical courses and units so prior progress is tracked.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        concepts: {
+          type: "array",
+          description: "Atomic concepts or skills the user learned or demonstrated understanding of",
+          items: {
+            type: "object",
+            properties: {
+              conceptTitle: { type: "string", description: "Specific concept or skill title" },
+              summary: { type: "string", description: "1-3 sentence summary of what was learned" },
+              depthLevel: {
+                type: "string",
+                enum: ["intro", "core", "advanced", "frontier"],
+              },
+              topicTitle: { type: "string", description: "Canonical parent subject/topic name" },
+              topicId: { type: "number", description: "Optional explicit Synapse topicId" },
+              confidence: { type: "number", description: "Mastery confidence 10-100 (default 85)" },
+              tags: { type: "array", items: { type: "string" } },
+            },
+            required: ["conceptTitle", "summary"],
+          },
+        },
+        stream: {
+          type: "string",
+          enum: ["mcp_agent", "jit", "linear", "agent_chat"],
+          description: "Learning stream source (defaults to mcp_agent)",
+        },
+        createMapNodeIfMissing: {
+          type: "boolean",
+          description: "Create a personal 3D Map node if no existing topic matches (default true)",
+        },
+      },
+      required: ["concepts"],
+    },
+  },
+  {
+    name: "synapse.get_prior_knowledge",
+    description:
+      "Retrieve the learner's prior & scattered knowledge ledger for a topic or subject query across all learning streams (JIT goals, linear courses, in-app agent chats, and external MCP sessions). Call before teaching or authoring a course so you build on what they already know.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        topicId: { type: "number", description: "Optional numeric topicId" },
+        query: { type: "string", description: "Optional subject or concept query" },
+      },
+    },
+  },
 ];
 
 export function registerMcpRoutes(app: Express) {
@@ -252,11 +304,19 @@ export function registerMcpRoutes(app: Express) {
           const plan = await storage.getLatestCoursePlan(topicId);
           const bottlenecks = await storage.getSotaBottlenecks({ topicId, limit: 15 });
           const resources = await storage.getKnowledgeResources({ topicId, limit: 20 });
+          const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+          const priorKnowledge = userId
+            ? await getPriorKnowledgeForTopic(storage, userId, { topicId })
+            : null;
           return sendResult({
             content: [
               {
                 type: "text",
-                text: JSON.stringify({ topic, coursePlan: plan, units, bottlenecks, resources }, null, 2),
+                text: JSON.stringify(
+                  { topic, coursePlan: plan, units, bottlenecks, resources, priorKnowledge },
+                  null,
+                  2,
+                ),
               },
             ],
           });
@@ -441,6 +501,69 @@ export function registerMcpRoutes(app: Express) {
           const graph = await storage.getKnowledgeGraph(userId);
           return sendResult({
             content: [{ type: "text", text: JSON.stringify(graph, null, 2) }],
+          });
+        }
+
+        if (toolName === "synapse.log_learning") {
+          const rawConcepts = Array.isArray(args.concepts) ? args.concepts : [];
+          if (rawConcepts.length === 0) {
+            return sendError(-32602, "concepts array with at least 1 entry is required");
+          }
+          const stream = ["mcp_agent", "jit", "linear", "agent_chat"].includes(args.stream)
+            ? args.stream
+            : "mcp_agent";
+          const createMapNodeIfMissing = args.createMapNodeIfMissing !== false;
+          const { logAndReconcileKnowledge } = await import("../knowledge-ledger");
+          const result = await logAndReconcileKnowledge(
+            storage,
+            userId,
+            rawConcepts.slice(0, 25).map((c: any) => ({
+              conceptTitle: String(c.conceptTitle || "").trim(),
+              summary: String(c.summary || c.conceptTitle || "").trim(),
+              stream,
+              depthLevel: ["intro", "core", "advanced", "frontier"].includes(c.depthLevel)
+                ? c.depthLevel
+                : "core",
+              confidence: Number(c.confidence) || 85,
+              topicId: c.topicId ? Number(c.topicId) : null,
+              topicTitle: c.topicTitle ? String(c.topicTitle) : null,
+              tags: Array.isArray(c.tags) ? c.tags.map((t: any) => String(t)) : [],
+              createMapNodeIfMissing,
+            })),
+          );
+          const xpAwarded = result.entries.length * 15;
+          if (xpAwarded > 0) {
+            await storage.addXp(userId, xpAwarded).catch(() => {});
+          }
+          await storage.recordTimelineEvent({
+            userId,
+            topicId: result.touchedTopics[0]?.topicId ?? null,
+            eventType: "agent_learned",
+            metadata: {
+              stream,
+              conceptsLogged: result.entries.map((e) => e.conceptTitle),
+              touchedTopics: result.touchedTopics,
+              matchedUnitsCount: result.matchedUnitsCount,
+            },
+          });
+          return sendResult({
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({ ...result, xpAwarded }, null, 2),
+              },
+            ],
+          });
+        }
+
+        if (toolName === "synapse.get_prior_knowledge") {
+          const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+          const report = await getPriorKnowledgeForTopic(storage, userId, {
+            topicId: args.topicId ? Number(args.topicId) : undefined,
+            query: args.query ? String(args.query) : undefined,
+          });
+          return sendResult({
+            content: [{ type: "text", text: JSON.stringify(report, null, 2) }],
           });
         }
 

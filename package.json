@@ -13,6 +13,7 @@
     "audit:content": "tsx scripts/audit-content.ts",
     "purge:units": "tsx scripts/purge-bad-units.ts",
     "check:quality": "tsx scripts/quality-selftest.ts",
+    "check:ledger": "tsx scripts/ledger-selftest.ts",
     "ensure:plans": "tsx scripts/ensure-plans.ts"
   },
   "dependencies": {

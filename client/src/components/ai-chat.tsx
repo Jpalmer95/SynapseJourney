@@ -1,13 +1,16 @@
 import { useState, useRef, useEffect } from "react";
 import { motion } from "framer-motion";
-import { X, Send, Sparkles, User, Loader2, HelpCircle, Settings, Key, Server, Zap } from "lucide-react";
+import { X, Send, Sparkles, User, Loader2, HelpCircle, Settings, Key, Server, Zap, MapPin, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Switch } from "@/components/ui/switch";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
 import type { Topic } from "@shared/schema";
 
 interface Message {
@@ -19,6 +22,8 @@ interface Message {
 
 interface AiChatProps {
   topic?: Topic;
+  /** Optional free-text subject for open-ended agentic learning without a pre-selected topic */
+  subjectHint?: string;
   synthesisTopics?: string;
   onClose: () => void;
   /** Initial tutor style from lesson chrome */
@@ -32,26 +37,35 @@ const suggestions = [
   "What should I learn next?",
 ];
 
-export function AiChat({ topic, synthesisTopics, onClose, initialTutorMode = "direct" }: AiChatProps) {
+export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTutorMode = "direct" }: AiChatProps) {
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const activeSubject = topic?.title || subjectHint || "";
   const [messages, setMessages] = useState<Message[]>([
     {
       id: "welcome",
       role: "assistant",
       content: synthesisTopics
         ? `I see you have mastered **${synthesisTopics}**... Let us see what you are truly capable of. I have constructed a Synthesis Quest to test your multidisciplinary understanding. Are you ready?`
-        : topic
+        : activeSubject
         ? initialTutorMode === "socratic"
-          ? `I'll guide you through **${topic.title}** with questions. What feels unclear or most interesting right now?`
+          ? `I'll guide you through **${activeSubject}** with questions. What feels unclear or most interesting right now?`
           : initialTutorMode === "feynman"
-          ? `Teach me **${topic.title}** like I'm new to it. Start with the core idea in plain words.`
-          : `Hello! I'm your AI learning companion. I see you're exploring "${topic.title}". What would you like to know? I'm here to help you understand this topic better.`
-        : "Hello! I'm your AI learning companion. I'm here to help you explore knowledge, answer questions, and guide your learning journey. What would you like to learn about today?",
+          ? `Teach me **${activeSubject}** like I'm new to it. Start with the core idea in plain words.`
+          : `Welcome to open-ended Agentic Learning on **${activeSubject}**. Ask anything, follow tangents, or test your intuition — when you're ready, click **Log to 3D Map** above and your scattered learnings will be reconciled into your 3D Knowledge Web and credited toward future courses.`
+        : "Welcome to open-ended Agentic Learning! Explore any concept, ask questions, or jump across subjects. Click **Log to 3D Map** anytime to distill and save your scattered learnings into your 3D Knowledge Web so future courses recognize what you already know.",
       timestamp: new Date(),
     },
   ]);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [isDistilling, setIsDistilling] = useState(false);
+  const [distilledSummary, setDistilledSummary] = useState<{
+    concepts: string[];
+    topics: { title: string; masteryPct: number }[];
+    matchedUnitsCount: number;
+    xpAwarded: number;
+  } | null>(null);
   const [socraticMode, setSocraticMode] = useState(initialTutorMode === "socratic");
   const [feynmanMode, setFeynmanMode] = useState(initialTutorMode === "feynman");
   const [feynmanGraded, setFeynmanGraded] = useState(false);
@@ -190,6 +204,63 @@ export function AiChat({ topic, synthesisTopics, onClose, initialTutorMode = "di
     textareaRef.current?.focus();
   };
 
+  const handleDistillToMap = async () => {
+    const userMessages = messages.filter((m) => m.role === "user");
+    const manualNote = input.trim();
+    if (userMessages.length === 0 && !manualNote) {
+      toast({
+        title: "Nothing to log yet",
+        description: "Ask a question, discuss a concept, or type a learning note in the box below first.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setIsDistilling(true);
+    try {
+      const res = await apiRequest("POST", "/api/learn/ledger/distill-chat", {
+        topicId: topic?.id,
+        topicTitle: activeSubject || undefined,
+        manualSummary: userMessages.length === 0 ? manualNote : undefined,
+        history: messages
+          .filter((m) => m.id !== "welcome")
+          .map((m) => ({ role: m.role, content: m.content })),
+      });
+      const data = await res.json();
+      const concepts = (data.entries || []).map((e: any) => e.conceptTitle);
+      const touched = (data.touchedTopics || []).map((t: any) => ({
+        title: t.title,
+        masteryPct: t.masteryPct,
+      }));
+      setDistilledSummary({
+        concepts,
+        topics: touched,
+        matchedUnitsCount: data.matchedUnitsCount || 0,
+        xpAwarded: data.xpAwarded || 0,
+      });
+      if (userMessages.length === 0 && manualNote) {
+        setInput("");
+      }
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-graph"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/prior-knowledge"] });
+      if (topic?.id) {
+        queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prior-knowledge"] });
+        queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      }
+      toast({
+        title: `Logged ${concepts.length} concept${concepts.length === 1 ? "" : "s"} to your 3D Map!`,
+        description: `+${data.xpAwarded || 15} XP · Reconciled with ${touched.map((t: any) => `${t.title} (${t.masteryPct}%)`).join(", ") || "your knowledge ledger"}.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Could not log learnings",
+        description: err?.message || "Try again in a moment.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsDistilling(false);
+    }
+  };
+
   return (
     <motion.div
       className="fixed inset-0 z-50 md:inset-auto md:right-0 md:top-0 md:bottom-0 md:w-[400px] lg:w-[480px] bg-background border-l border-border flex flex-col"
@@ -204,13 +275,29 @@ export function AiChat({ topic, synthesisTopics, onClose, initialTutorMode = "di
             <Sparkles className="h-5 w-5 text-primary" />
           </div>
           <div>
-            <h2 className="font-semibold">{synthesisTopics ? "Synthesis Quest" : "AI Companion"}</h2>
-            <p className="text-sm text-muted-foreground">
-              {synthesisTopics ? `Topics: ${synthesisTopics}` : topic ? `Learning: ${topic.title}` : "Ready to help"}
+            <h2 className="font-semibold">{synthesisTopics ? "Synthesis Quest" : "Agentic Learning Studio"}</h2>
+            <p className="text-xs text-muted-foreground">
+              {synthesisTopics
+                ? `Topics: ${synthesisTopics}`
+                : activeSubject
+                ? `Subject: ${activeSubject}`
+                : "Open-ended learning → synced to 3D Map"}
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleDistillToMap}
+            disabled={isDistilling}
+            className="h-7 px-2 text-xs gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400 hover:bg-emerald-500/10"
+            title="Distill concepts from this conversation and save them into your 3D Knowledge Web & course ledger"
+            data-testid="button-distill-to-3d-map"
+          >
+            {isDistilling ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <MapPin className="h-3.5 w-3.5" />}
+            <span>Log to 3D Map</span>
+          </Button>
           <div className="flex items-center gap-2 mr-0">
             <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Socratic Tutoring">Socratic</span>
             <Switch 
@@ -358,6 +445,39 @@ export function AiChat({ topic, synthesisTopics, onClose, initialTutorMode = "di
               <div className="bg-muted rounded-2xl px-4 py-2">
                 <Loader2 className="h-4 w-4 animate-spin" />
               </div>
+            </div>
+          )}
+
+          {distilledSummary && (
+            <div
+              className="rounded-xl border border-emerald-500/40 bg-emerald-500/10 p-3 space-y-2 text-xs"
+              data-testid="card-distilled-summary"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-semibold text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+                  <CheckCircle2 className="h-4 w-4" />
+                  Saved to Unified Knowledge Ledger & 3D Map
+                </span>
+                <Badge variant="outline" className="border-emerald-500/40 text-emerald-500 text-[10px]">
+                  +{distilledSummary.xpAwarded} XP
+                </Badge>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {distilledSummary.concepts.map((c, idx) => (
+                  <Badge key={idx} variant="secondary" className="text-[10px]">
+                    {c}
+                  </Badge>
+                ))}
+              </div>
+              {distilledSummary.topics.length > 0 && (
+                <p className="text-[11px] text-muted-foreground">
+                  3D Map Nodes updated:{" "}
+                  {distilledSummary.topics.map((t) => `${t.title} (${t.masteryPct}% mastery)`).join(", ")}
+                  {distilledSummary.matchedUnitsCount > 0
+                    ? ` · ${distilledSummary.matchedUnitsCount} course unit(s) pre-credited`
+                    : ""}
+                </p>
+              )}
             </div>
           )}
         </div>

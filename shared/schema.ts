@@ -740,7 +740,7 @@ export const learningTimeline = pgTable("learning_timeline", {
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
-// Per-topic learning preferences (depth / tutor / view override global profile defaults)
+// Per-topic learning preferences (depth / tutor / view / pace / interest override global profile defaults)
 export const topicLearningPrefs = pgTable("topic_learning_prefs", {
   id: serial("id").primaryKey(),
   userId: varchar("user_id").notNull(),
@@ -748,7 +748,27 @@ export const topicLearningPrefs = pgTable("topic_learning_prefs", {
   depthMode: text("depth_mode").default("standard").notNull(), // survey | standard | deep | speed_run
   tutorMode: text("tutor_mode").default("direct").notNull(), // direct | socratic | feynman
   contentView: text("content_view").default("full").notNull(), // full | skim
+  paceMode: text("pace_mode").default("balanced").notNull(), // fast_track | balanced | rigorous
+  interestFocus: text("interest_focus"), // optional user-defined interest lens for breadth/depth navigation
   updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`),
+});
+
+// Unified Knowledge Ledger — cross-stream concept tracking across JIT, Linear Courses, In-App Agent Chat, and External MCP Agents
+export const userKnowledgeLedger = pgTable("user_knowledge_ledger", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  topicId: integer("topic_id").references(() => topics.id),
+  sourceTopicId: integer("source_topic_id").references(() => topics.id),
+  matchedUnitId: integer("matched_unit_id").references(() => lessonUnits.id),
+  conceptTitle: text("concept_title").notNull(),
+  normalizedConcept: text("normalized_concept").notNull(),
+  summary: text("summary").notNull(),
+  stream: text("stream").default("linear").notNull(), // jit | linear | agent_chat | mcp_agent
+  depthLevel: text("depth_level").default("core").notNull(), // intro | core | advanced | frontier
+  confidence: integer("confidence").default(80).notNull(), // 0-100 mastery confidence
+  tags: text("tags").array(),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 
 // Relations
@@ -849,6 +869,7 @@ export const insertCoursePlanSchema = createInsertSchema(coursePlans).omit({ id:
 export const insertLearningGoalSchema = createInsertSchema(learningGoals).omit({ id: true, createdAt: true, completedAt: true });
 export const insertLearningTimelineSchema = createInsertSchema(learningTimeline).omit({ id: true, createdAt: true });
 export const insertTopicLearningPrefsSchema = createInsertSchema(topicLearningPrefs).omit({ id: true, updatedAt: true });
+export const insertUserKnowledgeLedgerSchema = createInsertSchema(userKnowledgeLedger).omit({ id: true, createdAt: true, updatedAt: true });
 
 // Types
 export type Category = typeof categories.$inferSelect;
@@ -975,6 +996,8 @@ export type LearningTimelineEvent = typeof learningTimeline.$inferSelect;
 export type InsertLearningTimelineEvent = z.infer<typeof insertLearningTimelineSchema>;
 export type TopicLearningPrefs = typeof topicLearningPrefs.$inferSelect;
 export type InsertTopicLearningPrefs = z.infer<typeof insertTopicLearningPrefsSchema>;
+export type UserKnowledgeLedgerEntry = typeof userKnowledgeLedger.$inferSelect;
+export type InsertUserKnowledgeLedgerEntry = z.infer<typeof insertUserKnowledgeLedgerSchema>;
 
 // Lesson content structure for AI generation
 export interface LessonContent {

@@ -59,9 +59,7 @@ instead of inventing a parallel one.
 (the learner explains it back) → mark complete. The learner's own compute pays for this;
 the platform never runs a funded LLM for it.
 
-**4. Progress is written back.** Completing a unit updates `lesson_progress`, recalculates
-`user_progress.mastery` (0–100), appends a `learning_timeline` event, and — on course
-completion — issues a course poster.
+**4. Progress & open-ended conversations are written back to the Unified Knowledge Ledger.** Completing a unit updates `lesson_progress`, recalculates `user_progress.mastery` (0–100), and logs to `user_knowledge_ledger`. Even when the learner is just having an **open-ended conversation** with Hermes (or solving a JIT problem without a formal course), the agent calls `synapse.log_learning` to distill and save the learned concepts into their 3D Knowledge Web and reconcile them against canonical course units. When the learner later touches that topic again, `synapse.get_prior_knowledge` (and the in-app **Prior & Scattered Progress Recognized** banner) surfaces everything they already covered so they never start from zero.
 
 **5. The map grows.** Every new topic is embedded (768-d) and projected into the 3D PCA space
 (`Applied ↔ Theoretical`, `Natural ↔ Synthetic`, `Micro ↔ Macro`), with nearest-neighbour

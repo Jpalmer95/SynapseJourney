@@ -235,11 +235,31 @@ public on creation, so per-user JIT courses leaked into the shared catalogue.
   - A junk payload returns 422 with a per-unit report; a re-titled duplicate of a published course returns 409.
   - `/agents` and `/.well-known/synapse.json` are reachable without a session.
 
+---
+
+## Phase 8 — Next-Gen 3-Mode Learning Architecture & Unified Knowledge Ledger (2026-11-06)
+
+**Macro Issue Solved:** Courses previously lacked a cohesive progression structure across learning styles, and scattered learnings from JIT sprints or open-ended agent conversations were not reconciled when a learner later opened a topic. Synapse now unifies **three core learning modes** into **one persistent 3D Knowledge Ledger (`user_knowledge_ledger`)**:
+
+- [x] **8.1 Mode 1 — Laser-Focused JIT Learning Mode (`goal` / `rapid_bootstrap`)**
+  - 3–5 surgical, dependency-ordered units built to unblock a specific challenge, bug, or segment today.
+  - Completing any unit in a JIT course automatically logs to `user_knowledge_ledger` (`stream = 'jit'`), matches against canonical published courses & units (`matchedUnitId`), creates a `jit_segment` connection edge on the 3D map, and credits mastery on the parent canonical topic.
+- [x] **8.2 Mode 2 — Generalized Linear Mastery Course (Intro Course → Sequential Advanced + Breadth/Depth Navigation)**
+  - Redesigned `RabbitHole` default view into a **Sequential Linear Spine** (`Stage 1: Intro Course & Core Orientation` → `Stage 2: Core Mechanics` → `Stage 3: Applied & Advanced Mastery` → `Stage 4: Next-Gen Frontier & SOTA`), numbered continuously `1..N` with a toggle to switch to `Stage Tabs`.
+  - **Speed & Interest Steering Bar:** Learners choose pace (`Fast-Track` | `Balanced` | `Rigorous Depth`) and a custom **Specific Interest / Application Lens** (`topic_learning_prefs.pace_mode`, `interest_focus`).
+  - **Inline Breadth ↔ Depth Branching (`POST /api/learn/topics/:topicId/navigate`):** Every unit on the linear spine (and the unit reader footer) exposes `+ Depth` (drill deeper into derivations/internals/failure modes) and `↔ Breadth` (lateral bridge to adjacent concepts/applications).
+- [x] **8.3 Mode 3 — Agentic Conversation-Based Open-Ended Learning (`agent_chat` & `mcp_agent`)**
+  - **In-App Agentic Learning Studio (`AiChat` + `CourseCreator` Mode 3):** Open-ended learning conversations include a 1-click **"Log to 3D Map"** button (`POST /api/learn/ledger/distill-chat`) plus direct concept logging (`POST /api/learn/ledger`) that distills scattered insights into atomic ledger nodes, projects new topics onto the 3D PCA axes, and updates `user_progress`.
+  - **External Agent MCP Continuity (`/api/mcp`):** Added `synapse.log_learning` and `synapse.get_prior_knowledge` (10 MCP tools total), allowing Hermes Agent, Claude, or Cursor to log conversational learnings and query prior mastery before teaching or authoring.
+- [x] **8.4 Cross-Stream Prior Progress Recognition (`server/knowledge-ledger.ts`)**
+  - Opening any course queries `GET /api/learn/topics/:topicId/prior-knowledge`.
+  - `RabbitHole` renders a **Prior & Scattered Progress Recognized** banner listing concepts already learned via JIT, Agent Chat, or Hermes MCP, badges overlapping units (`Prior Coverage`), offers 1-click **Credit Prior Progress** (`POST /api/learn/topics/:topicId/apply-prior`), and provides a **Jump to Next Uncovered Lesson** button.
+  - `planCourseWithAI` and `/api/ai/chat` automatically inject the learner's `promptContextBlock` so new courses and tutoring sessions build on prior knowledge instead of repeating basics.
 
 ---
 
 ## Metadata
-- **Updated:** 2026-10-27
+- **Updated:** 2026-11-06
 - **Owner:** Jonathan Korstad + Hermes Agent
-- **Branch:** `fix/auth-and-copy` → `main`
-- **Status:** Phases 1–7 complete. Auth recovery + passkeys + archetypes deployed (Phase 6); password-reset email live via Resend; content governance, 21 flagship courses and the public agent surface (MCP Streamable HTTP, `/.well-known`, `/agents`, `synapse-learn` skill) shipped in Phase 7. Remaining optional: Google OAuth credentials, cloud embeddings (droplet cannot reach Ollama), Resend key rotation.
+- **Branch:** `feat/nextgen-3mode-knowledge-ledger` → `main`
+- **Status:** Phases 1–8 complete. Next-Gen 3-Mode Learning Architecture (JIT Laser Focus, Linear Intro→Advanced Spine with Breadth/Depth branching, Agentic Open-Ended Learning) and the Unified Knowledge Ledger (`user_knowledge_ledger` + MCP `synapse.log_learning` / `synapse.get_prior_knowledge`) shipped in Phase 8.

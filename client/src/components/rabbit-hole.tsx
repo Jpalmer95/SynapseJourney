@@ -173,6 +173,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const [depthMode, setDepthMode] = useState<string>("standard");
   const [tutorMode, setTutorMode] = useState<string>("direct");
   const [contentView, setContentView] = useState<"full" | "skim">("full");
+  const [paceMode, setPaceMode] = useState<"fast_track" | "balanced" | "rigorous">("balanced");
+  const [interestFocusInput, setInterestFocusInput] = useState<string>("");
+  const [outlineViewMode, setOutlineViewMode] = useState<"linear" | "tabs">("linear");
   const [resumeApplied, setResumeApplied] = useState(false);
   const [quizFirst, setQuizFirst] = useState(false);
   const [onDemandQuiz, setOnDemandQuiz] = useState<LessonContent["quiz"] | null>(null);
@@ -230,13 +233,52 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     queryKey: ["/api/lessons", topic.id, "outline"],
   });
 
-  // Phase 9: per-topic learning prefs + course plan OER
+  // Phase 9: per-topic learning prefs + course plan OER + Unified Knowledge Ledger prior knowledge
   const { data: topicPrefs } = useQuery<{
     depthMode: string;
     tutorMode: string;
     contentView: string;
+    paceMode?: "fast_track" | "balanced" | "rigorous";
+    interestFocus?: string;
   }>({
     queryKey: ["/api/learn/topics", topic.id, "prefs"],
+  });
+
+  const { data: priorKnowledge } = useQuery<{
+    topicId: number | null;
+    topicTitle: string | null;
+    ledgerEntries: {
+      id: number;
+      conceptTitle: string;
+      summary: string;
+      stream: string;
+      depthLevel: string;
+      confidence: number;
+      createdAt: string;
+    }[];
+    unitCoverage: {
+      unitId: number;
+      unitTitle: string;
+      difficulty: string;
+      completedDirectly: boolean;
+      priorCovered: boolean;
+      coveringEntries: {
+        id: number;
+        conceptTitle: string;
+        stream: string;
+        confidence: number;
+        summary: string;
+      }[];
+    }[];
+    recommendedStartUnitId: number | null;
+    priorCoveredUnitCount: number;
+    completedUnitCount: number;
+    totalUnits: number;
+    effectiveMasteryPct: number;
+    streamBreakdown: Record<string, number>;
+  }>({
+    queryKey: ["/api/learn/topics", topic.id, "prior-knowledge"],
+    retry: false,
   });
 
   const { data: coursePlan } = useQuery<{
@@ -264,10 +306,18 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     setDepthMode(topicPrefs.depthMode || "standard");
     setTutorMode(topicPrefs.tutorMode || "direct");
     setContentView((topicPrefs.contentView as "full" | "skim") || "full");
+    setPaceMode(topicPrefs.paceMode || "balanced");
+    setInterestFocusInput(topicPrefs.interestFocus || "");
     setQuizFirst(topicPrefs.depthMode === "speed_run");
-  }, [topicPrefs?.depthMode, topicPrefs?.tutorMode, topicPrefs?.contentView]);
+  }, [topicPrefs?.depthMode, topicPrefs?.tutorMode, topicPrefs?.contentView, topicPrefs?.paceMode, topicPrefs?.interestFocus]);
 
-  const saveTopicPrefs = async (patch: { depthMode?: string; tutorMode?: string; contentView?: string }) => {
+  const saveTopicPrefs = async (patch: {
+    depthMode?: string;
+    tutorMode?: string;
+    contentView?: string;
+    paceMode?: "fast_track" | "balanced" | "rigorous";
+    interestFocus?: string | null;
+  }) => {
     try {
       await apiRequest("PUT", `/api/learn/topics/${topic.id}/prefs`, patch);
       queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
@@ -276,6 +326,69 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       // non-blocking
     }
   };
+
+  // Apply prior/scattered progress to credit overlapping units in this course
+  const applyPriorMutation = useMutation({
+    mutationFn: async (unitId?: number) => {
+      const res = await apiRequest("POST", `/api/learn/topics/${topic.id}/apply-prior`, unitId ? { unitId } : {});
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prior-knowledge"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/knowledge-graph"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
+      toast({
+        title: "Prior knowledge credited!",
+        description: `Credited ${(data.creditedUnitIds || []).length} unit(s) from your prior JIT / Agent learning (${data.effectiveMasteryPct}% effective mastery).`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Could not apply prior progress",
+        description: err?.message || "Try again in a moment.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  // Navigate Breadth or Depth from any unit or the course steering bar
+  const navigateBranchMutation = useMutation({
+    mutationFn: async (opts: { unitId?: number; direction: "depth" | "breadth" }) => {
+      const res = await apiRequest("POST", `/api/learn/topics/${topic.id}/navigate`, {
+        unitId: opts.unitId,
+        direction: opts.direction,
+        interestFocus: interestFocusInput.trim() || undefined,
+        paceMode,
+      });
+      return res.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prior-knowledge"] });
+      const addedCount = (data.createdUnits || []).length;
+      toast({
+        title: data.direction === "depth" ? "Depth branch added!" : "Breadth bridge added!",
+        description:
+          addedCount > 0
+            ? `Added ${addedCount} ${data.direction} unit(s) to this course${interestFocusInput ? ` focused on "${interestFocusInput}"` : ""}.`
+            : "Branch updated.",
+      });
+      if (data.firstNewUnit && !selectedUnit) {
+        setSelectedUnit(data.firstNewUnit);
+      }
+    },
+    onError: (err: any) => {
+      const msg = err?.message || "Could not generate branch.";
+      toast({
+        title: "Breadth/Depth navigation requires your AI key",
+        description: msg.includes("BYOC_REQUIRED")
+          ? "Add an AI key in Settings, or ask Hermes Agent to append a depth/breadth branch via topicId=" + topic.id
+          : msg,
+        variant: "destructive",
+      });
+    },
+  });
 
   /** Safe depth replan — never wipes progress */
   const replanDepth = async (intent: string) => {
@@ -753,9 +866,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   // Derive descriptive tier label per difficulty from unit outlines (`[Tier Name]`) or coursePlan.tiers
   const tierLabelsByDifficulty = useMemo(() => {
     const labels: Record<string, string> = {
-      beginner: "Foundations",
+      beginner: "Intro Course & Foundations",
       intermediate: "Core Mechanics",
-      advanced: "Advanced",
+      advanced: "Advanced Mastery",
       nextgen: "Frontier & SOTA",
     };
     for (const diff of ALL_DIFFICULTIES) {
@@ -770,6 +883,47 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     }
     return labels;
   }, [unitsByDifficulty]);
+
+  // Map unitId -> prior coverage from Unified Knowledge Ledger (JIT, Agent Chat, Hermes MCP)
+  const priorCoverageByUnitId = useMemo(() => {
+    const map = new Map<
+      number,
+      {
+        priorCovered: boolean;
+        coveringEntries: { id: number; conceptTitle: string; stream: string; confidence: number; summary: string }[];
+      }
+    >();
+    for (const item of priorKnowledge?.unitCoverage || []) {
+      map.set(item.unitId, {
+        priorCovered: item.priorCovered,
+        coveringEntries: item.coveringEntries || [],
+      });
+    }
+    return map;
+  }, [priorKnowledge]);
+
+  // Flat sequential spine ordered from Stage 1 (Intro) -> Stage N (Frontier)
+  const orderedLinearUnits = useMemo(() => {
+    const list: (LessonUnit & { globalStep: number; stageIndex: number; stageTitle: string })[] = [];
+    let step = 1;
+    availableDifficulties.forEach((diff, stageIdx) => {
+      const stageUnits = unitsByDifficulty[diff] || [];
+      const baseStageLabel = tierLabelsByDifficulty[diff] || diff;
+      const stageTitle =
+        stageIdx === 0 && !baseStageLabel.toLowerCase().includes("intro")
+          ? `Stage 1: Intro Course — ${baseStageLabel}`
+          : `Stage ${stageIdx + 1}: ${baseStageLabel}`;
+      for (const u of stageUnits) {
+        list.push({
+          ...u,
+          globalStep: step++,
+          stageIndex: stageIdx + 1,
+          stageTitle,
+        });
+      }
+    });
+    return list;
+  }, [availableDifficulties, unitsByDifficulty, tierLabelsByDifficulty]);
 
   const mastery = lessonData?.mastery;
   
@@ -1763,16 +1917,61 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </section>
                 )}
 
-                {/* AI Chat Button */}
-                <div className="flex justify-center pt-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowChat(true)}
-                    data-testid="button-ask-ai"
-                  >
-                    <MessageCircle className="h-4 w-4 mr-2" />
-                    Have questions? Ask the AI Tutor
-                  </Button>
+                {/* Next-Gen Linear Progression + Inline Breadth/Depth Branching + Agentic Studio */}
+                <div className="pt-6 border-t border-border/60 space-y-3" data-testid="unit-footer-navigation">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={navigateBranchMutation.isPending}
+                        onClick={() => navigateBranchMutation.mutate({ unitId: selectedUnit.id, direction: "depth" })}
+                        data-testid="button-unit-go-deeper"
+                      >
+                        {navigateBranchMutation.isPending ? (
+                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                        ) : (
+                          <Brain className="h-3.5 w-3.5 mr-1.5 text-cyan-400" />
+                        )}
+                        + Go Deeper (Depth Branch)
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={navigateBranchMutation.isPending}
+                        onClick={() => navigateBranchMutation.mutate({ unitId: selectedUnit.id, direction: "breadth" })}
+                        data-testid="button-unit-explore-breadth"
+                      >
+                        <Compass className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
+                        ↔ Explore Breadth Bridge
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setShowChat(true)}
+                        data-testid="button-ask-ai"
+                      >
+                        <MessageCircle className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
+                        Agentic Tutor (Syncs to 3D Map)
+                      </Button>
+                    </div>
+                    {(() => {
+                      const currentIdx = orderedLinearUnits.findIndex((u) => u.id === selectedUnit.id);
+                      const nextUnit = currentIdx >= 0 ? orderedLinearUnits[currentIdx + 1] : null;
+                      if (!nextUnit) return null;
+                      return (
+                        <Button
+                          size="sm"
+                          onClick={() => handleStartUnit(nextUnit)}
+                          data-testid="button-next-linear-unit"
+                        >
+                          Next: {nextUnit.globalStep}. {nextUnit.title.slice(0, 32)}
+                          {nextUnit.title.length > 32 ? "…" : ""}
+                          <ArrowRight className="h-4 w-4 ml-1.5" />
+                        </Button>
+                      );
+                    })()}
+                  </div>
                 </div>
               </div>
             ) : (
@@ -2172,6 +2371,367 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 </Card>
               )}
 
+              {/* Prior & Scattered Knowledge Continuity Banner (from JIT, Agent Chat, or Hermes MCP) */}
+              {priorKnowledge && (priorKnowledge.ledgerEntries.length > 0 || priorKnowledge.priorCoveredUnitCount > 0) && (
+                <Card
+                  className="border-emerald-500/35 bg-gradient-to-br from-emerald-500/10 via-background to-cyan-500/5"
+                  data-testid="section-prior-knowledge"
+                >
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div className="space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <Badge className="bg-emerald-500/20 text-emerald-500 border-emerald-500/40 text-xs">
+                            <Sparkles className="h-3 w-3 mr-1" />
+                            Prior & Scattered Progress Recognized
+                          </Badge>
+                          <span className="text-xs text-muted-foreground">
+                            Effective Topic Mastery: <strong className="text-foreground">{priorKnowledge.effectiveMasteryPct}%</strong>
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Synapse found <strong>{priorKnowledge.ledgerEntries.length}</strong> concept(s) you already covered across{" "}
+                          {[
+                            priorKnowledge.streamBreakdown?.jit ? `${priorKnowledge.streamBreakdown.jit} JIT Goal` : null,
+                            priorKnowledge.streamBreakdown?.mcp_agent ? `${priorKnowledge.streamBreakdown.mcp_agent} Hermes/MCP` : null,
+                            priorKnowledge.streamBreakdown?.agent_chat ? `${priorKnowledge.streamBreakdown.agent_chat} Agent Chat` : null,
+                            priorKnowledge.streamBreakdown?.linear ? `${priorKnowledge.streamBreakdown.linear} Course` : null,
+                          ]
+                            .filter(Boolean)
+                            .join(" · ") || "your learning streams"}
+                          {priorKnowledge.priorCoveredUnitCount > 0
+                            ? ` — overlapping with ${priorKnowledge.priorCoveredUnitCount} uncompleted unit(s) below.`
+                            : "."}
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {priorKnowledge.priorCoveredUnitCount > 0 && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-8 text-xs border-emerald-500/40 text-emerald-500 hover:bg-emerald-500/10"
+                            disabled={applyPriorMutation.isPending}
+                            onClick={() => applyPriorMutation.mutate(undefined)}
+                            data-testid="button-apply-all-prior"
+                          >
+                            {applyPriorMutation.isPending ? (
+                              <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" />
+                            ) : (
+                              <CheckCircle className="h-3.5 w-3.5 mr-1" />
+                            )}
+                            Credit {priorKnowledge.priorCoveredUnitCount} Prior-Covered Unit(s)
+                          </Button>
+                        )}
+                        {priorKnowledge.recommendedStartUnitId && (
+                          <Button
+                            size="sm"
+                            className="h-8 text-xs"
+                            onClick={() => {
+                              const rec = orderedLinearUnits.find((u) => u.id === priorKnowledge.recommendedStartUnitId);
+                              if (rec) handleStartUnit(rec);
+                            }}
+                            data-testid="button-jump-recommended-unit"
+                          >
+                            Jump to Next Uncovered Lesson
+                            <ArrowRight className="h-3.5 w-3.5 ml-1" />
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {priorKnowledge.ledgerEntries.slice(0, 8).map((entry) => (
+                        <Badge
+                          key={entry.id}
+                          variant="outline"
+                          className="text-[10px] border-border/80 bg-background/60"
+                          title={entry.summary}
+                        >
+                          <span className="uppercase text-[9px] text-emerald-400 mr-1">[{entry.stream.replace("_", " ")}]</span>
+                          {entry.conceptTitle}
+                        </Badge>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Breadth <-> Depth & Pace/Interest Steering Bar */}
+              <Card className="border-border/70 bg-card/50" data-testid="section-breadth-depth-steering">
+                <CardContent className="p-3.5 space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mr-1">
+                        Speed / Pace
+                      </span>
+                      {(
+                        [
+                          { id: "fast_track", label: "Fast-Track" },
+                          { id: "balanced", label: "Balanced" },
+                          { id: "rigorous", label: "Rigorous Depth" },
+                        ] as const
+                      ).map((p) => (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => {
+                            setPaceMode(p.id);
+                            saveTopicPrefs({ paceMode: p.id });
+                          }}
+                          className={cn(
+                            "text-xs px-2.5 py-0.5 rounded-full border transition-colors",
+                            paceMode === p.id
+                              ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-400"
+                              : "border-border text-muted-foreground hover:text-foreground",
+                          )}
+                          data-testid={`chip-pace-${p.id}`}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-background/60">
+                      <button
+                        type="button"
+                        onClick={() => setOutlineViewMode("linear")}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-md transition-colors",
+                          outlineViewMode === "linear"
+                            ? "bg-primary text-primary-foreground font-medium"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                        data-testid="toggle-view-linear"
+                      >
+                        Linear Spine ({orderedLinearUnits.length})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setOutlineViewMode("tabs")}
+                        className={cn(
+                          "text-xs px-2.5 py-1 rounded-md transition-colors",
+                          outlineViewMode === "tabs"
+                            ? "bg-primary text-primary-foreground font-medium"
+                            : "text-muted-foreground hover:text-foreground",
+                        )}
+                        data-testid="toggle-view-tabs"
+                      >
+                        Stage Tabs ({availableDifficulties.length})
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input
+                      value={interestFocusInput}
+                      onChange={(e) => setInterestFocusInput(e.target.value)}
+                      onBlur={() => saveTopicPrefs({ interestFocus: interestFocusInput.trim() || null })}
+                      placeholder="Specific interest or application lens for Breadth/Depth navigation (e.g. Audio DSP in Rust, Orbital Phasing)…"
+                      className="h-8 text-xs flex-1"
+                      data-testid="input-topic-interest-focus"
+                    />
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={navigateBranchMutation.isPending}
+                        onClick={() => navigateBranchMutation.mutate({ direction: "depth" })}
+                        data-testid="button-course-navigate-depth"
+                      >
+                        {navigateBranchMutation.isPending ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <Brain className="h-3 w-3 mr-1 text-cyan-400" />
+                        )}
+                        + Depth Branch
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-8 text-xs"
+                        disabled={navigateBranchMutation.isPending}
+                        onClick={() => navigateBranchMutation.mutate({ direction: "breadth" })}
+                        data-testid="button-course-navigate-breadth"
+                      >
+                        <Compass className="h-3 w-3 mr-1 text-amber-400" />
+                        ↔ Breadth Bridge
+                      </Button>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {outlineViewMode === "linear" ? (
+                /* Mode 2: Generalized Sequential Linear Course Spine (Intro Course -> Sequentially Advanced) */
+                <div className="space-y-6" data-testid="linear-course-spine">
+                  {availableDifficulties.map((diff, stageIdx) => {
+                    const stageUnits = orderedLinearUnits.filter((u) => u.difficulty === diff);
+                    if (stageUnits.length === 0) return null;
+                    const progress = getProgressForDifficulty(diff);
+                    const stageHeader = stageUnits[0]?.stageTitle || tierLabelsByDifficulty[diff] || diff;
+                    const stageSubtitle =
+                      stageIdx === 0
+                        ? "Intro Course — Core mental model, vocabulary, and first-principles orientation"
+                        : stageIdx === 1
+                        ? "Sequential Core — Fundamental mechanisms and hands-on building blocks"
+                        : stageIdx === 2
+                        ? "Advanced Progression — Deep systems, derivations, and edge-case mastery"
+                        : "Frontier & SOTA — Open industry bottlenecks, synthesis, and research hypotheses";
+
+                    return (
+                      <div key={diff} className="space-y-3" data-testid={`linear-stage-${diff}`}>
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                          <div>
+                            <h3 className="text-base font-semibold flex items-center gap-2">
+                              <Badge
+                                variant="outline"
+                                className={cn("text-xs", difficultyColors[diff as keyof typeof difficultyColors])}
+                              >
+                                Stage {stageIdx + 1}
+                              </Badge>
+                              {stageHeader.replace(/^Stage \d+:\s*/, "")}
+                            </h3>
+                            <p className="text-xs text-muted-foreground">{stageSubtitle}</p>
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            {progress.completed}/{progress.total} completed
+                          </span>
+                        </div>
+
+                        <div className="space-y-2.5 pl-2 sm:pl-4 border-l-2 border-primary/20">
+                          {stageUnits.map((unit) => {
+                            const isCompleted = unit.progress?.status === "completed";
+                            const isInProgress = unit.progress?.status === "in_progress";
+                            const priorInfo = priorCoverageByUnitId.get(unit.id);
+                            const isPriorCovered = !isCompleted && !!priorInfo?.priorCovered;
+                            const isRecommendedNext = priorKnowledge?.recommendedStartUnitId === unit.id;
+                            const { cleanOutline, tierName } = parseUnitTierLabel(unit.outline);
+
+                            return (
+                              <Card
+                                key={unit.id}
+                                className={cn(
+                                  "cursor-pointer transition-all hover-elevate",
+                                  unit.locked && "opacity-60 cursor-not-allowed",
+                                  isCompleted && "border-green-500/30 bg-green-500/5",
+                                  isPriorCovered && "border-emerald-500/40 bg-emerald-500/5",
+                                  isRecommendedNext && !isCompleted && "ring-1 ring-primary/50 border-primary/50",
+                                )}
+                                onClick={() => handleStartUnit(unit)}
+                                data-testid={`unit-${unit.id}`}
+                              >
+                                <CardContent className="p-3.5 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+                                  <div className="flex items-center gap-3 flex-1 min-w-0">
+                                    <div
+                                      className={cn(
+                                        "w-9 h-9 rounded-full flex items-center justify-center shrink-0 text-sm font-semibold",
+                                        isCompleted
+                                          ? "bg-green-500 text-white"
+                                          : isPriorCovered
+                                          ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/40"
+                                          : "bg-primary/10 text-primary border border-primary/20",
+                                      )}
+                                    >
+                                      {isCompleted ? <CheckCircle className="h-4 w-4" /> : unit.globalStep}
+                                    </div>
+
+                                    <div className="flex-1 min-w-0">
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <h4 className="font-medium text-sm sm:text-base truncate">{unit.title}</h4>
+                                        {tierName && (
+                                          <Badge variant="outline" className="text-[10px]">
+                                            {tierName}
+                                          </Badge>
+                                        )}
+                                        {isRecommendedNext && !isCompleted && (
+                                          <Badge className="bg-primary/20 text-primary border-primary/30 text-[10px]">
+                                            Next Up
+                                          </Badge>
+                                        )}
+                                        {isPriorCovered && (
+                                          <Badge
+                                            variant="outline"
+                                            className="border-emerald-500/40 text-emerald-400 text-[10px]"
+                                            title={priorInfo?.coveringEntries
+                                              ?.map((c) => `[${c.stream}] ${c.conceptTitle}: ${c.summary}`)
+                                              .join("\n")}
+                                          >
+                                            Prior Coverage ({priorInfo?.coveringEntries?.[0]?.stream?.replace("_", " ") || "ledger"})
+                                          </Badge>
+                                        )}
+                                      </div>
+                                      {cleanOutline && (
+                                        <p className="text-xs sm:text-sm text-muted-foreground line-clamp-2 mt-0.5">
+                                          {cleanOutline}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+
+                                  <div
+                                    className="flex items-center gap-1.5 shrink-0 self-end sm:self-center"
+                                    onClick={(e) => e.stopPropagation()}
+                                  >
+                                    {isPriorCovered && (
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2 text-[11px] border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10"
+                                        disabled={applyPriorMutation.isPending}
+                                        onClick={() => applyPriorMutation.mutate(unit.id)}
+                                        title="Mark this unit completed based on your prior JIT / Agent learning"
+                                        data-testid={`button-credit-unit-${unit.id}`}
+                                      >
+                                        Credit Prior
+                                      </Button>
+                                    )}
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 px-2 text-[11px] text-muted-foreground hover:text-cyan-400"
+                                      disabled={navigateBranchMutation.isPending}
+                                      onClick={() => navigateBranchMutation.mutate({ unitId: unit.id, direction: "depth" })}
+                                      title="Add a deeper sub-branch after this unit"
+                                      data-testid={`button-depth-unit-${unit.id}`}
+                                    >
+                                      + Depth
+                                    </Button>
+                                    <Button
+                                      size="sm"
+                                      variant="ghost"
+                                      className="h-7 px-2 text-[11px] text-muted-foreground hover:text-amber-400"
+                                      disabled={navigateBranchMutation.isPending}
+                                      onClick={() => navigateBranchMutation.mutate({ unitId: unit.id, direction: "breadth" })}
+                                      title="Add a lateral breadth bridge from this unit"
+                                      data-testid={`button-breadth-unit-${unit.id}`}
+                                    >
+                                      ↔ Breadth
+                                    </Button>
+                                    {isInProgress && (
+                                      <Badge variant="secondary" className="text-xs">
+                                        In Progress
+                                      </Badge>
+                                    )}
+                                    {isCompleted && unit.progress?.quizScore != null && (
+                                      <Badge variant="outline" className="text-xs">
+                                        {unit.progress.quizScore}%
+                                      </Badge>
+                                    )}
+                                    <ChevronRight
+                                      className="h-4 w-4 text-muted-foreground cursor-pointer"
+                                      onClick={() => handleStartUnit(unit)}
+                                    />
+                                  </div>
+                                </CardContent>
+                              </Card>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
                 <TabsList
                   className={cn(
@@ -2320,6 +2880,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   );
                 })}
               </Tabs>
+              )}
             </div>
           )}
         </div>

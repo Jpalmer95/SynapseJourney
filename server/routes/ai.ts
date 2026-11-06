@@ -76,13 +76,22 @@ app.post("/api/ai/chat", isAuthenticated, async (req: any, res: Response) => {
       });
     }
 
-    // Get topic context if provided
+    // Get topic context + prior/scattered knowledge ledger if provided
     let topicContext = "";
     if (topicId) {
       const topic = await storage.getTopicById(topicId);
       if (topic) {
         topicContext = `The user is currently learning about: ${topic.title}. Description: ${topic.description}. `;
       }
+    }
+    try {
+      const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+      const priorReport = await getPriorKnowledgeForTopic(storage, userId, { topicId, query: message });
+      if (priorReport.promptContextBlock) {
+        topicContext += `\n\n${priorReport.promptContextBlock}\n`;
+      }
+    } catch {
+      // non-blocking
     }
 
     // Set up SSE
@@ -956,6 +965,7 @@ export async function generateLessonOutline(
     createdByUserId?: string;
     userConfig?: import("../ai-providers").ProviderConfig;
     archetype?: CourseArchetype;
+    interestFocus?: string;
   }
 ): Promise<any[]> {
   // ── Use pre-planned syllabus if available ───────────────────────────────────
@@ -982,6 +992,20 @@ export async function generateLessonOutline(
   const { planCourseWithAI } = await import("../course-planner");
   const { storage } = await import("../storage");
 
+  let priorKnowledgeBlock = "";
+  if (options?.createdByUserId) {
+    try {
+      const { getPriorKnowledgeForTopic } = await import("../knowledge-ledger");
+      const priorReport = await getPriorKnowledgeForTopic(storage, options.createdByUserId, {
+        topicId,
+        query: topicTitle,
+      });
+      priorKnowledgeBlock = priorReport.promptContextBlock;
+    } catch {
+      // non-blocking
+    }
+  }
+
   try {
     const plan = await planCourseWithAI(topicTitle, topicDescription, {
       learningIntent,
@@ -991,6 +1015,8 @@ export async function generateLessonOutline(
       includeAgentContext: options?.includeAgentContext,
       userConfig: options?.userConfig,
       archetype: options?.archetype,
+      interestFocus: options?.interestFocus,
+      priorKnowledgeBlock,
     });
 
     // Persist plan for OER surface + versioning
