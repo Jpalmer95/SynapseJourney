@@ -395,14 +395,27 @@ function useTTSImpl(): UseTTSReturn {
   const engineSwitchNotifiedRef = useRef<boolean>(false);
   const serverVoicePresetRef = useRef<string>(serverVoicePreset);
 
-  // Kokoro DedicatedWorker bridge
+  // Kokoro worker pool. Every entry owns its own DedicatedWorker, hence its own ONNX session.
+  // Without cross-origin isolation onnxruntime-web runs each WASM session single-threaded, so
+  // parallel workers are what keep synthesis ahead of playback. Measured aggregate real-time
+  // factor on a 24-core desktop: 1 worker 1.39x, 2 workers 0.71x, 4 workers 0.48x.
   type WorkerBridge = { postMessage: (data: unknown) => void; terminate?: () => void };
-  const workerRef = useRef<WorkerBridge | null>(null);
-  const pendingRef = useRef<Map<number, { resolve: (v: Blob | undefined) => void; reject: (e: Error) => void }>>(new Map());
-  const msgIdRef = useRef(0);
-  const workerReadyRef = useRef(false);
-  const workerReadyPromiseRef = useRef<Promise<void> | null>(null);
-  const workerRetryCount = useRef(0);
+  type PoolEntry = {
+    bridge: WorkerBridge;
+    pending: Map<number, { resolve: (v: Blob | undefined) => void; reject: (e: Error) => void }>;
+    nextId: number;
+    ready: boolean;
+    readyPromise: Promise<void> | null;
+    retries: number;
+    inFlight: number;
+    dead: boolean;
+  };
+  const poolRef = useRef<PoolEntry[]>([]);
+  const poolTargetRef = useRef<number>(0);
+  const poolWarmedRef = useRef<boolean>(false);
+  // Once one worker proves this device's GPU corrupts Kokoro output, start the rest on WASM:
+  // re-probing a 325 MB fp32 model in every worker wastes memory and time.
+  const gpuRejectedRef = useRef<boolean>(false);
 
   useEffect(() => { rateRef.current = rate; }, [rate]);
   useEffect(() => { voiceRef.current = selectedVoiceName; }, [selectedVoiceName]);
@@ -906,8 +919,31 @@ function useTTSImpl(): UseTTSReturn {
   // npm dependencies (`kokoro-js`, `@huggingface/transformers`) into a JS worker bundle
   // rather than copying the raw TypeScript source file into `/assets/*.ts`.
 
-  const getWorker = useCallback((): WorkerBridge => {
-    if (workerRef.current) return workerRef.current;
+  /** Pool size for this device: more cores => more parallel synthesis streams. */
+  const getPoolTarget = useCallback((): number => {
+    if (poolTargetRef.current > 0) return poolTargetRef.current;
+    const nav = typeof navigator !== "undefined" ? navigator : undefined;
+    const cores = nav?.hardwareConcurrency || 4;
+    const mem = Number((nav as unknown as { deviceMemory?: number })?.deviceMemory) || 4;
+    let target = 1;
+    if (cores >= 12 && mem >= 8) target = 4;
+    else if (cores >= 8 && mem >= 4) target = 3;
+    else if (cores >= 4) target = 2;
+    poolTargetRef.current = target;
+    return target;
+  }, []);
+
+  const createPoolEntry = useCallback((): PoolEntry => {
+    const entry: PoolEntry = {
+      bridge: { postMessage: () => {} },
+      pending: new Map(),
+      nextId: 0,
+      ready: false,
+      readyPromise: null,
+      retries: 0,
+      inFlight: 0,
+      dead: false,
+    };
 
     const onMessage = ({ data }: MessageEvent) => {
       const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc, percent } = data as {
@@ -928,7 +964,7 @@ function useTTSImpl(): UseTTSReturn {
         if ((data as { phase?: string }).phase) {
           setKokoroDownloadPhase((data as { phase: "download" | "compile" }).phase);
         }
-        if (!workerReadyRef.current) {
+        if (!entry.ready) {
           setKokoroLoading(true);
         }
         return;
@@ -943,6 +979,7 @@ function useTTSImpl(): UseTTSReturn {
         const { kind, engine: noticeEngine } = data as { kind?: string; engine?: "webgpu-fp32" | "wasm-q8" };
         console.info(`[TTS] worker notice (${kind}): ${message}`);
         if (noticeEngine) setKokoroEngine(noticeEngine);
+        if (noticeEngine === "wasm-q8") gpuRejectedRef.current = true;
         // The worker repairs itself (bad GPU buffers are discarded and re-synthesized on WASM).
         // Tell the learner once so a slower first block doesn't look like a hang.
         if (kind === "engine-switch" && !engineSwitchNotifiedRef.current) {
@@ -956,9 +993,9 @@ function useTTSImpl(): UseTTSReturn {
         return;
       }
 
-      const p = pendingRef.current.get(id);
+      const p = entry.pending.get(id);
       if (!p) return;
-      pendingRef.current.delete(id);
+      entry.pending.delete(id);
 
       if (type === "ready") {
         if (engine) setKokoroEngine(engine);
@@ -986,38 +1023,38 @@ function useTTSImpl(): UseTTSReturn {
       }
     };
 
-    const createDedicatedWorker = (): WorkerBridge => {
-      const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), {
-        type: "module",
-      });
+    const spawn = () => {
+      // IMPORTANT: keep `new Worker(new URL(...))` inline so Vite bundles the TypeScript
+      // worker (and kokoro-js/transformers) instead of copying the raw source as an asset.
+      const w = new Worker(new URL("../workers/tts.worker.ts", import.meta.url), { type: "module" });
       w.onmessage = onMessage;
-      w.onerror = onError;
-      return {
+      w.onerror = onWorkerError;
+      entry.bridge = {
         postMessage: (data: unknown) => w.postMessage(data),
         terminate: () => w.terminate(),
       };
     };
 
-    const onError = (event: ErrorEvent) => {
+    const onWorkerError = (event: ErrorEvent) => {
       const detail = event.message || "Worker script failed to load";
       console.error(`[TTS] Worker error: ${detail} at ${event.filename}:${event.lineno}`);
-      Array.from(pendingRef.current.values()).forEach(p => p.reject(new Error(`Worker error: ${detail}`)));
-      pendingRef.current.clear();
-      workerReadyRef.current = false;
-      workerReadyPromiseRef.current = null;
-      workerRef.current = null;
+      Array.from(entry.pending.values()).forEach((p) => p.reject(new Error(`Worker error: ${detail}`)));
+      entry.pending.clear();
+      entry.ready = false;
+      entry.readyPromise = null;
+      entry.inFlight = 0;
       setKokoroReady(false);
       setKokoroLoading(false);
       setKokoroDownloadPercent(null);
       setKokoroDownloadPhase(null);
 
-      if (workerRetryCount.current < 1) {
-        workerRetryCount.current++;
-        console.log("[TTS] Retrying with fresh DedicatedWorker…");
+      if (entry.retries < 1) {
+        entry.retries++;
+        console.log("[TTS] Respawning a Kokoro worker…");
         try {
-          workerRef.current = createDedicatedWorker();
+          spawn();
         } catch (e) {
-          console.error("[TTS] DedicatedWorker retry failed:", e);
+          console.error("[TTS] Worker respawn failed:", e);
           setKokoroLoadError("Kokoro worker failed to initialize — try Browser TTS or Qwen Cloud.");
         }
         return;
@@ -1026,28 +1063,48 @@ function useTTSImpl(): UseTTSReturn {
       setKokoroLoadError("Kokoro worker failed to initialize — try Browser TTS or Qwen Cloud.");
     };
 
-    const bridge = createDedicatedWorker();
-    workerRef.current = bridge;
-    return bridge;
-  }, []);
+    spawn();
+    return entry;
+  }, [toast]);
 
-  const ensureKokoroInit = useCallback(async (): Promise<void> => {
-    if (workerReadyRef.current) return;
-    if (workerReadyPromiseRef.current) return workerReadyPromiseRef.current;
+  /** Least-busy pool entry, growing the pool up to the device's target size. */
+  const getPoolEntry = useCallback((): PoolEntry => {
+    const pool = poolRef.current;
+    const target = getPoolTarget();
+    while (pool.length < target) {
+      pool.push(createPoolEntry());
+    }
+    const alive = pool.filter((entry) => !entry.dead);
+    if (alive.length === 0) {
+      // Every worker failed; start fresh rather than staying permanently broken.
+      pool.length = 0;
+      pool.push(createPoolEntry());
+      return pool[0];
+    }
+    let best = alive[0];
+    for (const candidate of alive) {
+      if (candidate.inFlight < best.inFlight) best = candidate;
+    }
+    return best;
+  }, [createPoolEntry, getPoolTarget]);
+
+  const ensureKokoroInit = useCallback(async (entry: PoolEntry): Promise<void> => {
+    if (entry.ready) return;
+    if (entry.readyPromise) return entry.readyPromise;
 
     setKokoroLoading(true);
     setKokoroLoadError(null);
-    workerReadyPromiseRef.current = new Promise<void>((resolve, reject) => {
-      const id = ++msgIdRef.current;
-      pendingRef.current.set(id, {
+    entry.readyPromise = new Promise<void>((resolve, reject) => {
+      const id = ++entry.nextId;
+      entry.pending.set(id, {
         resolve: () => {
-          workerReadyRef.current = true;
+          entry.ready = true;
           setKokoroReady(true);
           setKokoroLoading(false);
           resolve();
         },
         reject: (err) => {
-          workerReadyPromiseRef.current = null;
+          entry.readyPromise = null;
           setKokoroLoading(false);
           setKokoroDownloadPercent(null);
           setKokoroDownloadPhase(null);
@@ -1059,26 +1116,66 @@ function useTTSImpl(): UseTTSReturn {
           reject(err);
         },
       });
-      getWorker().postMessage({ id, type: "init" });
+      entry.bridge.postMessage({
+        id,
+        type: "init",
+        preference: gpuRejectedRef.current ? "wasm-q8" : undefined,
+      });
     });
 
-    return workerReadyPromiseRef.current;
-  }, [getWorker]);
+    return entry.readyPromise;
+  }, []);
+
+  /**
+   * Bring the rest of the pool up in the background (sequentially, so we never compile several
+   * 90 MB sessions at once on a phone) so later blocks can synthesize in parallel.
+   */
+  const warmPool = useCallback(async (): Promise<void> => {
+    if (poolWarmedRef.current) return;
+    poolWarmedRef.current = true;
+    getPoolEntry();
+    for (const entry of poolRef.current) {
+      if (entry.dead || entry.ready) continue;
+      try {
+        await ensureKokoroInit(entry);
+      } catch {
+        entry.dead = true;
+      }
+    }
+  }, [ensureKokoroInit, getPoolEntry]);
 
   const kokoroSpeak = useCallback(async (text: string, voice: string): Promise<Blob> => {
-    await ensureKokoroInit();
+    let entry = getPoolEntry();
+    try {
+      await ensureKokoroInit(entry);
+    } catch (err) {
+      // A failed worker shouldn't take the whole voice engine down: drop it and use another.
+      entry.dead = true;
+      const alternatives = poolRef.current.filter((candidate) => !candidate.dead);
+      if (alternatives.length === 0) throw err;
+      entry = getPoolEntry();
+      await ensureKokoroInit(entry);
+    }
+    if (!poolWarmedRef.current) void warmPool();
+
     return new Promise<Blob>((resolve, reject) => {
-      const id = ++msgIdRef.current;
-      pendingRef.current.set(id, {
+      const id = ++entry.nextId;
+      entry.inFlight++;
+      const settle = () => { entry.inFlight = Math.max(0, entry.inFlight - 1); };
+      entry.pending.set(id, {
         resolve: (blob) => {
+          settle();
           if (blob) resolve(blob);
           else reject(new Error("No audio returned from worker"));
         },
-        reject,
+        reject: (err) => {
+          settle();
+          reject(err);
+        },
       });
-      getWorker().postMessage({ id, type: "speak", text, voice });
+      entry.bridge.postMessage({ id, type: "speak", text, voice });
     });
-  }, [ensureKokoroInit, getWorker]);
+  }, [ensureKokoroInit, getPoolEntry, warmPool]);
 
   /**
    * Group text into multi-sentence blocks (~420 chars, 3-6 sentences per block) for Kokoro.
