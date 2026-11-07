@@ -39,6 +39,8 @@ let loadMs = 0;
 let fromCache = false;
 let loadingPromise: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
 let isReady = false;
+let webgpuGenCount = 0;
+let slowWebgpuCount = 0;
 
 // ── Connected ports registry (SharedWorker fallback support) ──────────────────
 const connectedPorts = new Set<MessagePort>();
@@ -52,6 +54,41 @@ function broadcast(payload: ProgressPayload) {
   } else {
     (self as DedicatedWorkerGlobalScope).postMessage(payload);
   }
+}
+
+/**
+ * Trim excessive leading and trailing vocoder silence (~300-450ms added by StyleTTS2/ISTFTNet
+ * on each generate() pass) while preserving a natural ~20ms attack and ~75ms decay tail.
+ * This eliminates the artificial dead air gap between consecutive synthesized chunks.
+ */
+function trimSilence(raw: Float32Array, sampleRate: number): Float32Array {
+  const len = raw.length;
+  if (len === 0) return new Float32Array(0);
+
+  const threshold = 0.003;
+  const leadPad = Math.floor(sampleRate * 0.02);  // 20ms natural attack
+  const tailPad = Math.floor(sampleRate * 0.075); // 75ms natural release
+
+  let start = 0;
+  while (start < len && Math.abs(raw[start]) < threshold) {
+    start++;
+  }
+  if (start >= len) {
+    // Entire buffer is silence
+    return new Float32Array(raw);
+  }
+
+  let end = len - 1;
+  while (end > start && Math.abs(raw[end]) < threshold) {
+    end--;
+  }
+
+  const trimmedStart = Math.max(0, start - leadPad);
+  const trimmedEnd = Math.min(len, end + 1 + tailPad);
+
+  // Always return a fresh standalone Float32Array so transferring its ArrayBuffer
+  // is zero-copy and never detaches a shared WASM/ONNX buffer.
+  return raw.slice(trimmedStart, trimmedEnd);
 }
 
 async function checkFromCache(): Promise<boolean> {
@@ -136,17 +173,45 @@ async function detectWebGPU(): Promise<boolean> {
   }
 
   try {
-    const adapter = await (navigator as any).gpu.requestAdapter();
+    // Request high-performance discrete GPU (e.g. RTX 4070 Ti) rather than integrated/software
+    const adapter = await (navigator as any).gpu.requestAdapter({
+      powerPreference: "high-performance",
+    });
     if (!adapter) {
       console.log("[TTS Worker] WebGPU requestAdapter() returned null — GPU unavailable");
       return false;
     }
+
+    // Reject software/CPU fallback adapters (llvmpipe, lavapipe, swiftshader) so we don't
+    // run a 325 MB fp32 model on CPU emulation instead of quantized WASM q8.
+    const isFallback = Boolean(adapter.isFallbackAdapter || adapter.info?.isFallbackAdapter);
+    const infoStr = [
+      adapter.info?.vendor,
+      adapter.info?.architecture,
+      adapter.info?.device,
+      adapter.info?.description,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+
+    if (
+      isFallback ||
+      infoStr.includes("llvmpipe") ||
+      infoStr.includes("lavapipe") ||
+      infoStr.includes("swiftshader") ||
+      infoStr.includes("software")
+    ) {
+      console.log(`[TTS Worker] WebGPU adapter is software fallback (${infoStr || "fallback"}) — preferring WASM q8`);
+      return false;
+    }
+
     const limits = adapter.limits;
     if (limits && limits.maxBufferSize < 128 * 1024 * 1024) {
       console.log(`[TTS Worker] WebGPU maxBufferSize=${limits.maxBufferSize} too small for fp32 model — falling back`);
       return false;
     }
-    console.log("[TTS Worker] WebGPU adapter available");
+    console.log(`[TTS Worker] WebGPU hardware adapter available (${infoStr || "gpu"})`);
     return true;
   } catch (e) {
     console.log("[TTS Worker] WebGPU requestAdapter() threw:", e instanceof Error ? e.message : e);
@@ -308,6 +373,7 @@ async function handleMessage(
       }
 
       const selectedVoice = (voice || "af_bella") as KokoroVoice;
+      const tGen0 = performance.now();
       let output: unknown;
       try {
         output = await kokoroTTS.generate(cleanInput, { voice: selectedVoice });
@@ -322,12 +388,32 @@ async function handleMessage(
           throw genErr;
         }
       }
+      const genMs = performance.now() - tGen0;
 
       const rawSamples: Float32Array = (output as { audio: Float32Array }).audio;
       const sampleRate: number = (output as { sampling_rate: number }).sampling_rate || 24000;
-      // Always clone into a standalone Float32Array so transferring the ArrayBuffer
-      // never detaches WebAssembly.Memory or a shared ONNX buffer pool.
-      const samples = new Float32Array(rawSamples);
+      const audioDurationMs = (rawSamples.length / sampleRate) * 1000;
+
+      // If WebGPU is consistently slower than real-time after initial shader compilation
+      // (e.g. driver/Wayland CPU<->GPU LSTM copy bottleneck), switch to quantized WASM q8.
+      if (engineId === "webgpu-fp32" && audioDurationMs > 1500) {
+        webgpuGenCount++;
+        if (webgpuGenCount > 1 && genMs > audioDurationMs * 1.15 && genMs > 3000) {
+          slowWebgpuCount++;
+          console.warn(
+            `[TTS Worker] WebGPU synthesis slower than real-time (${Math.round(genMs)}ms for ${Math.round(audioDurationMs)}ms audio, count=${slowWebgpuCount})`,
+          );
+          if (slowWebgpuCount >= 2) {
+            console.log("[TTS Worker] Switching from slow WebGPU fp32 to faster WASM q8 for subsequent blocks…");
+            loadWasmFallback().catch(() => {});
+          }
+        } else if (genMs < audioDurationMs * 0.8) {
+          slowWebgpuCount = 0;
+        }
+      }
+
+      // Trim excessive leading/trailing vocoder silence so consecutive blocks play gaplessly
+      const samples = trimSilence(rawSamples, sampleRate);
       respond.postMessage({ id, type: "audio", samples, sampleRate, engine: engineId }, [samples.buffer]);
     } catch (err) {
       respond.postMessage({
@@ -350,7 +436,22 @@ self.addEventListener("error", (e: ErrorEvent) => {
       catch { connectedPorts.delete(port); }
     });
   } else {
-    (self as DedicatedWorkerGlobalScope).postMessage({ id: -1, type: "error", message: msg });
+    try { (self as DedicatedWorkerGlobalScope).postMessage({ id: -1, type: "error", message: msg }); }
+    catch { /* ignore */ }
+  }
+});
+
+self.addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
+  const reason = e.reason instanceof Error ? e.reason.message : String(e.reason ?? "Unhandled promise rejection in worker");
+  const msg = `Worker unhandled rejection: ${reason}`;
+  if (connectedPorts.size > 0) {
+    connectedPorts.forEach((port) => {
+      try { port.postMessage({ id: -1, type: "error", message: msg }); }
+      catch { connectedPorts.delete(port); }
+    });
+  } else {
+    try { (self as DedicatedWorkerGlobalScope).postMessage({ id: -1, type: "error", message: msg }); }
+    catch { /* ignore */ }
   }
 });
 

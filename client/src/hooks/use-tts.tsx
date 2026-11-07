@@ -341,8 +341,12 @@ function useTTSImpl(): UseTTSReturn {
   });
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
+  const persistentAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioSrcNodeRef = useRef<AudioBufferSourceNode | null>(null);
+  const activeBlobUrlRef = useRef<string | null>(null);
+  const kokoroBlobCacheRef = useRef<Map<string, Blob>>(new Map());
+  const kokoroInFlightRef = useRef<Map<string, Promise<Blob>>>(new Map());
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
   const chunksRef = useRef<string[]>([]);
   const currentChunkRef = useRef<number>(0);
@@ -692,6 +696,34 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, []);
 
+  /**
+   * Apply playback speed while explicitly preserving natural voice pitch (WSOLA time-stretching).
+   * Prevents the "chipmunk" pitch shift at >1x speeds across Chromium, Firefox, and WebKit.
+   */
+  const applyPitchPreservedRate = useCallback((audio: HTMLAudioElement, speed: number) => {
+    const clamped = Math.max(0.5, Math.min(4, speed));
+    audio.preservesPitch = true;
+    (audio as unknown as { mozPreservesPitch?: boolean }).mozPreservesPitch = true;
+    (audio as unknown as { webkitPreservesPitch?: boolean }).webkitPreservesPitch = true;
+    audio.defaultPlaybackRate = clamped;
+    audio.playbackRate = clamped;
+  }, []);
+
+  /**
+   * Return (or lazily create) the persistent singleton HTMLAudioElement.
+   * Reusing a single gesture-unlocked element ensures async TTS synthesis works on iOS/mobile
+   * while preserving pitch via HTMLAudioElement's native time-stretcher.
+   */
+  const getPlayerAudio = useCallback((): HTMLAudioElement => {
+    if (!persistentAudioRef.current) {
+      const a = new Audio();
+      a.preload = "auto";
+      applyPitchPreservedRate(a, rateRef.current);
+      persistentAudioRef.current = a;
+    }
+    return persistentAudioRef.current;
+  }, [applyPitchPreservedRate]);
+
   const playServerAudio = useCallback(async (audioData: string, audioFormat: string, speed: number, myRunId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       if (cancelledRef.current || runIdRef.current !== myRunId) {
@@ -708,14 +740,32 @@ function useTTSImpl(): UseTTSReturn {
         return;
       }
 
-      const audio = new Audio(blobUrl);
-      audio.playbackRate = Math.max(0.5, Math.min(4, speed));
+      if (activeBlobUrlRef.current) {
+        try { URL.revokeObjectURL(activeBlobUrlRef.current); } catch { /* ignore */ }
+      }
+      activeBlobUrlRef.current = blobUrl;
+
+      const audio = getPlayerAudio();
+      audio.muted = false;
+      audio.src = blobUrl;
+      applyPitchPreservedRate(audio, speed);
       audioRef.current = audio;
 
       const cleanup = () => {
-        if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; }
+        audio.onended = null;
+        audio.onerror = null;
+        audio.onpause = null;
+        audio.onloadedmetadata = null;
+        audio.onplay = null;
+        if (blobUrl) {
+          if (activeBlobUrlRef.current === blobUrl) activeBlobUrlRef.current = null;
+          try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
+          blobUrl = null;
+        }
       };
 
+      audio.onloadedmetadata = () => applyPitchPreservedRate(audio, rateRef.current);
+      audio.onplay = () => applyPitchPreservedRate(audio, rateRef.current);
       audio.onended = () => {
         audioRef.current = null;
         cleanup();
@@ -738,7 +788,7 @@ function useTTSImpl(): UseTTSReturn {
         reject(err);
       });
     });
-  }, []);
+  }, [getPlayerAudio, applyPitchPreservedRate]);
 
   const getAudioCtx = useCallback((): AudioContext | null => {
     if (audioCtxRef.current && audioCtxRef.current.state !== "closed") {
@@ -767,12 +817,23 @@ function useTTSImpl(): UseTTSReturn {
           src.connect(ctx.destination);
           src.start(0);
         }
+        // Also bless the persistent HTMLAudioElement within the user click gesture
+        // so pitch-preserved HTMLAudioElement playback works after async synthesis on iOS/mobile.
+        const player = getPlayerAudio();
+        player.muted = true;
+        player.src = "data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA";
+        player.play().then(() => {
+          player.pause();
+          player.muted = false;
+        }).catch(() => {
+          player.muted = false;
+        });
         audioUnlockedRef.current = true;
       }
     } catch {
       // ignore — audio unlock is best-effort
     }
-  }, [getAudioCtx]);
+  }, [getAudioCtx, getPlayerAudio]);
 
   function float32ToWav(samples: Float32Array, sampleRate: number): Blob {
     const numChannels = 1;
@@ -968,37 +1029,75 @@ function useTTSImpl(): UseTTSReturn {
     });
   }, [ensureKokoroInit, getWorker]);
 
-  function splitIntoSentences(rawText: string): string[] {
+  /**
+   * Group text into multi-sentence blocks (~420 chars, 3-6 sentences per block) for Kokoro.
+   * Why: Calling Kokoro's ONNX/WebGPU model on every individual sentence forces per-sentence
+   * WGSL shader recompilation for each new token length, adds espeak-ng WASM overhead, and
+   * inserts vocoder leading/trailing silence after every sentence.
+   * By packing multiple sentences into ~420-char blocks (safely within Kokoro's 510-token
+   * context window), 3-6 sentences are synthesized in ONE GPU pass with natural continuous
+   * prosody and zero inter-sentence pauses.
+   * When `isLeadIn` is true on a long text, Block 0 uses a ~200-char budget (1-2 sentences,
+   * ~10-14s of audio) for fast time-to-first-audio while Block 1+ pre-generates in the background.
+   */
+  function splitIntoKokoroBlocks(rawText: string, isLeadIn = false): string[] {
     const text = cleanTextForTTS(rawText);
     if (!text) return [];
-    const raw = text
+
+    const rawSentences = text
       .replace(/([.!?;])\s+/g, "$1\n")
       .split("\n")
       .map(s => s.trim())
       .filter(s => s.length > 0);
 
-    const merged: string[] = [];
-    for (const s of raw) {
-      if (merged.length > 0 && merged[merged.length - 1].length < 25) {
-        merged[merged.length - 1] += " " + s;
-      } else if (s.length > 350) {
-        // Split very long sentences at clause boundaries so Kokoro synthesizes quickly
+    // First normalize individual sentences (merge tiny <30 char fragments; split >430 char run-ons)
+    const normSentences: string[] = [];
+    for (const s of rawSentences) {
+      if (normSentences.length > 0 && normSentences[normSentences.length - 1].length < 30) {
+        normSentences[normSentences.length - 1] += " " + s;
+      } else if (s.length > 430) {
         const parts = s.split(/(?<=[,:—])\s+/);
         let acc = "";
         for (const p of parts) {
-          if (acc.length + p.length + 1 <= 280) {
+          if (acc.length + p.length + 1 <= 380) {
             acc = acc ? `${acc} ${p}` : p;
           } else {
-            if (acc) merged.push(acc);
+            if (acc) normSentences.push(acc);
             acc = p;
           }
         }
-        if (acc) merged.push(acc);
+        if (acc) normSentences.push(acc);
       } else {
-        merged.push(s);
+        normSentences.push(s);
       }
     }
-    return merged.length > 0 ? merged : [text];
+
+    if (normSentences.length === 0) return [text];
+
+    // Pack consecutive sentences into multi-sentence blocks
+    const LEAD_IN_MAX = 210;
+    const BLOCK_MAX = 430;
+    const useShortLeadIn = isLeadIn && text.length > 260 && normSentences.length > 1;
+
+    const blocks: string[] = [];
+    let currentBlock = "";
+
+    for (const sentence of normSentences) {
+      const targetMax = blocks.length === 0 && useShortLeadIn ? LEAD_IN_MAX : BLOCK_MAX;
+      if (!currentBlock) {
+        currentBlock = sentence;
+      } else if (currentBlock.length + 1 + sentence.length <= targetMax) {
+        currentBlock = `${currentBlock} ${sentence}`;
+      } else {
+        blocks.push(currentBlock);
+        currentBlock = sentence;
+      }
+    }
+    if (currentBlock) {
+      blocks.push(currentBlock);
+    }
+
+    return blocks.length > 0 ? blocks : [text];
   }
 
   const KOKORO_SYNTH_TIMEOUT_MS = 180_000;
@@ -1017,58 +1116,113 @@ function useTTSImpl(): UseTTSReturn {
     }
   }, [kokoroSpeak]);
 
+  /**
+   * Fetch or synthesize a Kokoro audio block with LRU caching and in-flight deduplication.
+   * Ensures the background prefetcher and active playhead share a single worker request
+   * and replaying any block/section is 0ms instant.
+   */
+  const getKokoroBlockBlob = useCallback((text: string, voice: string): Promise<Blob> => {
+    const key = `${voice}::${text}`;
+    const cached = kokoroBlobCacheRef.current.get(key);
+    if (cached) {
+      // Refresh LRU order
+      kokoroBlobCacheRef.current.delete(key);
+      kokoroBlobCacheRef.current.set(key, cached);
+      return Promise.resolve(cached);
+    }
+
+    const inFlight = kokoroInFlightRef.current.get(key);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    const promise = kokoroSpeakWithTimeout(text, voice)
+      .then((blob) => {
+        kokoroInFlightRef.current.delete(key);
+        kokoroBlobCacheRef.current.set(key, blob);
+        // Cap LRU cache at 60 multi-sentence blocks (~30-45 minutes of audio)
+        if (kokoroBlobCacheRef.current.size > 60) {
+          const oldestKey = kokoroBlobCacheRef.current.keys().next().value;
+          if (oldestKey !== undefined) {
+            kokoroBlobCacheRef.current.delete(oldestKey);
+          }
+        }
+        return blob;
+      })
+      .catch((err) => {
+        kokoroInFlightRef.current.delete(key);
+        throw err;
+      });
+
+    kokoroInFlightRef.current.set(key, promise);
+    return promise;
+  }, [kokoroSpeakWithTimeout]);
+
+  /**
+   * Play a synthesized WAV/MP3 Blob via the persistent HTMLAudioElement with
+   * pitch-preserved time-stretching (`preservesPitch = true`), eliminating the
+   * Web Audio API `AudioBufferSourceNode.playbackRate` chipmunk effect at >1x speeds.
+   */
   const playBlobAudio = useCallback(async (blob: Blob, myRunId: number): Promise<void> => {
     if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
 
-    const ctx = getAudioCtx();
-    if (!ctx) {
-      return new Promise((resolve, reject) => {
-        if (cancelledRef.current || runIdRef.current !== myRunId) { reject(new Error("cancelled")); return; }
-        let blobUrl: string | null = URL.createObjectURL(blob);
-        const audio = new Audio(blobUrl);
-        audio.playbackRate = Math.max(0.5, Math.min(4, rateRef.current));
-        audioRef.current = audio;
-        const cleanup = () => { if (blobUrl) { URL.revokeObjectURL(blobUrl); blobUrl = null; } };
-        audio.onended = () => { audioRef.current = null; cleanup(); resolve(); };
-        audio.onerror = () => { audioRef.current = null; cleanup(); reject(new Error("audio_error")); };
-        audio.onpause = () => {
-          if (cancelledRef.current || runIdRef.current !== myRunId) {
-            cleanup();
-            reject(new Error("cancelled"));
-          }
-        };
-        audio.play().catch((err) => { cleanup(); reject(err); });
-      });
-    }
-
-    if (ctx.state === "suspended") {
-      await ctx.resume();
-    }
-
-    const arrayBuffer = await blob.arrayBuffer();
-    if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
-
-    const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-    if (cancelledRef.current || runIdRef.current !== myRunId) throw new Error("cancelled");
-
     return new Promise<void>((resolve, reject) => {
-      if (cancelledRef.current || runIdRef.current !== myRunId) { reject(new Error("cancelled")); return; }
+      if (cancelledRef.current || runIdRef.current !== myRunId) {
+        reject(new Error("cancelled"));
+        return;
+      }
 
-      const src = ctx.createBufferSource();
-      src.buffer = audioBuffer;
-      src.playbackRate.value = Math.max(0.5, Math.min(4, rateRef.current));
-      src.connect(ctx.destination);
-      audioSrcNodeRef.current = src;
+      let blobUrl: string | null = URL.createObjectURL(blob);
+      if (activeBlobUrlRef.current) {
+        try { URL.revokeObjectURL(activeBlobUrlRef.current); } catch { /* ignore */ }
+      }
+      activeBlobUrlRef.current = blobUrl;
 
-      src.onended = () => {
-        audioSrcNodeRef.current = null;
+      const audio = getPlayerAudio();
+      audio.muted = false;
+      audio.src = blobUrl;
+      applyPitchPreservedRate(audio, rateRef.current);
+      audioRef.current = audio;
+
+      const cleanup = () => {
+        audio.onended = null;
+        audio.onerror = null;
+        audio.onpause = null;
+        audio.onloadedmetadata = null;
+        audio.onplay = null;
+        if (blobUrl) {
+          if (activeBlobUrlRef.current === blobUrl) activeBlobUrlRef.current = null;
+          try { URL.revokeObjectURL(blobUrl); } catch { /* ignore */ }
+          blobUrl = null;
+        }
+      };
+
+      audio.onloadedmetadata = () => applyPitchPreservedRate(audio, rateRef.current);
+      audio.onplay = () => applyPitchPreservedRate(audio, rateRef.current);
+      audio.onended = () => {
+        audioRef.current = null;
+        cleanup();
         if (cancelledRef.current || runIdRef.current !== myRunId) reject(new Error("cancelled"));
         else resolve();
       };
+      audio.onerror = () => {
+        audioRef.current = null;
+        cleanup();
+        reject(new Error("audio_error"));
+      };
+      audio.onpause = () => {
+        if (cancelledRef.current || runIdRef.current !== myRunId) {
+          cleanup();
+          reject(new Error("cancelled"));
+        }
+      };
 
-      src.start(0);
+      audio.play().catch((err) => {
+        cleanup();
+        reject(err);
+      });
     });
-  }, [getAudioCtx]);
+  }, [getPlayerAudio, applyPitchPreservedRate]);
 
   const getVoiceConfig = useCallback((overridePreset?: string) => {
     const cfg: Record<string, unknown> = {
@@ -1136,28 +1290,54 @@ function useTTSImpl(): UseTTSReturn {
     const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
 
-    /** Helper: speak via local Kokoro (WebGPU / WASM) */
+    /** Helper: speak via local Kokoro (WebGPU / WASM) with multi-block lookahead prefetch */
     const speakViaKokoro = async (txt: string): Promise<boolean> => {
       if (kokoroIncompatibleRef.current) return false;
       try {
-        const sentences = splitIntoSentences(txt);
-        if (sentences.length === 0) return false;
+        const blocks = splitIntoKokoroBlocks(txt, true);
+        if (blocks.length === 0) return false;
 
-        let nextBlobPromise: Promise<Blob> | null = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+        const voice = kokoroVoiceRef.current;
+        const PREFETCH_AHEAD = 4;
+        let prefetchTargetIdx = 0;
+        let prefetcherRunning = false;
 
-        for (let si = 0; si < sentences.length; si++) {
+        const pumpPrefetch = (upToExclusive: number) => {
+          prefetchTargetIdx = Math.max(prefetchTargetIdx, Math.min(blocks.length, upToExclusive));
+          if (prefetcherRunning) return;
+          prefetcherRunning = true;
+          void (async () => {
+            try {
+              for (let idx = 1; idx < prefetchTargetIdx; idx++) {
+                if (cancelledRef.current || runIdRef.current !== myRunId) break;
+                const key = `${voice}::${blocks[idx]}`;
+                if (kokoroBlobCacheRef.current.has(key)) continue;
+                try {
+                  await getKokoroBlockBlob(blocks[idx], voice);
+                } catch {
+                  break;
+                }
+              }
+            } finally {
+              prefetcherRunning = false;
+            }
+          })();
+        };
+
+        for (let bi = 0; bi < blocks.length; bi++) {
           if (cancelledRef.current || runIdRef.current !== myRunId) return true;
-          const blob = await nextBlobPromise;
-          if (si + 1 < sentences.length && !cancelledRef.current && runIdRef.current === myRunId) {
-            nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
-          }
-          if (!blob || cancelledRef.current || runIdRef.current !== myRunId) return true;
+          const blob = await getKokoroBlockBlob(blocks[bi], voice);
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+
+          // While block `bi` plays (12-35s of audio), continuously pre-synthesize up to 4 blocks ahead
+          pumpPrefetch(bi + 1 + PREFETCH_AHEAD);
+
           setState(prev => ({
             ...prev,
             isLoading: false,
             isSpeaking: true,
             usingServerTTS: false,
-            progress: Math.round(((si + 1) / sentences.length) * 100),
+            progress: Math.round(((bi + 1) / blocks.length) * 100),
           }));
           await playBlobAudio(blob, myRunId);
         }
@@ -1349,7 +1529,7 @@ function useTTSImpl(): UseTTSReturn {
         }));
       }
     }
-  }, [unlockAudio, cancelActivePlayback, kokoroSpeakWithTimeout, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
+  }, [unlockAudio, cancelActivePlayback, getKokoroBlockBlob, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
 
   // Section-aware speaking: speaks sections sequentially starting from startIndex.
   const speakSections = useCallback(async (sections: TTSSection[], startIndex = 0) => {
@@ -1380,23 +1560,70 @@ function useTTSImpl(): UseTTSReturn {
     const currentPreset = serverVoicePresetRef.current;
     const voiceTier = getVoiceTier(currentPreset);
 
-    /** Helper: speak one section via Kokoro */
+    // Pre-build multi-sentence Kokoro blocks across all upcoming sections so the
+    // background prefetcher can synthesize across section boundaries with zero gap.
+    const sectionBlocksMap = new Map<number, string[]>();
+    const flatKokoroBlocks: string[] = [];
+    const sectionFlatOffset = new Map<number, number>();
+    for (let si = start; si < sections.length; si++) {
+      const sBlocks = splitIntoKokoroBlocks(sections[si].text, si === start);
+      sectionBlocksMap.set(si, sBlocks);
+      sectionFlatOffset.set(si, flatKokoroBlocks.length);
+      for (const b of sBlocks) flatKokoroBlocks.push(b);
+    }
+
+    const PREFETCH_AHEAD = 4;
+    let prefetchTargetFlatIdx = 0;
+    let prefetcherRunning = false;
+
+    const pumpCrossSectionPrefetch = (fromFlatIdx: number, upToExclusive: number) => {
+      prefetchTargetFlatIdx = Math.max(
+        prefetchTargetFlatIdx,
+        Math.min(flatKokoroBlocks.length, upToExclusive),
+      );
+      if (prefetcherRunning) return;
+      prefetcherRunning = true;
+      const voice = kokoroVoiceRef.current;
+      void (async () => {
+        try {
+          for (let idx = fromFlatIdx; idx < prefetchTargetFlatIdx; idx++) {
+            if (cancelledRef.current || runIdRef.current !== myRunId) break;
+            const textBlock = flatKokoroBlocks[idx];
+            if (!textBlock) continue;
+            const key = `${voice}::${textBlock}`;
+            if (kokoroBlobCacheRef.current.has(key)) continue;
+            try {
+              await getKokoroBlockBlob(textBlock, voice);
+            } catch {
+              break;
+            }
+          }
+        } finally {
+          prefetcherRunning = false;
+        }
+      })();
+    };
+
+    /** Helper: speak one section via Kokoro with cross-section lookahead prefetch */
     const speakSectionViaKokoro = async (txt: string, sectionIdx: number): Promise<boolean> => {
       if (kokoroIncompatibleRef.current) return false;
       try {
-        const sentences = splitIntoSentences(txt);
-        if (sentences.length === 0) return true;
+        const blocks = sectionBlocksMap.get(sectionIdx) ?? splitIntoKokoroBlocks(txt, sectionIdx === start);
+        if (blocks.length === 0) return true;
 
-        let nextBlobPromise: Promise<Blob> | null = kokoroSpeakWithTimeout(sentences[0], kokoroVoiceRef.current);
+        const baseFlatIdx = sectionFlatOffset.get(sectionIdx) ?? 0;
+        const voice = kokoroVoiceRef.current;
 
-        for (let si = 0; si < sentences.length; si++) {
+        for (let bi = 0; bi < blocks.length; bi++) {
           if (cancelledRef.current || runIdRef.current !== myRunId) return true;
-          const blob = await nextBlobPromise;
-          if (si + 1 < sentences.length && !cancelledRef.current && runIdRef.current === myRunId) {
-            nextBlobPromise = kokoroSpeakWithTimeout(sentences[si + 1], kokoroVoiceRef.current);
-          }
-          if (!blob || cancelledRef.current || runIdRef.current !== myRunId) return true;
-          const sectionProgress = Math.round(((sectionIdx + (si + 1) / sentences.length) / sections.length) * 100);
+          const blob = await getKokoroBlockBlob(blocks[bi], voice);
+          if (cancelledRef.current || runIdRef.current !== myRunId) return true;
+
+          // Pre-synthesize the next 4 multi-sentence blocks (spanning into upcoming sections!)
+          const nextFlatIdx = baseFlatIdx + bi + 1;
+          pumpCrossSectionPrefetch(nextFlatIdx, nextFlatIdx + PREFETCH_AHEAD);
+
+          const sectionProgress = Math.round(((sectionIdx + (bi + 1) / blocks.length) / sections.length) * 100);
           setState(prev => ({
             ...prev,
             isLoading: false,
@@ -1589,7 +1816,7 @@ function useTTSImpl(): UseTTSReturn {
         }));
       }
     }
-  }, [unlockAudio, cancelActivePlayback, kokoroSpeakWithTimeout, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
+  }, [unlockAudio, cancelActivePlayback, getKokoroBlockBlob, playBlobAudio, resetBrowserSpeech, speakChunk, playServerAudio, getVoiceConfig, toast]);
 
   const jumpToSection = useCallback((index: number) => {
     const sects = activeSectionsRef.current;
@@ -1658,7 +1885,8 @@ function useTTSImpl(): UseTTSReturn {
     setRateState(clamped);
     rateRef.current = clamped;
     try { localStorage.setItem(SPEED_STORAGE_KEY, String(clamped)); } catch { /* ignore */ }
-    if (audioRef.current) audioRef.current.playbackRate = clamped;
+    if (audioRef.current) applyPitchPreservedRate(audioRef.current, clamped);
+    if (persistentAudioRef.current) applyPitchPreservedRate(persistentAudioRef.current, clamped);
     if (audioSrcNodeRef.current) {
       try { audioSrcNodeRef.current.playbackRate.value = clamped; } catch { /* ignore */ }
     }
@@ -1671,7 +1899,7 @@ function useTTSImpl(): UseTTSReturn {
         body: JSON.stringify({ playbackSpeed: clamped }),
       }).catch(() => {});
     }, 600);
-  }, []);
+  }, [applyPitchPreservedRate]);
 
   const setSelectedVoice = useCallback((voiceName: string) => {
     setSelectedVoiceState(voiceName);
