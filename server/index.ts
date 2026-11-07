@@ -31,6 +31,18 @@ app.use((req, res, next) => {
 
 app.use(express.urlencoded({ extended: false }));
 
+// Cross-origin isolation unlocks SharedArrayBuffer, which is what lets onnxruntime-web run
+// Kokoro's WASM backend multi-threaded. Single-threaded WASM synthesizes at ~1.4x real-time
+// (long lessons starve the playhead); threaded lands around 0.8x and keeps audio flowing.
+// `credentialless` keeps cross-origin fonts/images working without needing CORP headers, and
+// `same-origin-allow-popups` still satisfies the isolation requirement while preserving
+// OAuth popups.
+app.use((_req, res, next) => {
+  res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  res.setHeader("Cross-Origin-Embedder-Policy", "credentialless");
+  next();
+});
+
 export function log(message: string, source = "express") {
   const formattedTime = new Date().toLocaleTimeString("en-US", {
     hour: "numeric",
