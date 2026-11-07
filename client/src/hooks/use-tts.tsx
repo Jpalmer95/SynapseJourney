@@ -227,6 +227,33 @@ function base64ToBlob(base64: string, format: string): Blob {
   return new Blob([bytes], { type: mime });
 }
 
+/**
+ * Last line of defence against corrupt synthesis output reaching a listener's ears.
+ * The worker validates and repairs its own engine, but a buffer that is already degenerate
+ * when it crosses the worker boundary must never be turned into a WAV and played as static.
+ */
+function isSaneTtsSamples(samples: Float32Array): boolean {
+  const n = samples.length;
+  if (n === 0) return false;
+  let peak = 0;
+  let sumSq = 0;
+  let crossings = 0;
+  let prev = 0;
+  for (let i = 0; i < n; i++) {
+    const v = samples[i];
+    if (!Number.isFinite(v)) return false;
+    const a = v < 0 ? -v : v;
+    if (a > peak) peak = a;
+    sumSq += v * v;
+    if (i > 0 && (v >= 0) !== (prev >= 0)) crossings++;
+    prev = v;
+  }
+  if (peak > 4) return false;
+  const rms = Math.sqrt(sumSq / n);
+  const zcr = crossings / n;
+  return rms >= 0.0008 && zcr <= 0.35;
+}
+
 const TTSContext = createContext<UseTTSReturn | null>(null);
 
 function useTTSImpl(): UseTTSReturn {
@@ -365,6 +392,7 @@ function useTTSImpl(): UseTTSReturn {
   const kokoroIncompatibleRef = useRef<boolean>(kokoroIncompatible);
   const autoSwitchedToBrowserRef = useRef<boolean>(false);
   const browserFallbackNotifiedRef = useRef<boolean>(false);
+  const engineSwitchNotifiedRef = useRef<boolean>(false);
   const serverVoicePresetRef = useRef<string>(serverVoicePreset);
 
   // Kokoro DedicatedWorker bridge
@@ -884,10 +912,11 @@ function useTTSImpl(): UseTTSReturn {
     const onMessage = ({ data }: MessageEvent) => {
       const { id, type, samples, sampleRate, message, engine, loadMs: lms, fromCache: fc, percent } = data as {
         id: number;
-        type: "ready" | "audio" | "error" | "progress";
+        type: "ready" | "audio" | "error" | "progress" | "notice";
         samples?: Float32Array;
         sampleRate?: number;
         message?: string;
+        kind?: string;
         engine?: "webgpu-fp32" | "wasm-q8";
         loadMs?: number;
         fromCache?: boolean;
@@ -910,6 +939,23 @@ function useTTSImpl(): UseTTSReturn {
         return;
       }
 
+      if (type === "notice") {
+        const { kind, engine: noticeEngine } = data as { kind?: string; engine?: "webgpu-fp32" | "wasm-q8" };
+        console.info(`[TTS] worker notice (${kind}): ${message}`);
+        if (noticeEngine) setKokoroEngine(noticeEngine);
+        // The worker repairs itself (bad GPU buffers are discarded and re-synthesized on WASM).
+        // Tell the learner once so a slower first block doesn't look like a hang.
+        if (kind === "engine-switch" && !engineSwitchNotifiedRef.current) {
+          engineSwitchNotifiedRef.current = true;
+          toast({
+            title: "Switched local voice engine",
+            description: "This device's GPU produced corrupted audio, so narration moved to the CPU voice engine. Playback continues.",
+            duration: 6000,
+          });
+        }
+        return;
+      }
+
       const p = pendingRef.current.get(id);
       if (!p) return;
       pendingRef.current.delete(id);
@@ -925,6 +971,11 @@ function useTTSImpl(): UseTTSReturn {
       } else if (type === "audio") {
         if (engine) setKokoroEngine(engine);
         if (samples && sampleRate) {
+          if (!isSaneTtsSamples(samples)) {
+            console.warn("[TTS] Rejected corrupt audio buffer from worker");
+            p.reject(new Error("corrupt-audio"));
+            return;
+          }
           const blob = float32ToWav(samples, sampleRate);
           p.resolve(blob);
         } else {
@@ -1137,6 +1188,15 @@ function useTTSImpl(): UseTTSReturn {
     }
 
     const promise = kokoroSpeakWithTimeout(text, voice)
+      .catch(async (err) => {
+        // The worker detected bad audio and repaired its engine on that request; a single
+        // fresh attempt normally returns clean speech.
+        if (err instanceof Error && err.message === "corrupt-audio") {
+          console.warn("[TTS] Retrying block after corrupt audio");
+          return kokoroSpeakWithTimeout(text, voice);
+        }
+        throw err;
+      })
       .then((blob) => {
         kokoroInFlightRef.current.delete(key);
         kokoroBlobCacheRef.current.set(key, blob);
@@ -1298,7 +1358,7 @@ function useTTSImpl(): UseTTSReturn {
         if (blocks.length === 0) return false;
 
         const voice = kokoroVoiceRef.current;
-        const PREFETCH_AHEAD = 4;
+        const PREFETCH_AHEAD = 6;
         let prefetchTargetIdx = 0;
         let prefetcherRunning = false;
 
@@ -1572,7 +1632,7 @@ function useTTSImpl(): UseTTSReturn {
       for (const b of sBlocks) flatKokoroBlocks.push(b);
     }
 
-    const PREFETCH_AHEAD = 4;
+    const PREFETCH_AHEAD = 6;
     let prefetchTargetFlatIdx = 0;
     let prefetcherRunning = false;
 
