@@ -83,6 +83,36 @@ export const TRUSTED_RESOURCE_HOSTS: string[] = [
   "developer.mozilla.org",
   "docs.python.org",
   "postgresql.org",
+  // Primary documentation and primary research for the systems / data / ML stack.
+  // Without these, a genuinely well-researched data-engineering unit scores below the
+  // publish bar purely because its best source is the project's own documentation.
+  "apache.org",
+  "trino.io",
+  "duckdb.org",
+  "clickhouse.com",
+  "starrocks.io",
+  "delta.io",
+  "min.io",
+  "projectnessie.org",
+  "k3s.io",
+  "tailscale.com",
+  "wireguard.com",
+  "kubernetes.io",
+  "ray.io",
+  "milvus.io",
+  "github.com",
+  "github.io",
+  "readthedocs.io",
+  "research.google",
+  "usenix.org",
+  "cidrdb.org",
+  "tpc.org",
+  "confluent.io",
+  "debezium.io",
+  "ceph.com",
+  "bacalhau.org",
+  "martinfowler.com",
+  "finops.org",
 ];
 
 export function words(text: string | null | undefined): number {
