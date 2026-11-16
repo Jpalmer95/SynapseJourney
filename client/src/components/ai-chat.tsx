@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { useLocation } from "wouter";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { LessonMarkdown } from "@/components/lesson-markdown";
 import type { Topic } from "@shared/schema";
 
 interface Message {
@@ -28,6 +29,10 @@ interface AiChatProps {
   onClose: () => void;
   /** Initial tutor style from lesson chrome */
   initialTutorMode?: "direct" | "socratic" | "feynman";
+  /** Keep parent TUTOR chips in sync when user toggles Socratic/Feynman in sidebar */
+  onTutorModeChange?: (mode: "direct" | "socratic" | "feynman") => void;
+  /** Optional pre-populated prompt (e.g. from Feynman Blank Sheet inside a lesson) */
+  initialDraft?: string;
 }
 
 const suggestions = [
@@ -37,7 +42,35 @@ const suggestions = [
   "What should I learn next?",
 ];
 
-export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTutorMode = "direct" }: AiChatProps) {
+function buildWelcomeMessage(
+  synthesisTopics?: string,
+  activeSubject?: string,
+  tutorMode: "direct" | "socratic" | "feynman" = "direct",
+): string {
+  if (synthesisTopics) {
+    return `I see you have mastered **${synthesisTopics}**... Let us see what you are truly capable of. I have constructed a Synthesis Quest to test your multidisciplinary understanding. Are you ready?`;
+  }
+  if (activeSubject) {
+    if (tutorMode === "socratic") {
+      return `I'll guide you through **${activeSubject}** with questions rather than direct lectures. What concept or equation feels unclear right now?`;
+    }
+    if (tutorMode === "feynman") {
+      return `**Feynman Technique Mode:** Teach me **${activeSubject}** in your own words as if I'm a curious beginner. I'll ask *"why?"* whenever a step relies on jargon or hidden assumptions.`;
+    }
+    return `Welcome to open-ended Agentic Learning on **${activeSubject}**. Ask anything, follow tangents, or test your intuition — when you're ready, click **Log to 3D Map** above and your scattered learnings will be reconciled into your 3D Knowledge Web and credited toward future courses.`;
+  }
+  return "Welcome to open-ended Agentic Learning! Explore any concept, ask questions, or jump across subjects. Click **Log to 3D Map** anytime to distill and save your scattered learnings into your 3D Knowledge Web so future courses recognize what you already know.";
+}
+
+export function AiChat({
+  topic,
+  subjectHint,
+  synthesisTopics,
+  onClose,
+  initialTutorMode = "direct",
+  onTutorModeChange,
+  initialDraft,
+}: AiChatProps) {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const activeSubject = topic?.title || subjectHint || "";
@@ -45,19 +78,11 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
     {
       id: "welcome",
       role: "assistant",
-      content: synthesisTopics
-        ? `I see you have mastered **${synthesisTopics}**... Let us see what you are truly capable of. I have constructed a Synthesis Quest to test your multidisciplinary understanding. Are you ready?`
-        : activeSubject
-        ? initialTutorMode === "socratic"
-          ? `I'll guide you through **${activeSubject}** with questions. What feels unclear or most interesting right now?`
-          : initialTutorMode === "feynman"
-          ? `Teach me **${activeSubject}** like I'm new to it. Start with the core idea in plain words.`
-          : `Welcome to open-ended Agentic Learning on **${activeSubject}**. Ask anything, follow tangents, or test your intuition — when you're ready, click **Log to 3D Map** above and your scattered learnings will be reconciled into your 3D Knowledge Web and credited toward future courses.`
-        : "Welcome to open-ended Agentic Learning! Explore any concept, ask questions, or jump across subjects. Click **Log to 3D Map** anytime to distill and save your scattered learnings into your 3D Knowledge Web so future courses recognize what you already know.",
+      content: buildWelcomeMessage(synthesisTopics, activeSubject, initialTutorMode),
       timestamp: new Date(),
     },
   ]);
-  const [input, setInput] = useState("");
+  const [input, setInput] = useState(initialDraft || "");
   const [isLoading, setIsLoading] = useState(false);
   const [isDistilling, setIsDistilling] = useState(false);
   const [distilledSummary, setDistilledSummary] = useState<{
@@ -70,8 +95,34 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
   const [feynmanMode, setFeynmanMode] = useState(initialTutorMode === "feynman");
   const [feynmanGraded, setFeynmanGraded] = useState(false);
   const [showProviderSetup, setShowProviderSetup] = useState(false);
+  const [authRequired, setAuthRequired] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    const nextSocratic = initialTutorMode === "socratic";
+    const nextFeynman = initialTutorMode === "feynman";
+    setSocraticMode(nextSocratic);
+    setFeynmanMode(nextFeynman);
+    setMessages((prev) => {
+      if (prev.length === 1 && prev[0].id === "welcome") {
+        return [
+          {
+            ...prev[0],
+            content: buildWelcomeMessage(synthesisTopics, activeSubject, initialTutorMode),
+          },
+        ];
+      }
+      return prev;
+    });
+  }, [initialTutorMode, synthesisTopics, activeSubject]);
+
+  useEffect(() => {
+    if (initialDraft && initialDraft.trim()) {
+      setInput(initialDraft);
+      textareaRef.current?.focus();
+    }
+  }, [initialDraft]);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -109,12 +160,22 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
       });
 
       if (!response.ok) {
+        if (response.status === 401) {
+          setAuthRequired(true);
+          setShowProviderSetup(true);
+          setIsLoading(false);
+          setInput(userMessage.content);
+          setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
+          return;
+        }
         // Check if this is a provider setup required error
         if (response.status === 402) {
           const errorData = await response.json();
           if (errorData.error === "CHAT_PROVIDER_REQUIRED") {
+            setAuthRequired(false);
             setShowProviderSetup(true);
             setIsLoading(false);
+            setInput(userMessage.content);
             // Remove the user message we just added since we can't process it
             setMessages((prev) => prev.filter((m) => m.id !== userMessage.id));
             return;
@@ -151,11 +212,23 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
                 
                 // Check for provider required error in SSE stream
                 if (data.error === "CHAT_PROVIDER_REQUIRED") {
+                  setAuthRequired(false);
                   setShowProviderSetup(true);
                   setIsLoading(false);
+                  setInput(userMessage.content);
                   // Remove the messages we just added
                   setMessages((prev) => prev.filter((m) => m.id !== userMessage.id && m.id !== assistantMessage.id));
                   return;
+                }
+                if (data.error && !assistantContent) {
+                  assistantContent = `${data.message || data.error} (Configure or verify your AI key in Settings → AI Provider.)`;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantMessage.id
+                        ? { ...m, content: assistantContent }
+                        : m
+                    )
+                  );
                 }
                 
                 if (data.content) {
@@ -183,7 +256,7 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
           id: (Date.now() + 1).toString(),
           role: "assistant",
           content:
-            "I apologize, but I encountered an issue. Please try again in a moment.",
+            "Live AI Tutor chat requires signing in and connecting your own AI key in **Settings → AI Provider** (Gemini, OpenRouter, Hugging Face, xAI, or local Ollama). You can still use all course lessons, audio narration, quizzes, and the **Feynman Blank Sheet** inside each lesson unit without an API key.",
           timestamp: new Date(),
         },
       ]);
@@ -299,18 +372,34 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
             <span>Log to 3D Map</span>
           </Button>
           <div className="flex items-center gap-2 mr-0">
-            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Socratic Tutoring">Socratic</span>
+            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Socratic Tutoring: AI guides you by asking probing questions instead of lecturing">Socratic</span>
             <Switch 
               checked={socraticMode}
-              onCheckedChange={(v) => { setSocraticMode(v); if (v) setFeynmanMode(false); }}
+              onCheckedChange={(v) => {
+                setSocraticMode(v);
+                if (v) {
+                  setFeynmanMode(false);
+                  onTutorModeChange?.("socratic");
+                } else if (!feynmanMode) {
+                  onTutorModeChange?.("direct");
+                }
+              }}
               className="data-[state=checked]:bg-primary h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3"
             />
           </div>
           <div className="flex items-center gap-1 mr-2 bg-secondary/30 p-1 rounded-md">
-            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Feynman Student Avatar">Feynman</span>
+            <span className="hidden sm:inline text-[10px] font-semibold text-muted-foreground whitespace-nowrap" title="Feynman Student Avatar: You teach the AI student in plain words; it asks 'why?' to expose gaps">Feynman</span>
             <Switch 
               checked={feynmanMode}
-              onCheckedChange={(v) => { setFeynmanMode(v); if (v) setSocraticMode(false); }}
+              onCheckedChange={(v) => {
+                setFeynmanMode(v);
+                if (v) {
+                  setSocraticMode(false);
+                  onTutorModeChange?.("feynman");
+                } else if (!socraticMode) {
+                  onTutorModeChange?.("direct");
+                }
+              }}
               className="data-[state=checked]:bg-amber-500 h-4 w-7 [&>span]:h-3 [&>span]:w-3 [&>span]:data-[state=checked]:translate-x-3"
             />
             {feynmanMode && (
@@ -343,31 +432,35 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
           <div className="p-4 rounded-full bg-primary/10 mb-4">
             <Key className="h-8 w-8 text-primary" />
           </div>
-          <h3 className="text-lg font-semibold mb-2">Set Up AI Chat</h3>
-          <p className="text-muted-foreground mb-6 max-w-sm">
-            AI chat requires your own API credentials. Course content is always free, but for unlimited personal conversations, please configure one of these providers:
+          <h3 className="text-lg font-semibold mb-2">
+            {authRequired ? "Sign In & Connect Your AI Key" : "Set Up Live AI Tutor Chat"}
+          </h3>
+          <p className="text-muted-foreground mb-5 max-w-sm text-sm">
+            {authRequired
+              ? "All course lessons, audio narration, quizzes, and the in-lesson Feynman Blank Sheet work without an account. For live Socratic or Feynman conversations, sign in and connect your own AI key:"
+              : "Course content and the in-lesson Feynman Blank Sheet are always free. For live Socratic or Feynman chat, connect your own AI provider in Settings:"}
           </p>
           
-          <div className="space-y-3 w-full max-w-xs mb-6">
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
-              <Zap className="h-5 w-5 text-amber-500" />
+          <div className="space-y-2.5 w-full max-w-xs mb-6">
+            <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
+              <Zap className="h-5 w-5 text-amber-500 shrink-0" />
+              <div className="text-left">
+                <p className="font-medium text-sm">Gemini / OpenRouter / xAI</p>
+                <p className="text-xs text-muted-foreground">Bring your own API key (pay-as-you-go or free tier)</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
+              <Zap className="h-5 w-5 text-blue-500 shrink-0" />
               <div className="text-left">
                 <p className="font-medium text-sm">Hugging Face</p>
-                <p className="text-xs text-muted-foreground">Free tier available</p>
+                <p className="text-xs text-muted-foreground">Free inference tier available</p>
               </div>
             </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
-              <Server className="h-5 w-5 text-green-500" />
+            <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
+              <Server className="h-5 w-5 text-green-500 shrink-0" />
               <div className="text-left">
-                <p className="font-medium text-sm">Ollama</p>
-                <p className="text-xs text-muted-foreground">Run locally for free</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3 p-3 rounded-lg border bg-card">
-              <Zap className="h-5 w-5 text-blue-500" />
-              <div className="text-left">
-                <p className="font-medium text-sm">OpenRouter</p>
-                <p className="text-xs text-muted-foreground">Many models available</p>
+                <p className="font-medium text-sm">Ollama / LM Studio</p>
+                <p className="text-xs text-muted-foreground">Run locally on your machine for free</p>
               </div>
             </div>
           </div>
@@ -378,17 +471,17 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
               onClick={() => setShowProviderSetup(false)}
               data-testid="button-cancel-setup"
             >
-              Cancel
+              Back to Chat
             </Button>
             <Button
               onClick={() => {
                 onClose();
-                setLocation("/settings");
+                setLocation(authRequired ? "/login" : "/settings");
               }}
               data-testid="button-go-to-settings"
             >
               <Settings className="h-4 w-4 mr-2" />
-              Go to Settings
+              {authRequired ? "Sign In / Set Up Key" : "Go to Settings"}
             </Button>
           </div>
         </div>
@@ -424,13 +517,20 @@ export function AiChat({ topic, subjectHint, synthesisTopics, onClose, initialTu
 
               <div
                 className={cn(
-                  "max-w-[80%] rounded-2xl px-4 py-2",
+                  "max-w-[82%] rounded-2xl px-4 py-2.5 text-sm",
                   message.role === "user"
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted"
                 )}
               >
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                {message.role === "assistant" ? (
+                  <LessonMarkdown
+                    text={message.content}
+                    className="space-y-2 text-sm break-words [overflow-wrap:anywhere]"
+                  />
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                )}
               </div>
             </motion.div>
           ))}

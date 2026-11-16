@@ -44,6 +44,20 @@ export interface CoursePlanSubTopic {
   units: CoursePlanUnit[];
 }
 
+export interface PrerequisiteStep {
+  step: number;
+  title: string;
+  level: "undergraduate" | "upper_undergrad" | "graduate" | "specialized";
+  whyNeeded: string;
+  keyConcepts: string[];
+  recommendedTextbooks: { title: string; authorOrSource: string; url?: string; chapters?: string }[];
+  diagnosticQuestion: {
+    question: string;
+    selfCheckCriteria: string;
+  };
+  bridgeSummary: string;
+}
+
 export interface CoursePlan {
   /** Which archetype shaped this course (see shared/course-archetypes.ts) */
   archetype?: CourseArchetype;
@@ -64,6 +78,8 @@ export interface CoursePlan {
   subTopics?: CoursePlanSubTopic[];
   /** Open educational resources the curriculum should be built around */
   recommendedOER: { name: string; url: string; reason: string }[];
+  /** Structured prerequisite reading order + readiness self-diagnostic for advanced topics */
+  prerequisiteLadder?: PrerequisiteStep[];
   /** Present when the goal is technical — a copyable brief for the learner's AI agent */
   agentContext?: AgentContext;
 }

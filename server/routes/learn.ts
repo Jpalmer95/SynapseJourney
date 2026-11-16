@@ -327,8 +327,8 @@ export function registerLearnRoutes(app: Express) {
       });
 
       await storage.upsertTopicLearningPrefs(userId, topic.id, {
-        depthMode: "speed_run",
-        contentView: "skim",
+        depthMode: "standard",
+        contentView: "full",
         tutorMode: "direct",
       });
 
@@ -467,11 +467,8 @@ export function registerLearnRoutes(app: Express) {
         version: 1,
       });
 
-      // Presentation prefs — never delete progress
-      const contentView =
-        learningIntent === "survey" || learningIntent === "speed_run" || learningIntent === "goal"
-          ? "skim"
-          : "full";
+      // Presentation prefs — never delete progress; only speed_run defaults to skim (quiz-first)
+      const contentView = learningIntent === "speed_run" ? "skim" : "full";
 
       const prefs = await storage.upsertTopicLearningPrefs(userId, topicId, {
         depthMode: learningIntent === "goal" ? "speed_run" : learningIntent,
@@ -726,6 +723,7 @@ export function registerLearnRoutes(app: Express) {
             url: z.string(),
             reason: z.string().optional(),
           })).optional(),
+          prerequisiteLadder: z.array(z.any()).optional(),
           units: z.array(z.object({
             title: z.string(),
             outline: z.string().optional(),
@@ -900,7 +898,7 @@ export function registerLearnRoutes(app: Express) {
           : body.learningIntent || "standard";
       await storage.upsertTopicLearningPrefs(userId, topic.id, {
         depthMode: ingestDepth,
-        contentView: ingestDepth === "speed_run" || ingestDepth === "survey" ? "skim" : "full",
+        contentView: ingestDepth === "speed_run" ? "skim" : "full",
       });
 
       let goal = null;

@@ -47,6 +47,7 @@ import {
   Play,
   Target,
   Volume2,
+  HelpCircle,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -77,6 +78,8 @@ import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { AgentPlaybookView } from "@/components/agent-playbook";
 import { FirstPrinciplesSandbox } from "@/components/first-principles-sandbox";
+import { PrerequisiteDiagnostic, type PrerequisiteStep } from "@/components/prerequisite-diagnostic";
+import { FeynmanBlankSheet } from "@/components/feynman-blank-sheet";
 import type { Topic, Category, LessonContent, NextGenContent } from "@shared/schema";
 
 interface LessonUnit {
@@ -122,16 +125,44 @@ interface RabbitHoleProps {
 }
 
 const DEPTH_MODES = [
-  { id: "survey", label: "Survey", hint: "Breadth first" },
-  { id: "standard", label: "Standard", hint: "Balanced path" },
-  { id: "deep", label: "Deep", hint: "Mastery" },
-  { id: "speed_run", label: "Speed", hint: "Essentials only" },
+  {
+    id: "survey",
+    label: "Survey",
+    hint: "Intuition & analogies first — places 'Think of it like…' and key takeaways above dense derivations",
+  },
+  {
+    id: "standard",
+    label: "Standard",
+    hint: "Balanced curriculum — full concepts, visual maps, analogies, worked examples, and quizzes",
+  },
+  {
+    id: "deep",
+    label: "Deep",
+    hint: "Graduate & frontier rigor — complete derivations, edge cases, and primary research literature",
+  },
+  {
+    id: "speed_run",
+    label: "Speed",
+    hint: "Rapid review (quiz-first) — skims straight to key takeaways and active-recall quizzes",
+  },
 ] as const;
 
 const TUTOR_MODES = [
-  { id: "direct", label: "Direct" },
-  { id: "socratic", label: "Socratic" },
-  { id: "feynman", label: "Feynman" },
+  {
+    id: "direct",
+    label: "Direct",
+    hint: "Self-paced reading & audio narration directly on the page (no AI key required)",
+  },
+  {
+    id: "socratic",
+    label: "Socratic",
+    hint: "Guided questioning — opens the AI Studio to ask probing questions instead of lecturing",
+  },
+  {
+    id: "feynman",
+    label: "Feynman",
+    hint: "Teach it to learn it — explain concepts in plain words to the AI student or use the in-lesson Blank Sheet",
+  },
 ] as const;
 
 const difficultyColors: Record<string, string> = {
@@ -185,6 +216,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const [poster, setPoster] = useState<CoursePosterData | null>(null);
   const [posterLoading, setPosterLoading] = useState(false);
   const [replanLoading, setReplanLoading] = useState(false);
+  const [showModeGuide, setShowModeGuide] = useState(false);
+  const [blankSheetActive, setBlankSheetActive] = useState(false);
+  const [chatInitialDraft, setChatInitialDraft] = useState<string>("");
   const [bulkRegenStatus, setBulkRegenStatus] = useState<{
     isRunning: boolean;
     completed: number;
@@ -286,6 +320,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const { data: coursePlan } = useQuery<{
     planJson?: {
       recommendedOER?: { name: string; url: string; reason: string }[];
+      prerequisiteLadder?: PrerequisiteStep[];
       complexityAssessment?: string;
       scope?: string;
       tiers?: { name: string; description?: string; unitCount?: number }[];
@@ -305,12 +340,16 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
 
   useEffect(() => {
     if (!topicPrefs) return;
-    setDepthMode(topicPrefs.depthMode || "standard");
+    const mode = topicPrefs.depthMode || "standard";
+    setDepthMode(mode);
     setTutorMode(topicPrefs.tutorMode || "direct");
-    setContentView((topicPrefs.contentView as "full" | "skim") || "full");
+    // Survey mode should ALWAYS show full lessons (intuition & analogies first), never quiz-only skim
+    setContentView(
+      mode === "survey" ? "full" : ((topicPrefs.contentView as "full" | "skim") || "full"),
+    );
     setPaceMode(topicPrefs.paceMode || "balanced");
     setInterestFocusInput(topicPrefs.interestFocus || "");
-    setQuizFirst(topicPrefs.depthMode === "speed_run");
+    setQuizFirst(mode === "speed_run");
   }, [topicPrefs?.depthMode, topicPrefs?.tutorMode, topicPrefs?.contentView, topicPrefs?.paceMode, topicPrefs?.interestFocus]);
 
   const saveTopicPrefs = async (patch: {
@@ -395,6 +434,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   /** Safe depth replan — never wipes progress */
   const replanDepth = async (intent: string) => {
     setDepthMode(intent);
+    const nextView = intent === "speed_run" ? "skim" : "full";
+    setContentView(nextView);
+    setQuizFirst(intent === "speed_run");
     setReplanLoading(true);
     try {
       const res = await apiRequest("POST", `/api/learn/topics/${topic.id}/replan`, {
@@ -403,9 +445,9 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       });
       const data = await res.json();
       if (data.presentation?.contentView) {
-        setContentView(data.presentation.contentView);
+        setContentView(intent === "survey" ? "full" : data.presentation.contentView);
       }
-      setQuizFirst(!!data.presentation?.quizFirst);
+      setQuizFirst(intent === "speed_run" || !!data.presentation?.quizFirst);
       toast({
         title: "Learning mode updated",
         description: data.message || `Switched to ${intent}. Progress preserved.`,
@@ -413,21 +455,20 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
       queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "course-plan"] });
       queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
-    } catch (err: any) {
+    } catch {
+      const modeDesc =
+        intent === "survey"
+          ? "Showing full lessons with intuitive analogies and key takeaways prioritized first."
+          : intent === "speed_run"
+          ? "Showing rapid key takeaways and quiz-first review."
+          : intent === "deep"
+          ? "Showing full derivations, examples, and primary research literature."
+          : "Showing complete step-by-step lessons, examples, and quizzes.";
       toast({
-        title: "Could not reshape path",
-        description: err?.message || "Prefs still updated locally.",
-        variant: "destructive",
+        title: `Switched to ${intent === "speed_run" ? "Speed" : intent.charAt(0).toUpperCase() + intent.slice(1)} view`,
+        description: modeDesc,
       });
-      // fallback to prefs-only
-      if (intent === "survey" || intent === "speed_run") {
-        setContentView("skim");
-        setQuizFirst(intent === "speed_run");
-        await saveTopicPrefs({ depthMode: intent, contentView: "skim" });
-      } else {
-        setQuizFirst(false);
-        await saveTopicPrefs({ depthMode: intent });
-      }
+      await saveTopicPrefs({ depthMode: intent, contentView: nextView });
     } finally {
       setReplanLoading(false);
     }
@@ -818,6 +859,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       });
       return;
     }
+    setBlankSheetActive(false);
     setSelectedUnit(unit);
     startLessonMutation.mutate(unit.id);
   };
@@ -1798,6 +1840,36 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </div>
                 )}
 
+                {depthMode === "survey" && contentView === "full" && (
+                  <div
+                    className="rounded-lg border border-cyan-500/30 bg-cyan-500/5 p-3 text-sm flex flex-wrap items-center justify-between gap-3"
+                    data-testid="banner-survey-mode"
+                  >
+                    <span>
+                      <strong>Survey Mode (Intuition First):</strong> Key Takeaways and the plain-English Analogy (&ldquo;Think of it like…&rdquo;) appear first below, followed by the full Concept derivation and Worked Example.
+                    </span>
+                  </div>
+                )}
+
+                {blankSheetActive ? (
+                  <div
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 text-sm flex flex-wrap items-center justify-between gap-3"
+                    data-testid="banner-blank-sheet-active"
+                  >
+                    <span>
+                      <strong>Blank Sheet Mode Active:</strong> Lesson text (Concept, Analogy, Example) is hidden so you can teach the concept to yourself from scratch in the Feynman Blank Sheet below.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setBlankSheetActive(false)}
+                      data-testid="button-exit-blank-sheet"
+                    >
+                      Peek at Lesson Reference
+                    </Button>
+                  </div>
+                ) : (
+                  <>
                 {/* Key Takeaways Section */}
                 {lessonContent.keyTakeaways && lessonContent.keyTakeaways.length > 0 && (() => {
                   const ktIdx = sectionIndexMap["Key Takeaways"] ?? -1;
@@ -1841,6 +1913,48 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                             </li>
                           ))}
                         </ul>
+                      </CardContent>
+                    </Card>
+                  </section>
+                  );
+                })()}
+
+                {/* In Survey Mode, surface Analogy ("Think of it like...") ABOVE dense Concept derivation */}
+                {contentView === "full" && depthMode === "survey" && lessonContent.analogy && (() => {
+                  const aIdx = sectionIndexMap["Analogy"] ?? -1;
+                  const aActive = isTtsSpeaking && aIdx >= 0 && currentSectionIndex === aIdx;
+                  return (
+                  <section className={cn("min-w-0 w-full group transition-all", aActive && "border-l-2 border-primary pl-3 -ml-3")}>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Lightbulb className="h-5 w-5 text-yellow-500 shrink-0" />
+                      <h2 className="text-xl font-semibold flex-1">Think of it like...</h2>
+                      <Badge variant="outline" className="text-[10px] border-yellow-500/40 text-yellow-400">
+                        Intuitive Mental Model
+                      </Badge>
+                      {lessonSections.length > 0 && aIdx >= 0 && (
+                        <button
+                          type="button"
+                          onClick={() => speakSections(lessonSections, aIdx)}
+                          className={cn(
+                            "inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs transition-colors",
+                            aActive
+                              ? "bg-primary/15 text-primary font-medium"
+                              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+                          )}
+                          title="Listen from here"
+                          data-testid="button-tts-section-analogy-survey"
+                        >
+                          <Volume2 className="h-3.5 w-3.5" />
+                          <span>{aActive ? "Playing" : "Listen"}</span>
+                        </button>
+                      )}
+                    </div>
+                    <Card className="border-yellow-500/20 bg-yellow-500/5 overflow-hidden w-full">
+                      <CardContent className="p-4 sm:p-6 overflow-hidden">
+                        <LessonMarkdown
+                          text={lessonContent.analogy}
+                          className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                        />
                       </CardContent>
                     </Card>
                   </section>
@@ -1901,8 +2015,8 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </section>
                 )}
 
-                {/* Analogy Section */}
-                {contentView === "full" && lessonContent.analogy && (() => {
+                {/* Analogy Section (in Standard / Deep mode) */}
+                {contentView === "full" && depthMode !== "survey" && lessonContent.analogy && (() => {
                   const aIdx = sectionIndexMap["Analogy"] ?? -1;
                   const aActive = isTtsSpeaking && aIdx >= 0 && currentSectionIndex === aIdx;
                   return (
@@ -1994,6 +2108,27 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     sectionIndexMap={sectionIndexMap}
                   />
                 )}
+                  </>
+                )}
+
+                {/* Feynman Blank Sheet & Study Notebook (works offline + exports Word/Markdown + connects to Feynman AI) */}
+                <FeynmanBlankSheet
+                  topicTitle={topic.title}
+                  unit={{
+                    id: selectedUnit.id,
+                    title: selectedUnit.title,
+                    difficulty: selectedUnit.difficulty,
+                  }}
+                  lessonContent={lessonContent}
+                  blankSheetActive={blankSheetActive}
+                  onToggleBlankSheet={setBlankSheetActive}
+                  onTeachAiStudent={(draft) => {
+                    setTutorMode("feynman");
+                    saveTopicPrefs({ tutorMode: "feynman" });
+                    setChatInitialDraft(draft);
+                    setShowChat(true);
+                  }}
+                />
 
                 {/* Cross-links Section */}
                 {lessonContent.crossLinks && lessonContent.crossLinks.length > 0 && (() => {
@@ -2298,8 +2433,16 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
           {showChat && (
           <AiChat
             topic={topic}
-            onClose={() => setShowChat(false)}
+            onClose={() => {
+              setShowChat(false);
+              setChatInitialDraft("");
+            }}
             initialTutorMode={tutorMode === "socratic" || tutorMode === "feynman" ? tutorMode : "direct"}
+            onTutorModeChange={(mode) => {
+              setTutorMode(mode);
+              saveTopicPrefs({ tutorMode: mode });
+            }}
+            initialDraft={chatInitialDraft}
           />
         )}
         </AnimatePresence>
@@ -2403,6 +2546,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 <button
                   key={m.id}
                   type="button"
+                  title={m.hint}
                   onClick={() => {
                     setTutorMode(m.id);
                     saveTopicPrefs({ tutorMode: m.id });
@@ -2421,6 +2565,21 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
               ))}
               <button
                 type="button"
+                onClick={() => setShowModeGuide((v) => !v)}
+                className={cn(
+                  "text-xs inline-flex items-center gap-1 px-2.5 py-1 rounded-full border transition-colors",
+                  showModeGuide
+                    ? "bg-indigo-500/15 text-indigo-300 border-indigo-500/40"
+                    : "border-border text-muted-foreground hover:border-indigo-500/40 hover:text-foreground"
+                )}
+                title="Explain what Depth (Survey, Standard, Deep, Speed) and Tutor (Direct, Socratic, Feynman) modes do"
+                data-testid="button-toggle-mode-guide"
+              >
+                <HelpCircle className="h-3.5 w-3.5" />
+                <span>What do these mean?</span>
+              </button>
+              <button
+                type="button"
                 onClick={() => {
                   const next = contentView === "full" ? "skim" : "full";
                   setContentView(next);
@@ -2437,6 +2596,64 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 {contentView === "skim" ? "Skim view" : "Full view"}
               </button>
             </div>
+
+            {showModeGuide && (
+              <div
+                className="rounded-lg border border-indigo-500/35 bg-indigo-500/10 p-3.5 space-y-3 text-xs"
+                data-testid="panel-mode-guide"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-indigo-300 flex items-center gap-1.5">
+                    <HelpCircle className="h-4 w-4" />
+                    Guide to Depth &amp; Tutor Modes
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setShowModeGuide(false)}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="space-y-1.5 rounded-md bg-background/80 p-3 border border-border/60">
+                    <div className="font-semibold uppercase tracking-wider text-[11px] text-primary">
+                      DEPTH — Controls how each lesson is presented
+                    </div>
+                    <ul className="space-y-1.5 text-muted-foreground">
+                      <li>
+                        <strong className="text-foreground">Survey:</strong> Full lessons with plain-English analogies (&ldquo;Think of it like…&rdquo;) and key takeaways placed <em>first</em>, before dense mathematical derivations.
+                      </li>
+                      <li>
+                        <strong className="text-foreground">Standard:</strong> Balanced progression — Key Takeaways → Concept → Visual Map → Analogy → Worked Example → Quiz.
+                      </li>
+                      <li>
+                        <strong className="text-foreground">Deep:</strong> Full graduate/research rigor, complete equations, edge cases, and primary literature.
+                      </li>
+                      <li>
+                        <strong className="text-foreground">Speed:</strong> Rapid review mode — skims straight to Key Takeaways and the comprehension quiz first.
+                      </li>
+                    </ul>
+                  </div>
+                  <div className="space-y-1.5 rounded-md bg-background/80 p-3 border border-border/60">
+                    <div className="font-semibold uppercase tracking-wider text-[11px] text-amber-400">
+                      TUTOR — Controls how you interact &amp; test yourself
+                    </div>
+                    <ul className="space-y-1.5 text-muted-foreground">
+                      <li>
+                        <strong className="text-foreground">Direct:</strong> Read and listen to the structured course lessons at your own pace (works immediately for everyone, no AI key needed).
+                      </li>
+                      <li>
+                        <strong className="text-foreground">Socratic:</strong> Opens the AI Learning Studio where the tutor guides you with probing questions instead of giving direct answers (uses your own AI key in Settings).
+                      </li>
+                      <li>
+                        <strong className="text-foreground">Feynman:</strong> Based on Richard Feynman&apos;s method — you teach the concept in plain words! Every lesson includes a built-in <strong>Feynman Blank Sheet &amp; Word (.doc) Study Notebook</strong> (no AI key needed), or you can teach the live AI student in the sidebar.
+                      </li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            )}
             {coursePlan?.planJson?.recommendedOER && coursePlan.planJson.recommendedOER.length > 0 && (
               <div className="rounded-lg border border-border/60 bg-muted/30 p-3 space-y-2" data-testid="section-oer-links">
                 <div className="flex items-center gap-2 text-sm font-medium">
@@ -2777,6 +2994,16 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   </CardContent>
                 </Card>
               )}
+
+              {/* Prerequisite Ladder, Self-Diagnostic & Recommended Reading Order */}
+              <PrerequisiteDiagnostic
+                topic={topic}
+                prerequisiteLadder={coursePlan?.planJson?.prerequisiteLadder}
+                recommendedOER={coursePlan?.planJson?.recommendedOER}
+                orderedUnits={orderedLinearUnits}
+                depthMode={depthMode}
+                onSelectDepthMode={(mode) => replanDepth(mode)}
+              />
 
               {/* Breadth <-> Depth & Pace/Interest Steering Bar */}
               <Card className="border-border/70 bg-card/50" data-testid="section-breadth-depth-steering">
@@ -3213,8 +3440,16 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
         {showChat && (
           <AiChat
             topic={topic}
-            onClose={() => setShowChat(false)}
+            onClose={() => {
+              setShowChat(false);
+              setChatInitialDraft("");
+            }}
             initialTutorMode={tutorMode === "socratic" || tutorMode === "feynman" ? tutorMode : "direct"}
+            onTutorModeChange={(mode) => {
+              setTutorMode(mode);
+              saveTopicPrefs({ tutorMode: mode });
+            }}
+            initialDraft={chatInitialDraft}
           />
         )}
       </AnimatePresence>
