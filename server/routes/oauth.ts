@@ -41,6 +41,39 @@ export function registerOAuthRoutes(app: Express) {
     }
   });
 
+  // Start OpenRouter 1-click OAuth PKCE redirect flow (registered before /:provider/start)
+  app.post("/api/oauth/openrouter_pkce/start", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0]?.trim() || req.protocol || "https";
+      const host = req.headers["x-forwarded-host"] || req.headers.host || "synapsejourney.org";
+      const callbackUrl = `${proto}://${host}/api/oauth/openrouter_pkce/callback`;
+      const { authUrl, state } = createOpenRouterPkceSession(userId, callbackUrl);
+      res.json({ authUrl, state });
+    } catch (error: any) {
+      console.error("[OAuth] OpenRouter PKCE start failed:", error);
+      res.status(500).json({ error: error?.message || "Failed to start OpenRouter OAuth" });
+    }
+  });
+
+  // Callback for OpenRouter 1-click OAuth PKCE redirect
+  app.get("/api/oauth/openrouter_pkce/callback", isAuthenticated, async (req: any, res: Response) => {
+    try {
+      const userId = req.user.claims.sub;
+      const code = String(req.query.code || "").trim();
+      const state = String(req.query.state || "").trim();
+      if (!code || !state) {
+        return res.redirect("/settings?oauth_error=missing_code");
+      }
+      await exchangeOpenRouterPkceCode(userId, code, state);
+      res.redirect("/settings?oauth_connected=openrouter");
+    } catch (error: any) {
+      console.error("[OAuth] OpenRouter PKCE callback failed:", error);
+      const msg = encodeURIComponent(error?.message || "OpenRouter OAuth failed");
+      res.redirect(`/settings?oauth_error=${msg}`);
+    }
+  });
+
   // Start an OAuth 2.0 Device Code flow for xai_oauth, nous_oauth, openai_codex, or minimax_oauth
   app.post("/api/oauth/:provider/start", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -119,39 +152,6 @@ export function registerOAuthRoutes(app: Express) {
     } catch (error: any) {
       console.error("[OAuth] Cancel error:", error);
       res.status(500).json({ error: "Failed to cancel OAuth session" });
-    }
-  });
-
-  // Start OpenRouter 1-click OAuth PKCE redirect flow
-  app.post("/api/oauth/openrouter_pkce/start", isAuthenticated, async (req: any, res: Response) => {
-    try {
-      const userId = req.user.claims.sub;
-      const proto = (req.headers["x-forwarded-proto"] as string)?.split(",")[0]?.trim() || req.protocol || "https";
-      const host = req.headers["x-forwarded-host"] || req.headers.host || "synapsejourney.org";
-      const callbackUrl = `${proto}://${host}/api/oauth/openrouter_pkce/callback`;
-      const { authUrl, state } = createOpenRouterPkceSession(userId, callbackUrl);
-      res.json({ authUrl, state });
-    } catch (error: any) {
-      console.error("[OAuth] OpenRouter PKCE start failed:", error);
-      res.status(500).json({ error: error?.message || "Failed to start OpenRouter OAuth" });
-    }
-  });
-
-  // Callback for OpenRouter 1-click OAuth PKCE redirect
-  app.get("/api/oauth/openrouter_pkce/callback", isAuthenticated, async (req: any, res: Response) => {
-    try {
-      const userId = req.user.claims.sub;
-      const code = String(req.query.code || "").trim();
-      const state = String(req.query.state || "").trim();
-      if (!code || !state) {
-        return res.redirect("/settings?oauth_error=missing_code");
-      }
-      await exchangeOpenRouterPkceCode(userId, code, state);
-      res.redirect("/settings?oauth_connected=openrouter");
-    } catch (error: any) {
-      console.error("[OAuth] OpenRouter PKCE callback failed:", error);
-      const msg = encodeURIComponent(error?.message || "OpenRouter OAuth failed");
-      res.redirect(`/settings?oauth_error=${msg}`);
     }
   });
 
