@@ -82,6 +82,8 @@ import { registerLearnRoutes } from "./routes/learn";
 import { registerMcpRoutes } from "./routes/mcp";
 import { registerWellKnownRoutes } from "./routes/wellknown";
 import { registerAdminContentRoutes } from "./routes/admin-content";
+import { registerOAuthRoutes } from "./routes/oauth";
+import { sanitizeOAuthSubscriptionsMap } from "./oauth-subscriptions";
 
 export async function registerRoutes(
   httpServer: Server,
@@ -101,6 +103,7 @@ export async function registerRoutes(
   registerMcpRoutes(app);
   registerWellKnownRoutes(app);
   registerAdminContentRoutes(app);
+  registerOAuthRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {
@@ -1391,9 +1394,14 @@ Return a JSON object in this exact format:
       const profile = await storage.getUserProfile(req.user.claims.sub);
       if (!profile) return res.json({ userId: req.user.claims.sub });
       // The stored voice sample is hundreds of KB of base64 and no client needs
-      // it here (TTS reads it server-side). Ship a flag instead of the blob.
-      const { ttsReferenceAudio, ...rest } = profile as any;
-      res.json({ ...rest, hasTtsReferenceAudio: Boolean(ttsReferenceAudio) });
+      // it here (TTS reads it server-side). Also strip raw encrypted OAuth tokens
+      // and ship sanitized connection metadata instead.
+      const { ttsReferenceAudio, oauthSubscriptions, ...rest } = profile as any;
+      res.json({
+        ...rest,
+        hasTtsReferenceAudio: Boolean(ttsReferenceAudio),
+        oauthSubscriptionStatus: sanitizeOAuthSubscriptionsMap(oauthSubscriptions),
+      });
     } catch (error) {
       console.error("Error fetching profile:", error);
       res.status(500).json({ error: "Failed to fetch profile" });
@@ -1437,30 +1445,39 @@ Return a JSON object in this exact format:
         preferredAiProvider,
         preferredModel,
       });
-      res.json(profile);
+      const { ttsReferenceAudio, oauthSubscriptions, ...rest } = profile as any;
+      res.json({
+        ...rest,
+        hasTtsReferenceAudio: Boolean(ttsReferenceAudio),
+        oauthSubscriptionStatus: sanitizeOAuthSubscriptionsMap(oauthSubscriptions),
+      });
     } catch (error) {
       console.error("Error updating profile:", error);
       res.status(500).json({ error: "Failed to update profile" });
     }
   });
 
-  // Test a user's BYOK connection (reachability + auth) for the Settings
+  // Test a user's BYOK/BYOS connection (reachability + auth) for the Settings
   // "Test Connection" button. Reads the provider config from the request body
-  // (the current draft on the Settings form) — no secrets persisted server-side.
+  // (the current draft on the Settings form) + stored OAuth subscriptions.
   app.post("/api/ai/test-connection", isAuthenticated, async (req: any, res: Response) => {
     try {
+      const userId = req.user.claims.sub;
+      const storedProfile = await storage.getUserProfile(userId);
       const config = providerConfigFromProfile({
-        preferredAiProvider: req.body?.preferredAiProvider,
-        preferredModel: req.body?.preferredModel,
-        huggingFaceToken: req.body?.huggingFaceToken,
-        ollamaUrl: req.body?.ollamaUrl,
-        lmStudioUrl: req.body?.lmStudioUrl,
-        customOpenaiUrl: req.body?.customOpenaiUrl,
-        customOpenaiKey: req.body?.customOpenaiKey,
-        openRouterKey: req.body?.openRouterKey,
-        xaiKey: req.body?.xaiKey,
-        geminiKey: req.body?.geminiKey,
-        anthropicKey: req.body?.anthropicKey,
+        userId,
+        preferredAiProvider: req.body?.preferredAiProvider ?? storedProfile?.preferredAiProvider,
+        preferredModel: req.body?.preferredModel ?? storedProfile?.preferredModel,
+        huggingFaceToken: req.body?.huggingFaceToken ?? storedProfile?.huggingFaceToken,
+        ollamaUrl: req.body?.ollamaUrl ?? storedProfile?.ollamaUrl,
+        lmStudioUrl: req.body?.lmStudioUrl ?? storedProfile?.lmStudioUrl,
+        customOpenaiUrl: req.body?.customOpenaiUrl ?? storedProfile?.customOpenaiUrl,
+        customOpenaiKey: req.body?.customOpenaiKey ?? storedProfile?.customOpenaiKey,
+        openRouterKey: req.body?.openRouterKey ?? storedProfile?.openRouterKey,
+        xaiKey: req.body?.xaiKey ?? storedProfile?.xaiKey,
+        geminiKey: req.body?.geminiKey ?? storedProfile?.geminiKey,
+        anthropicKey: req.body?.anthropicKey ?? storedProfile?.anthropicKey,
+        oauthSubscriptions: (storedProfile as any)?.oauthSubscriptions,
       });
       const result = await testByokConnection(config);
       res.json(result);

@@ -148,13 +148,18 @@ export async function resolveByokConfig(req: any, _res: any, next: any) {
   const profile = await storage.getUserProfile(userId);
   const config: ProviderConfig = {
     provider: (profile?.preferredAiProvider as ProviderConfig["provider"]) || "huggingface",
+    userId,
     huggingFaceToken: profile?.huggingFaceToken || undefined,
     ollamaUrl: profile?.ollamaUrl || undefined,
+    lmStudioUrl: profile?.lmStudioUrl || undefined,
+    customOpenaiUrl: profile?.customOpenaiUrl || undefined,
+    customOpenaiKey: profile?.customOpenaiKey || undefined,
     openRouterKey: profile?.openRouterKey || undefined,
     xaiKey: profile?.xaiKey || undefined,
     anthropicKey: profile?.anthropicKey || undefined,
     geminiKey: profile?.geminiKey || undefined,
     preferredModel: profile?.preferredModel || undefined,
+    oauthSubscriptions: ((profile as any)?.oauthSubscriptions || undefined) as ProviderConfig["oauthSubscriptions"],
   };
 
   // Merge keys from user_api_keys table (encrypted keys need decrypt)

@@ -1,5 +1,19 @@
 import OpenAI from "openai";
 import { GoogleGenAI } from "@google/genai";
+import {
+  type OAuthSubscriptionProviderId,
+  type StoredOAuthSubscriptionsMap,
+  OAUTH_SUBSCRIPTION_PROVIDER_IDS,
+  XAI_DEFAULT_MODEL,
+  NOUS_DEFAULT_MODEL,
+  CODEX_DEFAULT_MODEL,
+  MINIMAX_DEFAULT_MODEL,
+  hasUsableOAuthSubscription,
+  firstConnectedOAuthProvider,
+  resolveOAuthRuntimeCredentials,
+  callCodexResponsesApi,
+  buildCodexAccountHeaders,
+} from "./oauth-subscriptions";
 
 export interface AIProvider {
   name: string;
@@ -15,7 +29,18 @@ export interface ChatOptions {
 }
 
 export interface ProviderConfig {
-  provider: "openai" | "huggingface" | "ollama" | "lmstudio" | "custom_openai" | "openrouter" | "gemini" | "xai" | "anthropic";
+  provider:
+    | "openai"
+    | "huggingface"
+    | "ollama"
+    | "lmstudio"
+    | "custom_openai"
+    | "openrouter"
+    | "gemini"
+    | "xai"
+    | "anthropic"
+    | OAuthSubscriptionProviderId;
+  userId?: string;
   huggingFaceToken?: string;
   ollamaUrl?: string;
   lmStudioUrl?: string;
@@ -27,6 +52,8 @@ export interface ProviderConfig {
   xaiKey?: string;
   anthropicKey?: string;
   geminiKey?: string;
+  // BYOS: user's OAuth subscription credentials (encrypted at rest)
+  oauthSubscriptions?: StoredOAuthSubscriptionsMap;
 }
 
 // ── Grok (xAI) — primary course content engine ──────────────────────────────
@@ -69,7 +96,7 @@ class GeminiProvider implements AIProvider {
 
   constructor() {
     this.client = new GoogleGenAI({
-      apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY,
+      apiKey: process.env.AI_INTEGRATIONS_GEMINI_API_KEY || "unconfigured",
       httpOptions: {
         apiVersion: "",
         baseUrl: process.env.AI_INTEGRATIONS_GEMINI_BASE_URL,
@@ -151,7 +178,7 @@ class OpenAIProvider implements AIProvider {
 
   constructor() {
     this.client = new OpenAI({
-      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+      apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY || "unconfigured",
       baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
     });
   }
@@ -358,7 +385,7 @@ class GrokProvider implements AIProvider {
 
   constructor() {
     this.client = new OpenAI({
-      apiKey: process.env.XAI_API_KEY,
+      apiKey: process.env.XAI_API_KEY || "unconfigured",
       baseURL: "https://api.x.ai/v1",
     });
     this.model = XAI_COURSE_MODEL;
@@ -544,10 +571,34 @@ export function validateUserChatCredentials(config: ProviderConfig): { valid: bo
       }
       return { valid: true, provider: "anthropic" };
 
+    case "xai_oauth":
+      if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "xai_oauth")) {
+        return { valid: false, missingCredential: "xAI Grok OAuth Subscription Login", provider: "xai_oauth" };
+      }
+      return { valid: true, provider: "xai_oauth" };
+
+    case "nous_oauth":
+      if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "nous_oauth")) {
+        return { valid: false, missingCredential: "Nous Portal Subscription Login", provider: "nous_oauth" };
+      }
+      return { valid: true, provider: "nous_oauth" };
+
+    case "openai_codex":
+      if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "openai_codex")) {
+        return { valid: false, missingCredential: "OpenAI ChatGPT / Codex Subscription Login", provider: "openai_codex" };
+      }
+      return { valid: true, provider: "openai_codex" };
+
+    case "minimax_oauth":
+      if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "minimax_oauth")) {
+        return { valid: false, missingCredential: "MiniMax OAuth Subscription Login", provider: "minimax_oauth" };
+      }
+      return { valid: true, provider: "minimax_oauth" };
+
     case "openai":
     default: {
       // Fallback: if user didn't switch preferredAiProvider dropdown away from "openai"
-      // but DID paste a BYOK key on their profile, honor that key for chat too.
+      // but DID paste a BYOK key or connect an OAuth subscription on their profile, honor it.
       const anyCheck = validateByokCredentials(config);
       if (anyCheck.valid) {
         return anyCheck;
@@ -703,6 +754,98 @@ export async function testByokConnection(config: ProviderConfig): Promise<Connec
         return done({ ok: false, provider: "anthropic", message: `Anthropic rejected that key (HTTP ${r.status}).` });
       }
 
+      case "xai_oauth": {
+        if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "xai_oauth")) {
+          return done({ ok: false, provider: "xai_oauth", message: "Not signed in to xAI Grok OAuth — click Sign In above first." });
+        }
+        const creds = await resolveOAuthRuntimeCredentials(config.userId, "xai_oauth", config.oauthSubscriptions);
+        const r = await fetch(`${creds.inferenceBaseUrl}/models`, {
+          headers: { Authorization: `Bearer ${creds.accessToken}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({
+            ok: true,
+            provider: "xai_oauth",
+            detail: `xAI Grok OAuth active${creds.accountLabel ? ` (${creds.accountLabel})` : ""}`,
+          });
+        }
+        return done({
+          ok: false,
+          provider: "xai_oauth",
+          message:
+            r.status === 403
+              ? "xAI returned HTTP 403 — your account tier may not include OAuth API access. Use an xAI API Key (xai-...) or upgrade to SuperGrok."
+              : `xAI OAuth check failed (HTTP ${r.status}). Try reconnecting in Settings.`,
+        });
+      }
+
+      case "nous_oauth": {
+        if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "nous_oauth")) {
+          return done({ ok: false, provider: "nous_oauth", message: "Not signed in to Nous Portal — click Sign In above first." });
+        }
+        const creds = await resolveOAuthRuntimeCredentials(config.userId, "nous_oauth", config.oauthSubscriptions);
+        const r = await fetch(`${creds.inferenceBaseUrl}/models`, {
+          headers: { Authorization: `Bearer ${creds.accessToken}` },
+          signal: timeout(),
+        });
+        if (r.ok) {
+          return done({
+            ok: true,
+            provider: "nous_oauth",
+            detail: `Nous Portal subscription active${creds.accountLabel ? ` (${creds.accountLabel})` : ""}`,
+          });
+        }
+        return done({ ok: false, provider: "nous_oauth", message: `Nous Portal rejected the token (HTTP ${r.status}). Reconnect in Settings.` });
+      }
+
+      case "openai_codex": {
+        if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "openai_codex")) {
+          return done({ ok: false, provider: "openai_codex", message: "Not signed in to OpenAI ChatGPT / Codex — click Sign In above first." });
+        }
+        const creds = await resolveOAuthRuntimeCredentials(config.userId, "openai_codex", config.oauthSubscriptions);
+        const usageUrl = `${creds.inferenceBaseUrl.replace(/\/codex$/, "")}/wham/usage`;
+        const r = await fetch(usageUrl, {
+          headers: {
+            Authorization: `Bearer ${creds.accessToken}`,
+            Accept: "application/json",
+            ...buildCodexAccountHeaders(creds.accessToken),
+          },
+          signal: timeout(),
+        }).catch(() => null);
+        if (r && r.ok) {
+          return done({
+            ok: true,
+            provider: "openai_codex",
+            detail: `ChatGPT Codex subscription active${creds.accountLabel ? ` (${creds.accountLabel})` : ""}`,
+          });
+        }
+        // Even if the usage probe endpoint changes, a freshly verified non-expired JWT is ready
+        if (creds.accessToken) {
+          return done({
+            ok: true,
+            provider: "openai_codex",
+            detail: `ChatGPT OAuth token valid${creds.accountLabel ? ` (${creds.accountLabel})` : ""}`,
+          });
+        }
+        return done({ ok: false, provider: "openai_codex", message: "OpenAI Codex token validation failed." });
+      }
+
+      case "minimax_oauth": {
+        if (!hasUsableOAuthSubscription(config.oauthSubscriptions, "minimax_oauth")) {
+          return done({ ok: false, provider: "minimax_oauth", message: "Not signed in to MiniMax OAuth — click Sign In above first." });
+        }
+        const creds = await resolveOAuthRuntimeCredentials(config.userId, "minimax_oauth", config.oauthSubscriptions);
+        if (creds.accessToken) {
+          return done({
+            ok: true,
+            provider: "minimax_oauth",
+            detail: "MiniMax OAuth subscription active and ready",
+          });
+        }
+        return done({ ok: false, provider: "minimax_oauth", message: "MiniMax OAuth token validation failed." });
+      }
+
       default:
         return done({
           ok: false,
@@ -833,11 +976,143 @@ class ByokAnthropicProvider implements AIProvider {
   }
 }
 
+class OAuthSubscriptionProvider implements AIProvider {
+  name: string;
+  private providerId: OAuthSubscriptionProviderId;
+  private userId?: string;
+  private oauthSubscriptions?: StoredOAuthSubscriptionsMap;
+  private preferredModel?: string;
+
+  constructor(
+    providerId: OAuthSubscriptionProviderId,
+    userId?: string,
+    oauthSubscriptions?: StoredOAuthSubscriptionsMap,
+    preferredModel?: string,
+  ) {
+    this.providerId = providerId;
+    this.name = `${providerId}-byos`;
+    this.userId = userId;
+    this.oauthSubscriptions = oauthSubscriptions;
+    this.preferredModel = preferredModel;
+  }
+
+  isConfigured(): boolean {
+    return hasUsableOAuthSubscription(this.oauthSubscriptions, this.providerId);
+  }
+
+  async chat(messages: { role: string; content: string }[], options?: ChatOptions): Promise<string> {
+    return this.executeWithRefreshRetry(messages, options, false);
+  }
+
+  private async executeWithRefreshRetry(
+    messages: { role: string; content: string }[],
+    options: ChatOptions | undefined,
+    forceRefresh: boolean,
+  ): Promise<string> {
+    const creds = await resolveOAuthRuntimeCredentials(
+      this.userId,
+      this.providerId,
+      this.oauthSubscriptions,
+      { forceRefresh },
+    );
+
+    try {
+      if (this.providerId === "openai_codex") {
+        const model = options?.model || this.preferredModel || CODEX_DEFAULT_MODEL;
+        return await callCodexResponsesApi(creds.accessToken, messages, {
+          model,
+          responseFormat: options?.responseFormat,
+          baseUrl: creds.inferenceBaseUrl,
+        });
+      }
+
+      if (this.providerId === "minimax_oauth") {
+        const model = options?.model || this.preferredModel || MINIMAX_DEFAULT_MODEL;
+        const systemMsgs = messages.filter((m) => m.role === "system").map((m) => m.content).join("\n\n");
+        const nonSystem = messages
+          .filter((m) => m.role !== "system")
+          .map((m) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content,
+          }));
+
+        const resp = await fetch(`${creds.inferenceBaseUrl.replace(/\/+$/, "")}/v1/messages`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${creds.accessToken}`,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: options?.maxTokens || 4096,
+            temperature: options?.temperature ?? 0.7,
+            ...(systemMsgs ? { system: systemMsgs } : {}),
+            messages: nonSystem.length > 0 ? nonSystem : [{ role: "user", content: systemMsgs || "Hello" }],
+          }),
+          signal: AbortSignal.timeout(120_000),
+        });
+
+        if (resp.status === 401 && !forceRefresh && this.userId) {
+          return this.executeWithRefreshRetry(messages, options, true);
+        }
+        if (!resp.ok) {
+          const errText = await resp.text();
+          throw new Error(`MiniMax OAuth API error (${resp.status}): ${errText.slice(0, 300)}`);
+        }
+        const data = await resp.json();
+        const block = Array.isArray(data?.content) ? data.content.find((b: any) => b.type === "text") : null;
+        return block?.text || "";
+      }
+
+      // OpenAI-compatible OAuth endpoints: xai_oauth (https://api.x.ai/v1) and nous_oauth (https://inference-api.nousresearch.com/v1)
+      const defaultModel = this.providerId === "xai_oauth" ? XAI_DEFAULT_MODEL : NOUS_DEFAULT_MODEL;
+      const model = options?.model || this.preferredModel || defaultModel;
+
+      const resp = await fetch(`${creds.inferenceBaseUrl.replace(/\/+$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${creds.accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          temperature: options?.temperature ?? 0.7,
+          max_tokens: options?.maxTokens || 4096,
+          ...(options?.responseFormat === "json" ? { response_format: { type: "json_object" } } : {}),
+        }),
+        signal: AbortSignal.timeout(120_000),
+      });
+
+      if (resp.status === 401 && !forceRefresh && this.userId) {
+        return this.executeWithRefreshRetry(messages, options, true);
+      }
+      if (!resp.ok) {
+        const errText = await resp.text();
+        throw new Error(`${this.providerId} API error (${resp.status}): ${errText.slice(0, 300)}`);
+      }
+      const data = await resp.json();
+      return data.choices?.[0]?.message?.content || "";
+    } catch (err: any) {
+      if (!forceRefresh && this.userId && String(err?.message || "").includes("(401)")) {
+        return this.executeWithRefreshRetry(messages, options, true);
+      }
+      throw err;
+    }
+  }
+}
+
 /**
- * Check if user has any BYOK credentials configured (from profile or api_keys table).
+ * Check if user has any BYOK or BYOS OAuth subscription credentials configured.
  */
 export function validateByokCredentials(config: ProviderConfig): { valid: boolean; missingCredential?: string; provider?: string } {
-  // Check user's key for the selected provider, or find any available key
+  // Check connected OAuth subscriptions first if selected, or any available key/subscription
+  for (const oauthId of OAUTH_SUBSCRIPTION_PROVIDER_IDS) {
+    if (config.provider === oauthId && hasUsableOAuthSubscription(config.oauthSubscriptions, oauthId)) {
+      return { valid: true, provider: oauthId };
+    }
+  }
   if (config.xaiKey) return { valid: true, provider: "xai" };
   if (config.geminiKey) return { valid: true, provider: "gemini" };
   if (config.openRouterKey) return { valid: true, provider: "openrouter" };
@@ -846,24 +1121,40 @@ export function validateByokCredentials(config: ProviderConfig): { valid: boolea
   if (config.ollamaUrl) return { valid: true, provider: "ollama" };
   if (config.lmStudioUrl) return { valid: true, provider: "lmstudio" };
   if (config.customOpenaiUrl) return { valid: true, provider: "custom_openai" };
+  const connectedOAuth = firstConnectedOAuthProvider(config.oauthSubscriptions);
+  if (connectedOAuth) return { valid: true, provider: connectedOAuth };
 
   return {
     valid: false,
-    missingCredential: "API key for any provider (xAI, Gemini, OpenRouter, Anthropic, HuggingFace, Ollama, LM Studio, or an OpenAI-compatible endpoint)",
+    missingCredential:
+      "AI subscription login (xAI Grok, Nous Portal, OpenAI ChatGPT Codex, MiniMax) or API key (xAI, Gemini, OpenRouter, Anthropic, HuggingFace, Ollama, LM Studio)",
     provider: "none",
   };
 }
 
 /**
- * Get a BYOK provider for content generation.
- * Uses user's own key, never falls back to platform keys.
- * Returns null if user has no valid BYOK credentials.
+ * Get a BYOK or BYOS OAuth provider for content generation.
+ * Uses user's own subscription or key, never falls back to platform keys.
+ * Returns null if user has no valid BYOC credentials.
  */
 export function getByokProvider(config: ProviderConfig): AIProvider | null {
   // Honor the user's selected provider first when its credential exists —
   // silently picking a different provider ignores their choice (and their
   // preferredModel, which is provider-specific).
   switch (config.provider) {
+    case "xai_oauth":
+    case "nous_oauth":
+    case "openai_codex":
+    case "minimax_oauth":
+      if (hasUsableOAuthSubscription(config.oauthSubscriptions, config.provider)) {
+        return new OAuthSubscriptionProvider(
+          config.provider,
+          config.userId,
+          config.oauthSubscriptions,
+          config.preferredModel,
+        );
+      }
+      break;
     case "huggingface":
       if (config.huggingFaceToken) return new HuggingFaceProvider(config.huggingFaceToken, config.preferredModel);
       break;
@@ -890,7 +1181,16 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
       break;
   }
 
-  // Fallback priority scan: xAI → Gemini → OpenRouter → Anthropic → HuggingFace → Ollama → LM Studio → custom
+  // Fallback priority scan: OAuth subscriptions → xAI → Gemini → OpenRouter → Anthropic → HuggingFace → Ollama → LM Studio → custom
+  const connectedOAuth = firstConnectedOAuthProvider(config.oauthSubscriptions);
+  if (connectedOAuth) {
+    return new OAuthSubscriptionProvider(
+      connectedOAuth,
+      config.userId,
+      config.oauthSubscriptions,
+      config.preferredModel,
+    );
+  }
   if (config.xaiKey) {
     return new ByokGrokProvider(config.xaiKey, config.preferredModel);
   }
@@ -919,7 +1219,7 @@ export function getByokProvider(config: ProviderConfig): AIProvider | null {
 }
 
 /**
- * Generate content using ONLY the learner's BYOC keys.
+ * Generate content using ONLY the learner's BYOC keys or BYOS OAuth subscriptions.
  * No platform free-pool fallback (prevents compute abuse).
  *
  * For Hermes-authored content, use POST /api/learn/ingest instead —
@@ -933,7 +1233,7 @@ export async function generateByokOrPool(
   const byokCheck = validateByokCredentials(config);
   if (!byokCheck.valid) {
     throw new Error(
-      "BYOC_REQUIRED: Add your own AI key in Settings (xAI, Gemini, OpenRouter, Hugging Face, Ollama), " +
+      "BYOC_REQUIRED: Connect a subscription (xAI Grok, Nous Portal, OpenAI ChatGPT, MiniMax) or add an AI key in Settings, " +
         "or use Hermes Agent to author the course and upload it via a personal access token. " +
         "Platform free compute is disabled."
     );
@@ -942,7 +1242,7 @@ export async function generateByokOrPool(
   const provider = getByokProvider(config);
   if (!provider) {
     throw new Error(
-      "BYOC_REQUIRED: No usable provider client for your configured keys. Check Settings → AI Provider."
+      "BYOC_REQUIRED: No usable provider client for your configured credentials. Check Settings → AI Provider."
     );
   }
 
@@ -953,15 +1253,16 @@ export async function generateByokOrPool(
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(
       `Your BYOC provider (${provider.name}) failed: ${msg}. ` +
-        `Fix the key/model, or author the course in Hermes and upload it.`
+        `Fix the subscription/key/model in Settings, or author the course in Hermes and upload it.`
     );
   }
 }
 
 /**
- * Build ProviderConfig from a user_profiles row (BYOC).
+ * Build ProviderConfig from a user_profiles row (BYOC + BYOS OAuth subscriptions).
  */
 export function providerConfigFromProfile(profile: {
+  userId?: string | null;
   preferredAiProvider?: string | null;
   preferredModel?: string | null;
   huggingFaceToken?: string | null;
@@ -973,9 +1274,11 @@ export function providerConfigFromProfile(profile: {
   xaiKey?: string | null;
   anthropicKey?: string | null;
   geminiKey?: string | null;
+  oauthSubscriptions?: unknown;
 } | null | undefined): ProviderConfig {
   return {
     provider: (profile?.preferredAiProvider as ProviderConfig["provider"]) || "openai",
+    userId: profile?.userId || undefined,
     preferredModel: profile?.preferredModel || undefined,
     huggingFaceToken: profile?.huggingFaceToken || undefined,
     ollamaUrl: profile?.ollamaUrl || undefined,
@@ -986,6 +1289,10 @@ export function providerConfigFromProfile(profile: {
     xaiKey: profile?.xaiKey || undefined,
     anthropicKey: profile?.anthropicKey || undefined,
     geminiKey: profile?.geminiKey || undefined,
+    oauthSubscriptions:
+      profile?.oauthSubscriptions && typeof profile.oauthSubscriptions === "object"
+        ? (profile.oauthSubscriptions as StoredOAuthSubscriptionsMap)
+        : undefined,
   };
 }
 

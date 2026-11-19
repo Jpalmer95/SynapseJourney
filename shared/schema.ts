@@ -225,7 +225,8 @@ export const userProfiles = pgTable("user_profiles", {
   xaiKey: text("xai_key"), // xAI / Grok API key
   anthropicKey: text("anthropic_key"), // Anthropic / Claude API key
   geminiKey: text("gemini_key"), // Google Gemini API key
-  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "lmstudio", "custom_openai", "openrouter"
+  oauthSubscriptions: jsonb("oauth_subscriptions").default('{}'), // BYOS OAuth subscription tokens (AES-256-GCM encrypted per provider)
+  preferredAiProvider: text("preferred_ai_provider").default("openai"), // "openai", "huggingface", "ollama", "lmstudio", "custom_openai", "openrouter", "xai_oauth", "nous_oauth", "openai_codex", "minimax_oauth"
   preferredModel: text("preferred_model"), // Specific model name for the provider
   ttsVoicePreset: text("tts_voice_preset").default("browser"), // TTS engine: "browser", "kokoro", "qwen", or "custom"
   ttsReferenceAudio: text("tts_reference_audio"), // base64-encoded reference audio for voice cloning

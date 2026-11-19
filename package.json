@@ -14,6 +14,7 @@
     "purge:units": "tsx scripts/purge-bad-units.ts",
     "check:quality": "tsx scripts/quality-selftest.ts",
     "check:ledger": "tsx scripts/ledger-selftest.ts",
+    "check:oauth": "tsx scripts/oauth-selftest.ts",
     "ensure:plans": "tsx scripts/ensure-plans.ts"
   },
   "dependencies": {

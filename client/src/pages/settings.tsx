@@ -79,6 +79,10 @@ const colorMap: Record<string, string> = {
 };
 
 const providerNames: Record<string, string> = {
+  xai_oauth: "xAI Grok Subscription (OAuth)",
+  nous_oauth: "Nous Portal Subscription (OAuth)",
+  openai_codex: "OpenAI ChatGPT Subscription (Codex)",
+  minimax_oauth: "MiniMax Account (OAuth)",
   xai: "xAI (Grok)",
   gemini: "Google Gemini",
   anthropic: "Anthropic (Claude)",
@@ -88,6 +92,40 @@ const providerNames: Record<string, string> = {
   lmstudio: "LM Studio",
   custom_openai: "OpenAI-compatible",
 };
+
+interface OAuthCatalogItem {
+  id: string;
+  name: string;
+  badge: string;
+  subscriptionPlans: string;
+  flow: "device_code" | "pkce_redirect" | "external_bridge";
+  defaultModel: string;
+  docsUrl: string;
+  description: string;
+  policyNote?: string;
+}
+
+interface OAuthProviderStatus {
+  connected: boolean;
+  provider: string;
+  tokenPreview?: string;
+  accountLabel?: string | null;
+  expiresAt?: string | null;
+  lastRefresh?: string | null;
+  connectedAt?: string | null;
+  hasRefreshToken?: boolean;
+  reloginRequired?: boolean;
+  errorMessage?: string | null;
+}
+
+interface ActiveDeviceFlowSession {
+  sessionId: string;
+  provider: string;
+  userCode: string;
+  verificationUrl: string;
+  expiresIn: number;
+  pollInterval: number;
+}
 
 const ageRanges = [
   { value: "under18", label: "Under 18" },
@@ -160,6 +198,471 @@ function CopyWalletAddress({ testIdPrefix = "" }: { testIdPrefix?: string }) {
   );
 }
 
+function BringYourOwnSubscriptionSection({
+  preferredAiProvider,
+  preferredModel,
+  hasChanges,
+  isSavingProfile,
+  onSelectProvider,
+  onChangeModel,
+  onSaveProfile,
+}: {
+  preferredAiProvider?: string;
+  preferredModel?: string;
+  hasChanges: boolean;
+  isSavingProfile: boolean;
+  onSelectProvider: (provider: string) => void;
+  onChangeModel: (model: string) => void;
+  onSaveProfile: () => void;
+}) {
+  const { toast } = useToast();
+  const [activeSession, setActiveSession] = useState<ActiveDeviceFlowSession | null>(null);
+  const [startingProvider, setStartingProvider] = useState<string | null>(null);
+  const [showPolicyBridges, setShowPolicyBridges] = useState(false);
+
+  const { data: oauthData, isLoading: oauthLoading } = useQuery<{
+    catalog: OAuthCatalogItem[];
+    statuses: Record<string, OAuthProviderStatus>;
+    openRouterConnected: boolean;
+    preferredAiProvider: string;
+  }>({
+    queryKey: ["/api/oauth/providers"],
+  });
+
+  // Check URL query params for OpenRouter PKCE callback result
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const connected = params.get("oauth_connected");
+    const oauthErr = params.get("oauth_error");
+    if (connected) {
+      toast({
+        title: "Subscription Connected",
+        description: `Successfully signed in with ${connected === "openrouter" ? "OpenRouter" : connected}.`,
+      });
+      queryClient.invalidateQueries({ queryKey: ["/api/oauth/providers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (oauthErr) {
+      toast({
+        title: "OAuth Sign-In Failed",
+        description: oauthErr,
+        variant: "destructive",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [toast]);
+
+  // Poll active device-code session until approved/expired/cancelled
+  useEffect(() => {
+    if (!activeSession) return;
+    let cancelled = false;
+
+    const timer = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const res = await fetch(
+          `/api/oauth/${activeSession.provider}/poll/${activeSession.sessionId}?wait=2`,
+          { credentials: "include" },
+        );
+        if (!res.ok) {
+          if (res.status === 404) {
+            setActiveSession(null);
+          }
+          return;
+        }
+        const data = await res.json();
+        if (data.status === "approved") {
+          setActiveSession(null);
+          onSelectProvider(activeSession.provider);
+          queryClient.invalidateQueries({ queryKey: ["/api/oauth/providers"] });
+          queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
+          toast({
+            title: "Subscription Connected!",
+            description: `${providerNames[activeSession.provider] || activeSession.provider} is now active for your courses and AI chat.`,
+          });
+        } else if (data.status === "denied" || data.status === "expired" || data.status === "error") {
+          setActiveSession(null);
+          toast({
+            title: "Sign-In Ended",
+            description: data.errorMessage || `OAuth session ${data.status}.`,
+            variant: "destructive",
+          });
+        } else if (data.status === "cancelled") {
+          setActiveSession(null);
+        }
+      } catch {
+        // ignore transient poll error
+      }
+    }, 2500);
+
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [activeSession, onSelectProvider, toast]);
+
+  const startDeviceFlow = async (providerId: string) => {
+    setStartingProvider(providerId);
+    try {
+      const res = await apiRequest("POST", `/api/oauth/${providerId}/start`);
+      const data = (await res.json()) as ActiveDeviceFlowSession;
+      setActiveSession(data);
+      // Try opening verification URL in a new tab automatically
+      window.open(data.verificationUrl, "_blank", "noopener,noreferrer");
+    } catch (err: any) {
+      toast({
+        title: "Could not start sign-in",
+        description: err?.message || "Failed to request device code from provider.",
+        variant: "destructive",
+      });
+    } finally {
+      setStartingProvider(null);
+    }
+  };
+
+  const startOpenRouterPkce = async () => {
+    setStartingProvider("openrouter_pkce");
+    try {
+      const res = await apiRequest("POST", "/api/oauth/openrouter_pkce/start");
+      const data = await res.json();
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      }
+    } catch (err: any) {
+      toast({
+        title: "OpenRouter OAuth failed",
+        description: err?.message || "Could not start OpenRouter PKCE flow.",
+        variant: "destructive",
+      });
+      setStartingProvider(null);
+    }
+  };
+
+  const cancelDeviceFlow = async () => {
+    if (!activeSession) return;
+    const sid = activeSession.sessionId;
+    setActiveSession(null);
+    try {
+      await apiRequest("DELETE", `/api/oauth/sessions/${sid}`);
+    } catch {
+      // ignore
+    }
+  };
+
+  const disconnectMutation = useMutation({
+    mutationFn: async (providerId: string) => {
+      await apiRequest("DELETE", `/api/oauth/${providerId}`);
+    },
+    onSuccess: (_data, providerId) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/oauth/providers"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/user/profile"] });
+      toast({
+        title: "Subscription Disconnected",
+        description: `Removed stored credentials for ${providerNames[providerId] || providerId}.`,
+      });
+    },
+    onError: (err: any) => {
+      toast({
+        title: "Disconnect failed",
+        description: err?.message || "Could not disconnect subscription.",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const catalog = oauthData?.catalog || [];
+  const statuses = oauthData?.statuses || {};
+  const directProviders = catalog.filter((c) => c.flow === "device_code" || c.flow === "pkce_redirect");
+  const bridgeProviders = catalog.filter((c) => c.flow === "external_bridge");
+  const activeOAuthCatalog = directProviders.find((c) => c.id === preferredAiProvider);
+
+  return (
+    <div className="space-y-4 rounded-xl border border-primary/25 bg-primary/5 p-4" data-testid="section-byos-oauth">
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2">
+            <Cloud className="h-4 w-4 text-primary" />
+            <h3 className="font-semibold text-sm sm:text-base">
+              Bring Your Own Subscription (Account Sign-In)
+            </h3>
+            <Badge variant="secondary" className="text-[10px]">
+              New · Hermes-style OAuth
+            </Badge>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Log in directly with AI subscriptions that support OAuth Device Code or PKCE (SuperGrok, Nous Portal, ChatGPT Plus/Pro Codex, MiniMax, OpenRouter) to generate courses and use AI chat with the plan you already pay for.
+          </p>
+        </div>
+      </div>
+
+      {/* Active Device-Code Modal / Banner */}
+      {activeSession && (
+        <div
+          className="rounded-lg border-2 border-primary bg-background p-4 space-y-3 shadow-sm"
+          data-testid="oauth-device-code-box"
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2">
+              <Loader2 className="h-4 w-4 animate-spin text-primary" />
+              <span className="font-semibold text-sm">
+                Authorize {providerNames[activeSession.provider] || activeSession.provider}
+              </span>
+            </div>
+            <Button variant="ghost" size="sm" onClick={cancelDeviceFlow} data-testid="btn-cancel-oauth-flow">
+              Cancel
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            1. Open the verification page below in your browser and sign in to your account.
+            <br />
+            2. Enter or confirm this one-time device code:
+          </p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <code
+              className="text-lg font-mono font-bold tracking-widest px-3 py-1.5 rounded-md bg-muted border select-all"
+              data-testid="text-oauth-user-code"
+            >
+              {activeSession.userCode}
+            </code>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(activeSession.userCode);
+                toast({ title: "Code copied", description: "Paste it on the provider verification page." });
+              }}
+              data-testid="btn-copy-oauth-code"
+            >
+              <Copy className="h-3.5 w-3.5 mr-1.5" />
+              Copy Code
+            </Button>
+            <Button
+              size="sm"
+              asChild
+              data-testid="link-oauth-verification-url"
+            >
+              <a href={activeSession.verificationUrl} target="_blank" rel="noopener noreferrer">
+                <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+                Open Verification Page
+              </a>
+            </Button>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Waiting for approval in your browser… This page will update automatically as soon as you approve.
+          </p>
+        </div>
+      )}
+
+      {/* Subscription Cards Grid */}
+      {oauthLoading ? (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <Skeleton className="h-28 w-full" />
+          <Skeleton className="h-28 w-full" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {directProviders.map((item) => {
+            const isPkce = item.flow === "pkce_redirect";
+            const status = isPkce
+              ? { connected: Boolean(oauthData?.openRouterConnected), provider: "openrouter" }
+              : statuses[item.id];
+            const isConnected = Boolean(status?.connected);
+            const targetProviderId = isPkce ? "openrouter" : item.id;
+            const isSelected = preferredAiProvider === targetProviderId && isConnected;
+            const isStarting = startingProvider === item.id;
+
+            return (
+              <div
+                key={item.id}
+                className={cn(
+                  "rounded-lg border p-3.5 flex flex-col justify-between gap-3 transition-all bg-background/80",
+                  isSelected
+                    ? "border-primary ring-1 ring-primary/30 bg-primary/5"
+                    : isConnected
+                      ? "border-green-500/40"
+                      : "border-border",
+                )}
+                data-testid={`card-oauth-${item.id}`}
+              >
+                <div className="space-y-1.5">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="font-medium text-sm flex items-center gap-1.5 flex-wrap">
+                        <span>{item.name}</span>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">{item.badge}</span>
+                    </div>
+                    {isConnected ? (
+                      <Badge
+                        variant="outline"
+                        className="border-green-500/50 text-green-600 dark:text-green-400 text-[10px] shrink-0"
+                        data-testid={`badge-connected-${item.id}`}
+                      >
+                        <Check className="h-3 w-3 mr-1" />
+                        Connected {status?.tokenPreview ? `(${status.tokenPreview})` : ""}
+                      </Badge>
+                    ) : (
+                      <Badge variant="outline" className="text-[10px] text-muted-foreground shrink-0">
+                        Not signed in
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{item.description}</p>
+                  {status?.accountLabel && (
+                    <p className="text-[11px] text-foreground/80 font-mono">
+                      Account: {status.accountLabel}
+                    </p>
+                  )}
+                  {status?.errorMessage && (
+                    <p className="text-[11px] text-amber-500">
+                      {status.errorMessage}
+                    </p>
+                  )}
+                  {item.policyNote && !isConnected && (
+                    <p className="text-[11px] text-muted-foreground/80 italic">{item.policyNote}</p>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap pt-1">
+                  {isConnected ? (
+                    <>
+                      <Button
+                        size="sm"
+                        variant={isSelected ? "default" : "outline"}
+                        className="flex-1 h-8 text-xs"
+                        onClick={() => onSelectProvider(targetProviderId)}
+                        data-testid={`btn-use-oauth-${item.id}`}
+                      >
+                        {isSelected ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 mr-1" />
+                            Active Compute
+                          </>
+                        ) : (
+                          "Use This Subscription"
+                        )}
+                      </Button>
+                      {!isPkce && (
+                        <>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-xs"
+                            onClick={() => startDeviceFlow(item.id)}
+                            disabled={isStarting}
+                            data-testid={`btn-reconnect-oauth-${item.id}`}
+                          >
+                            Reconnect
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-8 text-xs text-destructive hover:text-destructive"
+                            onClick={() => disconnectMutation.mutate(item.id)}
+                            disabled={disconnectMutation.isPending}
+                            data-testid={`btn-disconnect-oauth-${item.id}`}
+                          >
+                            Disconnect
+                          </Button>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <Button
+                      size="sm"
+                      variant="default"
+                      className="w-full h-8 text-xs"
+                      onClick={() => (isPkce ? startOpenRouterPkce() : startDeviceFlow(item.id))}
+                      disabled={isStarting}
+                      data-testid={`btn-signin-oauth-${item.id}`}
+                    >
+                      {isStarting ? (
+                        <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                      ) : (
+                        <PlugZap className="h-3.5 w-3.5 mr-1.5" />
+                      )}
+                      {isPkce ? "Connect OpenRouter (1-Click)" : `Sign in with ${item.name.split(" ")[0]}`}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Optional Model Override when an OAuth Subscription is active */}
+      {activeOAuthCatalog && (
+        <div className="p-3 rounded-lg border bg-background/90 space-y-2" data-testid="oauth-active-model-config">
+          <Label htmlFor="oauth-model-override" className="text-xs flex items-center justify-between">
+            <span>
+              Active Subscription: <strong>{activeOAuthCatalog.name}</strong> — Model (optional)
+            </span>
+            <span className="text-muted-foreground font-normal">
+              Default: <code>{activeOAuthCatalog.defaultModel}</code>
+            </span>
+          </Label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="oauth-model-override"
+              placeholder={activeOAuthCatalog.defaultModel}
+              value={preferredModel || ""}
+              onChange={(e) => onChangeModel(e.target.value)}
+              className="h-8 text-xs"
+              data-testid="input-oauth-model"
+            />
+            {hasChanges && (
+              <Button onClick={onSaveProfile} disabled={isSavingProfile} size="sm" className="h-8 text-xs">
+                Save Model
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Provider Policy Transparency Toggle (Claude Pro/Max & Gemini Advanced) */}
+      {bridgeProviders.length > 0 && (
+        <div className="pt-1">
+          <button
+            type="button"
+            onClick={() => setShowPolicyBridges((v) => !v)}
+            className="text-xs text-primary hover:underline flex items-center gap-1 font-medium"
+            data-testid="btn-toggle-policy-bridges"
+          >
+            <span>
+              {showPolicyBridges ? "Hide" : "Why aren't Claude Pro/Max or Gemini Advanced direct web logins?"}
+            </span>
+          </button>
+          {showPolicyBridges && (
+            <div className="mt-2.5 grid grid-cols-1 sm:grid-cols-2 gap-2.5" data-testid="panel-policy-bridges">
+              {bridgeProviders.map((b) => (
+                <div key={b.id} className="rounded-lg border border-border/80 bg-background/70 p-3 space-y-1.5 text-xs">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-semibold">{b.name}</span>
+                    <Badge variant="outline" className="text-[10px]">
+                      {b.badge}
+                    </Badge>
+                  </div>
+                  <p className="text-muted-foreground text-[11px] leading-relaxed">{b.description}</p>
+                  <a
+                    href={b.docsUrl}
+                    target={b.docsUrl.startsWith("http") ? "_blank" : undefined}
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1 text-[11px] text-primary underline pt-0.5"
+                  >
+                    <ExternalLink className="h-3 w-3" />
+                    {b.id === "claude_bridge" ? "Open Agent & MCP Setup Guide" : "Get Free Google AI Studio Key"}
+                  </a>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function KeysAndSupportSection() {
   const { toast } = useToast();
   const [newToken, setNewToken] = useState<string | null>(null);
@@ -201,20 +704,23 @@ function KeysAndSupportSection() {
         <CardHeader>
           <div className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-primary" />
-            <CardTitle>BYOC — Bring Your Own Compute</CardTitle>
+            <CardTitle>BYOC &amp; BYOS — Bring Your Own Compute or Subscription</CardTitle>
           </div>
           <CardDescription>
             Platform free AI is disabled. Prebuilt courses stay open for everyone.
-            Custom goals/quizzes/replans use either (1) your API keys below, or (2) Hermes Agent
-            authoring + upload with a personal access token.
+            Custom goals/quizzes/replans use either (1) your connected AI subscription (Grok, Nous, ChatGPT Codex, MiniMax),
+            (2) your own API keys / local models, or (3) Hermes Agent / Claude Code authoring via Personal Access Token or MCP.
           </CardDescription>
         </CardHeader>
         <CardContent className="text-sm text-muted-foreground space-y-2">
           <p>
-            <strong className="text-foreground">Option A — In-app keys:</strong> add xAI, Gemini, OpenRouter, Hugging Face, or Ollama in AI Provider.
+            <strong className="text-foreground">Option A — Bring Your Own Subscription (OAuth):</strong> sign in directly with SuperGrok / X Premium+, Nous Portal, ChatGPT Plus/Pro (Codex), MiniMax, or OpenRouter in the AI Compute section above.
           </p>
           <p>
-            <strong className="text-foreground">Option B — Hermes:</strong> generate with Hermes (your Grok/Gemini/Nous compute), then upload via token. Monthly chat subscriptions rarely expose API to third-party apps; Hermes is the bridge.
+            <strong className="text-foreground">Option B — In-app API keys / Local models:</strong> add xAI, Gemini, Anthropic, OpenRouter, Hugging Face, Ollama, or LM Studio.
+          </p>
+          <p>
+            <strong className="text-foreground">Option C — Hermes / Claude Code Bridge:</strong> for subscriptions that prohibit third-party web OAuth (like Claude Pro/Max), generate with your local agent and upload via token or <code>/api/mcp</code>.
           </p>
         </CardContent>
       </Card>
@@ -576,6 +1082,9 @@ export default function SettingsPage() {
         customOpenaiUrl: localProfile.customOpenaiUrl,
         customOpenaiKey: localProfile.customOpenaiKey,
         openRouterKey: localProfile.openRouterKey,
+        xaiKey: localProfile.xaiKey,
+        geminiKey: localProfile.geminiKey,
+        anthropicKey: localProfile.anthropicKey,
       });
       return res.json() as Promise<{ ok: boolean; provider?: string; latencyMs?: number; message?: string; detail?: string }>;
     },
@@ -1100,23 +1609,30 @@ export default function SettingsPage() {
               <CardHeader>
                 <div className="flex items-center gap-2">
                   <Sparkles className="h-5 w-5 text-primary" />
-                  <CardTitle>AI Chat Provider</CardTitle>
+                  <CardTitle>AI Compute &amp; Subscriptions (BYOC / BYOS)</CardTitle>
                 </div>
                 <CardDescription>
-                  Configure your AI provider for personal chat and Q&A sessions. You'll need to provide your own API credentials. Course content (lessons, roadmaps, practice tests) is always free and powered by Gemini 3 Pro.
+                  Connect an AI subscription you already pay for (SuperGrok, Nous Portal, ChatGPT Plus/Pro Codex, MiniMax, OpenRouter) or provide your own API key / local model to power custom courses, quizzes, and AI tutoring. Prebuilt courses are always free.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                {/* Info Banner */}
-                <div className="p-3 rounded-lg bg-primary/10 border border-primary/20">
-                  <p className="text-sm">
-                    <strong>Why do I need my own credentials?</strong> Chat uses your compute so you can have unlimited conversations without limits. Many providers offer free tiers!
-                  </p>
-                </div>
+                {/* Bring Your Own Subscription (OAuth Device Code & PKCE) */}
+                <BringYourOwnSubscriptionSection
+                  preferredAiProvider={localProfile.preferredAiProvider}
+                  preferredModel={localProfile.preferredModel}
+                  hasChanges={hasChanges}
+                  isSavingProfile={profileMutation.isPending}
+                  onSelectProvider={(provider) => {
+                    updateLocalProfile({ preferredAiProvider: provider });
+                    profileMutation.mutate({ ...localProfile, preferredAiProvider: provider });
+                  }}
+                  onChangeModel={( preferredModel ) => updateLocalProfile({ preferredModel })}
+                  onSaveProfile={saveProfile}
+                />
 
-                {/* AI Provider Selection */}
+                {/* AI Provider Selection (API Keys & Local Servers) */}
                 <div className="space-y-2">
-                  <Label>Select Your AI Compute Provider (BYOC)</Label>
+                  <Label>Or Select an API Key / Local Server Provider (BYOK)</Label>
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                     <Button
                       variant={localProfile.preferredAiProvider === "xai" ? "default" : "outline"}
