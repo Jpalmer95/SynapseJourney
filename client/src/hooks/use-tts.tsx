@@ -292,7 +292,10 @@ function useTTSImpl(): UseTTSReturn {
         return stored;
       }
     } catch { /* ignore */ }
-    return "kokoro";
+    // Default to native OS Browser TTS: starts instantaneously, zero model download,
+    // and avoids GPU/RAM spikes on Windows laptops. Users can opt into Kokoro Offline
+    // or Qwen Cloud anytime from the Voice Settings popover.
+    return "browser";
   });
 
   const [kokoroVoice, setKokoroVoiceState] = useState<string>(() => {
@@ -919,16 +922,17 @@ function useTTSImpl(): UseTTSReturn {
   // npm dependencies (`kokoro-js`, `@huggingface/transformers`) into a JS worker bundle
   // rather than copying the raw TypeScript source file into `/assets/*.ts`.
 
-  /** Pool size for this device: more cores => more parallel synthesis streams. */
+  /**
+   * Conservative pool size for local Kokoro WASM: cap at 2 workers on high-RAM desktops
+   * and 1 worker on laptops/lower-memory devices so we never exhaust RAM or freeze Windows.
+   */
   const getPoolTarget = useCallback((): number => {
     if (poolTargetRef.current > 0) return poolTargetRef.current;
     const nav = typeof navigator !== "undefined" ? navigator : undefined;
     const cores = nav?.hardwareConcurrency || 4;
     const mem = Number((nav as unknown as { deviceMemory?: number })?.deviceMemory) || 4;
     let target = 1;
-    if (cores >= 12 && mem >= 8) target = 4;
-    else if (cores >= 8 && mem >= 4) target = 3;
-    else if (cores >= 4) target = 2;
+    if (cores >= 8 && mem >= 8) target = 2;
     poolTargetRef.current = target;
     return target;
   }, []);
@@ -1455,7 +1459,7 @@ function useTTSImpl(): UseTTSReturn {
         if (blocks.length === 0) return false;
 
         const voice = kokoroVoiceRef.current;
-        const PREFETCH_AHEAD = 6;
+        const PREFETCH_AHEAD = 2;
         let prefetchTargetIdx = 0;
         let prefetcherRunning = false;
 
@@ -1649,18 +1653,16 @@ function useTTSImpl(): UseTTSReturn {
       // 3. Browser TTS selected
       else {
         if (await speakViaBrowser(text)) return;
-        // Browser speech unavailable or failed on this OS/browser — fall back to Kokoro or Qwen
+        // Do NOT auto-download or spawn heavy local Kokoro models silently when Browser TTS
+        // fails (prevents unexpected memory/CPU spikes on laptops). Guide the user cleanly.
         if (!browserFallbackNotifiedRef.current) {
           browserFallbackNotifiedRef.current = true;
           toast({
-            title: "Using AI voice fallback",
-            description: "Your browser's native speech engine is unavailable on this device — using AI voice synthesis instead.",
+            title: "Browser speech engine unavailable",
+            description: "Your browser didn't return a native voice. Open Voice Settings (gear icon) to choose Kokoro Offline (CPU) or Qwen Cloud.",
+            duration: 7000,
           });
         }
-        if (await speakViaKokoro(text)) return;
-        try {
-          if (await speakViaServer(text, unitId, getVoiceConfig("qwen"))) return;
-        } catch { /* ignore */ }
       }
 
       if (cancelledRef.current || runIdRef.current !== myRunId) return;
@@ -1729,7 +1731,7 @@ function useTTSImpl(): UseTTSReturn {
       for (const b of sBlocks) flatKokoroBlocks.push(b);
     }
 
-    const PREFETCH_AHEAD = 6;
+    const PREFETCH_AHEAD = 2;
     let prefetchTargetFlatIdx = 0;
     let prefetcherRunning = false;
 
@@ -1903,11 +1905,23 @@ function useTTSImpl(): UseTTSReturn {
           if (!browserFallbackNotifiedRef.current) {
             browserFallbackNotifiedRef.current = true;
             toast({
-              title: "Using AI voice fallback",
-              description: "Your browser's native speech engine is unavailable on this device — using AI voice synthesis instead.",
+              title: "Browser speech engine unavailable",
+              description: "Your browser didn't return a native voice. Open Voice Settings (gear icon) to try Kokoro Offline (CPU) or Qwen Cloud.",
+              duration: 7000,
             });
           }
-          if (await speakSectionViaKokoro(sectionText, i)) continue;
+          // Do not silently boot heavy local neural models or unconfigured server TTS
+          if (!cancelledRef.current && runIdRef.current === myRunId) {
+            setState(prev => ({
+              ...prev,
+              isLoading: false,
+              isSpeaking: false,
+              isPaused: false,
+              usingServerTTS: false,
+              error: "Native browser voice unavailable. Open Voice Settings to pick another voice or Kokoro (CPU).",
+            }));
+          }
+          return;
         }
 
         // ── Tier 4: Server Qwen fallback (last resort) ───────────────────────

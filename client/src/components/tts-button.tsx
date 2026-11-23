@@ -495,11 +495,52 @@ export function TTSButton({
         <div className="overflow-y-auto max-h-[70vh]">
           <div className="p-3 space-y-2">
 
-            {/* ── Kokoro Engine Row ── */}
+            {/* ── Browser TTS Engine Row (Default: Instant & Crash-Safe) ── */}
+            <EngineRow
+              engineId="browser"
+              label="Browser Voice"
+              sublabel="Built-in OS speech · instant, zero download, laptop-safe"
+              icon={<Volume2 className="h-4 w-4 text-primary" />}
+              badge={
+                <Badge className="text-[10px] px-1 py-0 h-4 bg-primary/15 text-primary border-0 font-medium">
+                  Default
+                </Badge>
+              }
+              active={serverVoicePreset === "browser"}
+            />
+
+            {/* Browser TTS voice picker */}
+            {serverVoicePreset === "browser" && (
+              <div className="ml-3 pl-3 border-l border-border space-y-1.5">
+                {availableVoices.length > 0 ? (
+                  <>
+                    <Label className="text-[10px] text-muted-foreground">System voice ({availableVoices.length} available)</Label>
+                    <select
+                      value={selectedVoiceName || ""}
+                      onChange={(e) => setSelectedVoice(e.target.value)}
+                      className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
+                      data-testid="select-browser-voice"
+                    >
+                      {availableVoices.map((v) => (
+                        <option key={`${v.name}-${v.lang}`} value={v.name}>
+                          {v.name} ({v.lang})
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                ) : (
+                  <p className="text-[10px] text-muted-foreground">
+                    Using browser default voice. If no OS voices appear, try Kokoro (CPU/WASM) below.
+                  </p>
+                )}
+              </div>
+            )}
+
+            {/* ── Kokoro Engine Row (Opt-in Local CPU/WASM Neural Voice) ── */}
             <EngineRow
               engineId="kokoro"
-              label="Kokoro"
-              sublabel={kokoroIncompatible ? "Not supported on this device" : (kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Local WebGPU/WASM · offline, no token needed")}
+              label="Kokoro Neural"
+              sublabel={kokoroIncompatible ? "Not supported on this device" : (kokoroReady && kokoroDiagnostic ? kokoroDiagnostic : "Offline CPU/WASM (~90 MB download once) · no GPU hang risk")}
               icon={<Zap className="h-4 w-4 text-emerald-500" />}
               badge={getTierBadge("local", true)}
               active={serverVoicePreset === "kokoro"}
@@ -540,42 +581,6 @@ export function TTSButton({
                     </button>
                   ))}
                 </div>
-              </div>
-            )}
-
-            {/* ── Browser TTS Engine Row ── */}
-            <EngineRow
-              engineId="browser"
-              label="Browser TTS"
-              sublabel="Device speech engine · instant, no download"
-              icon={<Volume2 className="h-4 w-4 text-muted-foreground" />}
-              active={serverVoicePreset === "browser"}
-            />
-
-            {/* Browser TTS voice picker */}
-            {serverVoicePreset === "browser" && (
-              <div className="ml-3 pl-3 border-l border-border space-y-1.5">
-                {availableVoices.length > 0 ? (
-                  <>
-                    <Label className="text-[10px] text-muted-foreground">System voice ({availableVoices.length} available)</Label>
-                    <select
-                      value={selectedVoiceName || ""}
-                      onChange={(e) => setSelectedVoice(e.target.value)}
-                      className="w-full text-xs rounded-md border border-border bg-background px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-primary"
-                      data-testid="select-browser-voice"
-                    >
-                      {availableVoices.map((v) => (
-                        <option key={`${v.name}-${v.lang}`} value={v.name}>
-                          {v.name} ({v.lang})
-                        </option>
-                      ))}
-                    </select>
-                  </>
-                ) : (
-                  <p className="text-[10px] text-muted-foreground">
-                    Using browser default voice. If your OS has no native speech voices installed, Synapse automatically falls back to AI voice.
-                  </p>
-                )}
               </div>
             )}
 

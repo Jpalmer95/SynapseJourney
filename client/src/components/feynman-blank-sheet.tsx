@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import katex from "katex";
 import {
   PenTool,
   Eye,
@@ -43,6 +44,82 @@ function escapeHtml(str: string): string {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
+}
+
+function renderLatexToWordMathMl(expr: string, displayMode: boolean): string {
+  try {
+    const mathml = katex.renderToString(expr.trim(), {
+      displayMode,
+      output: "mathml",
+      throwOnError: false,
+      strict: false,
+      trust: false,
+    });
+    return displayMode
+      ? `<div style="text-align:center;margin:10px 0;">${mathml}</div>`
+      : mathml;
+  } catch {
+    return `<code>${escapeHtml(expr)}</code>`;
+  }
+}
+
+/**
+ * Convert lesson markdown & LaTeX into Word-compatible HTML with native MathML
+ * equations (Microsoft Word automatically imports MathML as editable Word Equations).
+ */
+function markdownToWordHtml(text: string): string {
+  if (!text || !text.trim()) return "";
+  const placeholders: string[] = [];
+  const stash = (html: string) => {
+    const token = `@@SYNAPSE_MATH_${placeholders.length}@@`;
+    placeholders.push(html);
+    return token;
+  };
+
+  let s = text.replace(/\r\n/g, "\n");
+  // Stash display math $$...$$ and \[...\]
+  s = s.replace(/\$\$([\s\S]+?)\$\$/g, (_m, inner) => stash(renderLatexToWordMathMl(inner, true)));
+  s = s.replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner) => stash(renderLatexToWordMathMl(inner, true)));
+  // Stash inline math \(...\) and $...$
+  s = s.replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner) => stash(renderLatexToWordMathMl(inner, false)));
+  s = s.replace(/\$(?!\s)([^$\n]+?)(?<!\s)\$/g, (_m, inner) => stash(renderLatexToWordMathMl(inner, false)));
+
+  // Convert standalone bare LaTeX lines (e.g. `\nabla^2 \mathbf{E} + ... = 0`)
+  s = s
+    .split("\n")
+    .map((line) => {
+      const t = line.trim();
+      if (
+        t &&
+        !t.includes("@@SYNAPSE_MATH_") &&
+        /\\(?:nabla|frac|sqrt|partial|mathbf|left|right|int|sum|varepsilon|lambda|omega)\b/.test(t) &&
+        /[=<>^_]/.test(t)
+      ) {
+        const plainWords = t.replace(/\\[a-zA-Z]+/g, " ").match(/\b[A-Za-z]{4,}\b/g);
+        if (!plainWords || plainWords.length <= 3) {
+          return stash(renderLatexToWordMathMl(t, true));
+        }
+      }
+      return line;
+    })
+    .join("\n");
+
+  // Escape HTML, then restore basic bold/italic/headings and line breaks
+  let html = escapeHtml(s);
+  html = html.replace(/^###\s+(.+)$/gm, "<h4>$1</h4>");
+  html = html.replace(/^##\s+(.+)$/gm, "<h3>$1</h3>");
+  html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  html = html.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  html = html.replace(/`([^`]+)`/g, "<code style=\"font-family:Consolas,monospace;background:#e2e8f0;padding:1px 4px;\">$1</code>");
+  html = html.replace(/\n\n+/g, "</p><p>");
+  html = html.replace(/\n/g, "<br/>");
+  html = `<p>${html}</p>`;
+
+  // Restore MathML blocks
+  placeholders.forEach((snippet, idx) => {
+    html = html.replace(`@@SYNAPSE_MATH_${idx}@@`, snippet);
+  });
+  return html;
 }
 
 export function FeynmanBlankSheet({
@@ -98,7 +175,7 @@ export function FeynmanBlankSheet({
     const dateStr = new Date().toLocaleDateString();
     const safeTitle = unit.title.replace(/[^a-zA-Z0-9-_]+/g, "-").slice(0, 60);
     const takeawaysHtml = (lessonContent.keyTakeaways || [])
-      .map((t) => `<li>${escapeHtml(t)}</li>`)
+      .map((t) => `<li>${markdownToWordHtml(t)}</li>`)
       .join("");
     const resourcesHtml = (lessonContent.externalResources || [])
       .map(
@@ -108,16 +185,19 @@ export function FeynmanBlankSheet({
       .join("");
 
     const htmlDoc = `<!DOCTYPE html>
-<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns:m="http://schemas.microsoft.com/office/2004/12/omml" xmlns="http://www.w3.org/TR/REC-html40">
 <head>
   <meta charset="utf-8" />
   <title>${escapeHtml(unit.title)} — Study Notes</title>
   <style>
-    body { font-family: Calibri, Georgia, serif; line-height: 1.5; color: #111827; max-width: 800px; margin: 24px auto; }
+    body { font-family: Calibri, Georgia, serif; line-height: 1.55; color: #111827; max-width: 820px; margin: 24px auto; }
     h1 { font-size: 20pt; color: #1e3a8a; margin-bottom: 4px; }
     h2 { font-size: 14pt; color: #1d4ed8; border-bottom: 1px solid #cbd5e1; padding-bottom: 4px; margin-top: 20px; }
+    h3, h4 { color: #1e40af; margin-top: 12px; margin-bottom: 4px; }
     .meta { font-size: 10pt; color: #4b5563; margin-bottom: 18px; }
-    .box { background: #f8fafc; border: 1px solid #cbd5e1; padding: 12px 16px; border-radius: 6px; white-space: pre-wrap; }
+    .box { background: #f8fafc; border: 1px solid #cbd5e1; padding: 12px 16px; border-radius: 6px; }
+    p { margin: 6px 0; }
+    pre { background: #f1f5f9; border: 1px solid #cbd5e1; padding: 10px; font-family: Consolas, monospace; font-size: 9.5pt; white-space: pre-wrap; }
   </style>
 </head>
 <body>
@@ -128,22 +208,23 @@ export function FeynmanBlankSheet({
   </div>
 
   <h2>1. My Feynman Blank-Sheet Explanation (Teach It to Myself)</h2>
-  <div class="box">${escapeHtml(explanation.trim() || "(No blank-sheet explanation recorded yet.)")}</div>
+  <div class="box">${markdownToWordHtml(explanation.trim() || "(No blank-sheet explanation recorded yet.)")}</div>
 
   <h2>2. Technical Terms, Roadblocks &amp; Q&amp;A Notes</h2>
-  <div class="box">${escapeHtml(roadblocksAndTerms.trim() || "(No term definitions or roadblock notes recorded yet.)")}</div>
+  <div class="box">${markdownToWordHtml(roadblocksAndTerms.trim() || "(No term definitions or roadblock notes recorded yet.)")}</div>
 
   <h2>3. Intuitive Analogy ("Think of It Like...")</h2>
-  <div class="box">${escapeHtml(lessonContent.analogy || "")}</div>
+  <div class="box">${markdownToWordHtml(lessonContent.analogy || "")}</div>
 
   <h2>4. Key Takeaways</h2>
   <ul>${takeawaysHtml}</ul>
 
   <h2>5. Worked Example: ${escapeHtml(lessonContent.example?.title || "Example")}</h2>
-  <div class="box">${escapeHtml(lessonContent.example?.content || "")}</div>
+  <div class="box">${markdownToWordHtml(lessonContent.example?.content || "")}</div>
+  ${lessonContent.example?.code ? `<h3>Code Example</h3><pre>${escapeHtml(lessonContent.example.code)}</pre>` : ""}
 
   <h2>6. Full Concept Reference</h2>
-  <div class="box">${escapeHtml(lessonContent.concept || "")}</div>
+  <div class="box">${markdownToWordHtml(lessonContent.concept || "")}</div>
 
   <h2>7. Verified References &amp; Further Reading</h2>
   <ul>${resourcesHtml}</ul>
@@ -164,7 +245,7 @@ export function FeynmanBlankSheet({
 
     toast({
       title: "Study document downloaded (.doc)",
-      description: "Opens directly in Microsoft Word, LibreOffice, or Google Docs.",
+      description: "Includes MathML equations that open directly as formatted equations in Microsoft Word & LibreOffice.",
     });
   };
 

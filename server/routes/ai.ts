@@ -184,6 +184,75 @@ ${topicContext}`;
   }
 });
 
+// Translate a scientific code example (e.g. Python -> MATLAB or Wolfram Mathematica) using the user's BYOC/BYOS provider
+app.post("/api/ai/translate-code", isAuthenticated, async (req: any, res: Response) => {
+  try {
+    const userId = req.user.claims.sub;
+    const schema = z.object({
+      code: z.string().min(1).max(25000),
+      sourceLanguage: z.enum(["python", "matlab", "mathematica", "javascript"]).default("python"),
+      targetLanguage: z.enum(["matlab", "mathematica", "python"]),
+      contextTitle: z.string().max(200).optional(),
+    });
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: "Invalid code translation request", details: parsed.error.flatten() });
+    }
+
+    const userProfile = await storage.getUserProfile(userId);
+    const providerConfig: ProviderConfig = providerConfigFromProfile(userProfile);
+    const credentialCheck = validateUserChatCredentials(providerConfig);
+    if (!credentialCheck.valid) {
+      return res.status(402).json({
+        error: "CHAT_PROVIDER_REQUIRED",
+        message: "AI code translation uses your own connected AI provider. Configure one in Settings.",
+      });
+    }
+
+    const provider = getUserChatProvider(providerConfig);
+    if (!provider) {
+      return res.status(402).json({
+        error: "CHAT_PROVIDER_REQUIRED",
+        message: "AI code translation uses your own connected AI provider. Configure one in Settings.",
+      });
+    }
+
+    const { code, sourceLanguage, targetLanguage, contextTitle } = parsed.data;
+    const targetLabel =
+      targetLanguage === "matlab"
+        ? "MATLAB (compatible with GNU Octave where possible)"
+        : targetLanguage === "mathematica"
+        ? "Wolfram Mathematica (Wolfram Language notebook syntax)"
+        : "Python 3 (NumPy/SciPy/Matplotlib)";
+
+    const response = await provider.chat(
+      [
+        {
+          role: "system",
+          content:
+            "You are an expert computational physicist and scientific software engineer. Translate scientific code accurately, preserving all physical constants, units, boundary conditions, numerical methods, and plotting/output intent. Return ONLY the translated code without markdown code fences or commentary outside code comments.",
+        },
+        {
+          role: "user",
+          content: `Translate the following ${sourceLanguage} scientific example${contextTitle ? ` (from lesson "${contextTitle}")` : ""} into clean, idiomatic, runnable ${targetLabel}:\n\n${code}`,
+        },
+      ],
+      { temperature: 0.2, maxTokens: 3000 },
+    );
+
+    const cleaned = response
+      .trim()
+      .replace(/^```[a-zA-Z]*\n/, "")
+      .replace(/\n```$/, "")
+      .trim();
+
+    res.json({ translatedCode: cleaned, targetLanguage });
+  } catch (error: any) {
+    console.error("Error translating code:", error);
+    res.status(500).json({ error: error?.message || "Failed to translate code" });
+  }
+});
+
 // TTS ENDPOINTS
 // ============================================
 

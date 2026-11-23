@@ -133,6 +133,8 @@ export function cleanTextForTTS(raw: string): string {
   };
 
   s = s.replace(/\$\$([\s\S]*?)\$\$/g, (_m, inner) => ` ${cleanLatex(inner)}. `);
+  s = s.replace(/\\\[([\s\S]*?)\\\]/g, (_m, inner) => ` ${cleanLatex(inner)}. `);
+  s = s.replace(/\\\(([\s\S]*?)\\\)/g, (_m, inner) => ` ${cleanLatex(inner)} `);
   s = s.replace(/\$([^$\n]+)\$/g, (_m, inner) => ` ${cleanLatex(inner)} `);
 
   // Strip markdown links [label](url) -> label, and bare URLs

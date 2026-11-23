@@ -37,8 +37,11 @@ type Responder = {
 
 // ── Shared model state ────────────────────────────────────────────────────────
 let kokoroTTS: KokoroTTS | null = null;
-let engineId: KokoroEngine = "webgpu-fp32";
-let enginePreference: EnginePreference = "auto";
+// Default to deterministic CPU WASM q8 (~90 MB) rather than 325 MB WebGPU fp32:
+// ONNX WebGPU on Windows 11 laptop integrated GPUs (D3D12/Dawn) can trigger hard
+// GPU driver hangs/TDR freezes and corrupts dynamic-length Kokoro audio buffers.
+let engineId: KokoroEngine = "wasm-q8";
+let enginePreference: EnginePreference = "wasm-q8";
 let loadMs = 0;
 let fromCache = false;
 let loadingPromise: Promise<{ engine: KokoroEngine; loadMs: number; fromCache: boolean }> | null = null;
@@ -415,7 +418,7 @@ async function loadModel(): Promise<{ engine: KokoroEngine; loadMs: number; from
     const t0 = performance.now();
 
     const wantWebgpu =
-      enginePreference !== "wasm-q8" && webgpuAvailable;
+      enginePreference === "webgpu-fp32" && webgpuAvailable;
 
     if (wantWebgpu) {
       try {

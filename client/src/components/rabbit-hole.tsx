@@ -203,10 +203,41 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   const [justSubmittedIdea, setJustSubmittedIdea] = useState(false);
   const [showBulkRegenConfirm, setShowBulkRegenConfirm] = useState(false);
   const [isBulkRegenPolling, setIsBulkRegenPolling] = useState(false);
-  const [depthMode, setDepthMode] = useState<string>("standard");
-  const [tutorMode, setTutorMode] = useState<string>("direct");
-  const [contentView, setContentView] = useState<"full" | "skim">("full");
-  const [paceMode, setPaceMode] = useState<"fast_track" | "balanced" | "rigorous">("balanced");
+  const [depthMode, setDepthMode] = useState<string>(() => {
+    try {
+      return localStorage.getItem(`synapse_depth_${topic.id}`) || "standard";
+    } catch {
+      return "standard";
+    }
+  });
+  const [tutorMode, setTutorMode] = useState<string>(() => {
+    try {
+      return localStorage.getItem(`synapse_tutor_${topic.id}`) || "direct";
+    } catch {
+      return "direct";
+    }
+  });
+  const [contentView, setContentView] = useState<"full" | "skim">(() => {
+    try {
+      const savedDepth = localStorage.getItem(`synapse_depth_${topic.id}`);
+      if (savedDepth === "speed_run") return "skim";
+      const savedView = localStorage.getItem(`synapse_view_${topic.id}`);
+      return savedView === "skim" ? "skim" : "full";
+    } catch {
+      return "full";
+    }
+  });
+  const [paceMode, setPaceMode] = useState<"fast_track" | "balanced" | "rigorous">(() => {
+    try {
+      const saved = localStorage.getItem(`synapse_pace_${topic.id}`);
+      if (saved === "fast_track" || saved === "balanced" || saved === "rigorous") return saved;
+    } catch {
+      // ignore
+    }
+    return "balanced";
+  });
+  const [showSteeringGuide, setShowSteeringGuide] = useState(false);
+  const [showFastTrackExtras, setShowFastTrackExtras] = useState(false);
   const [interestFocusInput, setInterestFocusInput] = useState<string>("");
   const [outlineViewMode, setOutlineViewMode] = useState<"linear" | "tabs">("linear");
   const [resumeApplied, setResumeApplied] = useState(false);
@@ -360,11 +391,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     interestFocus?: string | null;
   }) => {
     try {
+      if (patch.depthMode) localStorage.setItem(`synapse_depth_${topic.id}`, patch.depthMode);
+      if (patch.tutorMode) localStorage.setItem(`synapse_tutor_${topic.id}`, patch.tutorMode);
+      if (patch.contentView) localStorage.setItem(`synapse_view_${topic.id}`, patch.contentView);
+      if (patch.paceMode) localStorage.setItem(`synapse_pace_${topic.id}`, patch.paceMode);
+    } catch {
+      // ignore localStorage errors
+    }
+    try {
       await apiRequest("PUT", `/api/learn/topics/${topic.id}/prefs`, patch);
       queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
       queryClient.invalidateQueries({ queryKey: ["/api/learn/continue"] });
     } catch {
-      // non-blocking
+      // non-blocking (logged-out learners still keep localStorage prefs)
     }
   };
 
@@ -431,47 +470,37 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     },
   });
 
-  /** Safe depth replan — never wipes progress */
+  /** Instant, free depth mode switcher — never wipes progress and requires no AI key */
   const replanDepth = async (intent: string) => {
+    const nextView: "full" | "skim" = intent === "speed_run" ? "skim" : "full";
     setDepthMode(intent);
-    const nextView = intent === "speed_run" ? "skim" : "full";
     setContentView(nextView);
     setQuizFirst(intent === "speed_run");
-    setReplanLoading(true);
-    try {
-      const res = await apiRequest("POST", `/api/learn/topics/${topic.id}/replan`, {
-        learningIntent: intent,
-        expandUnits: intent === "deep" || intent === "standard",
-      });
-      const data = await res.json();
-      if (data.presentation?.contentView) {
-        setContentView(intent === "survey" ? "full" : data.presentation.contentView);
-      }
-      setQuizFirst(intent === "speed_run" || !!data.presentation?.quizFirst);
-      toast({
-        title: "Learning mode updated",
-        description: data.message || `Switched to ${intent}. Progress preserved.`,
-      });
-      queryClient.invalidateQueries({ queryKey: ["/api/lessons", topic.id, "outline"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/topics", topic.id, "course-plan"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/learn/topics", topic.id, "prefs"] });
-    } catch {
-      const modeDesc =
-        intent === "survey"
-          ? "Showing full lessons with intuitive analogies and key takeaways prioritized first."
-          : intent === "speed_run"
-          ? "Showing rapid key takeaways and quiz-first review."
-          : intent === "deep"
-          ? "Showing full derivations, examples, and primary research literature."
-          : "Showing complete step-by-step lessons, examples, and quizzes.";
-      toast({
-        title: `Switched to ${intent === "speed_run" ? "Speed" : intent.charAt(0).toUpperCase() + intent.slice(1)} view`,
-        description: modeDesc,
-      });
-      await saveTopicPrefs({ depthMode: intent, contentView: nextView });
-    } finally {
-      setReplanLoading(false);
+    if (intent === "deep") {
+      setShowResources(true);
     }
+    try {
+      localStorage.setItem(`synapse_depth_${topic.id}`, intent);
+      localStorage.setItem(`synapse_view_${topic.id}`, nextView);
+    } catch {
+      // ignore storage errors
+    }
+
+    const modeDesc =
+      intent === "survey"
+        ? "Full lessons with Key Takeaways and plain-English Analogies ('Think of it like…') placed first."
+        : intent === "speed_run"
+        ? "Rapid review mode — jumps straight to Key Takeaways and Quiz-First active recall."
+        : intent === "deep"
+        ? "Graduate/research rigor — full derivations, worked examples, and primary literature expanded automatically."
+        : "Balanced curriculum — complete concepts, visual maps, analogies, worked examples, and quizzes.";
+
+    toast({
+      title: `Depth set to ${intent === "speed_run" ? "Speed" : intent.charAt(0).toUpperCase() + intent.slice(1)}`,
+      description: modeDesc,
+    });
+
+    await saveTopicPrefs({ depthMode: intent, contentView: nextView });
   };
 
   const generateQuiz = async () => {
@@ -830,10 +859,11 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
     if (selectedUnit) {
       setQuizAnswers({});
       setQuizSubmitted(false);
-      setShowResources(false);
+      // In Deep or Rigorous Depth mode, automatically expand primary literature ("Go Deeper")
+      setShowResources(depthMode === "deep" || paceMode === "rigorous");
       setOnDemandQuiz(null);
     }
-  }, [selectedUnit?.id]);
+  }, [selectedUnit?.id, depthMode, paceMode]);
 
   // Auto-resume continuum into last unit once outline loads
   useEffect(() => {
@@ -1848,6 +1878,33 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     <span>
                       <strong>Survey Mode (Intuition First):</strong> Key Takeaways and the plain-English Analogy (&ldquo;Think of it like…&rdquo;) appear first below, followed by the full Concept derivation and Worked Example.
                     </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs shrink-0"
+                      onClick={() => replanDepth("standard")}
+                    >
+                      Switch to Standard
+                    </Button>
+                  </div>
+                )}
+
+                {depthMode === "deep" && contentView === "full" && (
+                  <div
+                    className="rounded-lg border border-purple-500/30 bg-purple-500/5 p-3 text-sm flex flex-wrap items-center justify-between gap-3"
+                    data-testid="banner-deep-mode"
+                  >
+                    <span>
+                      <strong>Deep Rigor Mode:</strong> Full mathematical derivations, code examples, and primary literature (&ldquo;Go Deeper&rdquo;) are expanded automatically below.
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="h-7 text-xs shrink-0"
+                      onClick={() => replanDepth("standard")}
+                    >
+                      Switch to Standard
+                    </Button>
                   </div>
                 )}
 
@@ -2090,7 +2147,10 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         />
                         {lessonContent.example.code && (
                           <div className="mt-4 w-full min-w-0">
-                            <CodeSandbox code={lessonContent.example.code} />
+                            <CodeSandbox
+                              code={lessonContent.example.code}
+                              title={lessonContent.example.title || selectedUnit.title}
+                            />
                           </div>
                         )}
                       </CardContent>
@@ -2366,42 +2426,70 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
 
                 {/* Next-Gen Linear Progression + Inline Breadth/Depth Branching + Agentic Studio */}
                 <div className="pt-6 border-t border-border/60 space-y-3" data-testid="unit-footer-navigation">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex flex-wrap items-center gap-2">
+                  <div className="rounded-lg border border-border/70 bg-muted/30 p-3 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs font-semibold text-foreground">
+                        Optional AI Actions for This Lesson
+                      </span>
+                      <span className="text-[11px] text-muted-foreground">
+                        Uses your connected AI key or subscription in Settings
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-auto py-2 px-3 flex flex-col items-start text-left gap-0.5"
                         disabled={navigateBranchMutation.isPending}
                         onClick={() => navigateBranchMutation.mutate({ unitId: selectedUnit.id, direction: "depth" })}
                         data-testid="button-unit-go-deeper"
                       >
-                        {navigateBranchMutation.isPending ? (
-                          <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                        ) : (
-                          <Brain className="h-3.5 w-3.5 mr-1.5 text-cyan-400" />
-                        )}
-                        + Go Deeper (Depth Branch)
+                        <span className="flex items-center font-medium text-xs">
+                          {navigateBranchMutation.isPending ? (
+                            <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                          ) : (
+                            <Brain className="h-3.5 w-3.5 mr-1.5 text-cyan-400" />
+                          )}
+                          + Add Depth Branch
+                        </span>
+                        <span className="text-[10px] font-normal text-muted-foreground whitespace-normal">
+                          Generate a deeper follow-up lesson diving into derivations &amp; edge cases
+                        </span>
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-auto py-2 px-3 flex flex-col items-start text-left gap-0.5"
                         disabled={navigateBranchMutation.isPending}
                         onClick={() => navigateBranchMutation.mutate({ unitId: selectedUnit.id, direction: "breadth" })}
                         data-testid="button-unit-explore-breadth"
                       >
-                        <Compass className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
-                        ↔ Explore Breadth Bridge
+                        <span className="flex items-center font-medium text-xs">
+                          <Compass className="h-3.5 w-3.5 mr-1.5 text-amber-400" />
+                          ↔ Add Breadth Bridge
+                        </span>
+                        <span className="text-[10px] font-normal text-muted-foreground whitespace-normal">
+                          Generate a bridge lesson connecting this concept to an adjacent field
+                        </span>
                       </Button>
                       <Button
                         variant="outline"
                         size="sm"
+                        className="h-auto py-2 px-3 flex flex-col items-start text-left gap-0.5"
                         onClick={() => setShowChat(true)}
                         data-testid="button-ask-ai"
                       >
-                        <MessageCircle className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
-                        Agentic Tutor (Syncs to 3D Map)
+                        <span className="flex items-center font-medium text-xs">
+                          <MessageCircle className="h-3.5 w-3.5 mr-1.5 text-emerald-400" />
+                          Open AI Tutor Chat
+                        </span>
+                        <span className="text-[10px] font-normal text-muted-foreground whitespace-normal">
+                          Discuss in Direct, Socratic, or Feynman mode &amp; save takeaways to your 3D Map
+                        </span>
                       </Button>
                     </div>
+                  </div>
+                  <div className="flex justify-end">
                     {(() => {
                       const currentIdx = orderedLinearUnits.findIndex((u) => u.id === selectedUnit.id);
                       const nextUnit = currentIdx >= 0 ? orderedLinearUnits[currentIdx + 1] : null;
@@ -2595,6 +2683,48 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
               >
                 {contentView === "skim" ? "Skim view" : "Full view"}
               </button>
+            </div>
+
+            {/* Active Depth & Tutor Status Summary — always visible so mode clicks have immediate, clear feedback */}
+            <div
+              className="rounded-lg border border-border/70 bg-muted/35 px-3 py-2 text-xs text-muted-foreground flex flex-wrap items-center justify-between gap-2"
+              data-testid="strip-active-mode-status"
+            >
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>
+                  <strong className="text-foreground">
+                    Depth ({DEPTH_MODES.find((d) => d.id === depthMode)?.label || "Standard"}):
+                  </strong>{" "}
+                  {depthMode === "survey"
+                    ? "Lessons open with Key Takeaways & plain-English Analogies before dense equations."
+                    : depthMode === "deep"
+                    ? "Lessons show full derivations and auto-expand Go Deeper primary literature."
+                    : depthMode === "speed_run"
+                    ? "Lessons jump straight to Key Takeaways & Quiz-First rapid review."
+                    : "Balanced lesson flow — Key Takeaways, Concept, Visual Map, Analogy, Worked Example & Quiz."}
+                </span>
+                <span className="hidden sm:inline text-border">|</span>
+                <span>
+                  <strong className="text-foreground">
+                    Tutor ({TUTOR_MODES.find((t) => t.id === tutorMode)?.label || "Direct"}):
+                  </strong>{" "}
+                  {tutorMode === "direct"
+                    ? "Self-paced reading, audio & in-lesson Feynman Blank Sheet (free, no AI key needed)."
+                    : tutorMode === "socratic"
+                    ? "Guided-questioning AI chat (uses your AI key/subscription in Settings)."
+                    : "Teach-it-yourself Feynman method (built-in Blank Sheet is free; live AI student uses your key in Settings)."}
+                </span>
+              </div>
+              {depthMode !== "standard" && (
+                <button
+                  type="button"
+                  onClick={() => replanDepth("standard")}
+                  className="text-[11px] text-primary hover:underline shrink-0"
+                  data-testid="button-reset-depth-standard"
+                >
+                  Reset to Standard
+                </button>
+              )}
             </div>
 
             {showModeGuide && (
@@ -3011,26 +3141,40 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-1.5">
                       <span className="text-[11px] uppercase tracking-wide text-muted-foreground font-semibold mr-1">
-                        Speed / Pace
+                        Curriculum Pace
                       </span>
                       {(
                         [
-                          { id: "fast_track", label: "Fast-Track" },
-                          { id: "balanced", label: "Balanced" },
-                          { id: "rigorous", label: "Rigorous Depth" },
+                          {
+                            id: "fast_track",
+                            label: "Fast-Track",
+                            hint: "Core essential lessons only (Stages 1–2); collapses optional deep/frontier units",
+                          },
+                          {
+                            id: "balanced",
+                            label: "Balanced",
+                            hint: "Full structured course progression across all stages",
+                          },
+                          {
+                            id: "rigorous",
+                            label: "Rigorous Depth",
+                            hint: "Full curriculum + auto-expands primary literature & formal derivations",
+                          },
                         ] as const
                       ).map((p) => (
                         <button
                           key={p.id}
                           type="button"
+                          title={p.hint}
                           onClick={() => {
                             setPaceMode(p.id);
+                            setShowFastTrackExtras(false);
                             saveTopicPrefs({ paceMode: p.id });
                           }}
                           className={cn(
                             "text-xs px-2.5 py-0.5 rounded-full border transition-colors",
                             paceMode === p.id
-                              ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-400"
+                              ? "border-cyan-500/50 bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 font-medium"
                               : "border-border text-muted-foreground hover:text-foreground",
                           )}
                           data-testid={`chip-pace-${p.id}`}
@@ -3038,11 +3182,22 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                           {p.label}
                         </button>
                       ))}
+                      <button
+                        type="button"
+                        onClick={() => setShowSteeringGuide((v) => !v)}
+                        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground ml-1"
+                        title="Explain Pace, Layout, and Depth/Breadth expansion controls"
+                        data-testid="button-toggle-steering-guide"
+                      >
+                        <HelpCircle className="h-3.5 w-3.5" />
+                        <span>Explain controls</span>
+                      </button>
                     </div>
 
                     <div className="flex items-center gap-1 rounded-lg border border-border p-0.5 bg-background/60">
                       <button
                         type="button"
+                        title="Show all lessons as one continuous numbered list from Stage 1 to the end"
                         onClick={() => setOutlineViewMode("linear")}
                         className={cn(
                           "text-xs px-2.5 py-1 rounded-md transition-colors",
@@ -3056,6 +3211,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       </button>
                       <button
                         type="button"
+                        title="Group lessons into separate difficulty stage tabs (Intro, Core, Advanced, Frontier)"
                         onClick={() => setOutlineViewMode("tabs")}
                         className={cn(
                           "text-xs px-2.5 py-1 rounded-md transition-colors",
@@ -3070,42 +3226,93 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                     </div>
                   </div>
 
-                  <div className="flex flex-col sm:flex-row gap-2">
-                    <Input
-                      value={interestFocusInput}
-                      onChange={(e) => setInterestFocusInput(e.target.value)}
-                      onBlur={() => saveTopicPrefs({ interestFocus: interestFocusInput.trim() || null })}
-                      placeholder="Specific interest or application lens for Breadth/Depth navigation (e.g. Audio DSP in Rust, Orbital Phasing)…"
-                      className="h-8 text-xs flex-1"
-                      data-testid="input-topic-interest-focus"
-                    />
-                    <div className="flex items-center gap-1.5 shrink-0">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        disabled={navigateBranchMutation.isPending}
-                        onClick={() => navigateBranchMutation.mutate({ direction: "depth" })}
-                        data-testid="button-course-navigate-depth"
-                      >
-                        {navigateBranchMutation.isPending ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <Brain className="h-3 w-3 mr-1 text-cyan-400" />
-                        )}
-                        + Depth Branch
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        className="h-8 text-xs"
-                        disabled={navigateBranchMutation.isPending}
-                        onClick={() => navigateBranchMutation.mutate({ direction: "breadth" })}
-                        data-testid="button-course-navigate-breadth"
-                      >
-                        <Compass className="h-3 w-3 mr-1 text-amber-400" />
-                        ↔ Breadth Bridge
-                      </Button>
+                  {/* Active Pace Feedback Strip */}
+                  <div className="text-[11px] text-muted-foreground bg-muted/40 rounded-md px-2.5 py-1.5 flex flex-wrap items-center justify-between gap-2">
+                    <span>
+                      {paceMode === "fast_track" ? (
+                        <>
+                          <strong className="text-cyan-600 dark:text-cyan-400">Fast-Track Active:</strong> Focusing on core foundational &amp; essential stages first (optional advanced/frontier units are tucked away below).
+                        </>
+                      ) : paceMode === "rigorous" ? (
+                        <>
+                          <strong className="text-purple-600 dark:text-purple-400">Rigorous Depth Active:</strong> Showing all stages with primary literature (&ldquo;Go Deeper&rdquo;) expanded automatically inside every lesson.
+                        </>
+                      ) : (
+                        <>
+                          <strong className="text-foreground">Balanced Pace:</strong> Complete progression from Stage 1 Intro Course through Advanced &amp; Frontier units.
+                        </>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-muted-foreground">
+                      Layout: <strong>{outlineViewMode === "linear" ? "Linear Spine (numbered 1 → N)" : "Stage Tabs (grouped by stage)"}</strong>
+                    </span>
+                  </div>
+
+                  {showSteeringGuide && (
+                    <div className="rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3 text-xs space-y-2" data-testid="panel-steering-guide">
+                      <div className="flex items-center justify-between">
+                        <span className="font-semibold text-foreground">What These Curriculum Controls Do</span>
+                        <button type="button" onClick={() => setShowSteeringGuide(false)} className="text-muted-foreground hover:text-foreground">
+                          <X className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      <ul className="space-y-1 text-muted-foreground list-disc pl-4">
+                        <li><strong className="text-foreground">Fast-Track / Balanced / Rigorous Depth:</strong> Filters which stages are prioritized (Fast-Track trims to core stages; Rigorous auto-expands primary literature &amp; derivations).</li>
+                        <li><strong className="text-foreground">Linear Spine vs Stage Tabs:</strong> Two ways to browse the same lessons — one continuous numbered list vs. separate tabs per difficulty stage.</li>
+                        <li><strong className="text-foreground">+ Depth Branch (Optional AI):</strong> Uses your connected AI key/subscription to generate and append 2–3 deeper follow-up lessons on this course (or on the specific topic you type in the focus box).</li>
+                        <li><strong className="text-foreground">↔ Breadth Bridge (Optional AI):</strong> Uses your connected AI key/subscription to generate bridge lessons connecting this course to an adjacent field you specify in the focus box.</li>
+                      </ul>
+                    </div>
+                  )}
+
+                  <div className="space-y-1.5 pt-1 border-t border-border/50">
+                    <div className="flex flex-wrap items-center justify-between gap-1 text-[11px]">
+                      <span className="font-medium text-foreground">
+                        Optional AI Course Expander — Add custom follow-up or cross-domain lessons
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        Requires your AI key/subscription in Settings
+                      </span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <Input
+                        value={interestFocusInput}
+                        onChange={(e) => setInterestFocusInput(e.target.value)}
+                        onBlur={() => saveTopicPrefs({ interestFocus: interestFocusInput.trim() || null })}
+                        placeholder="Optional focus lens (e.g. Polarization-Maintaining Fibers, Numerical FEM, Optical Gyroscopes)…"
+                        className="h-8 text-xs flex-1"
+                        data-testid="input-topic-interest-focus"
+                      />
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs"
+                          title="Use your AI key to generate deeper follow-up lessons focused on the topic above"
+                          disabled={navigateBranchMutation.isPending}
+                          onClick={() => navigateBranchMutation.mutate({ direction: "depth" })}
+                          data-testid="button-course-navigate-depth"
+                        >
+                          {navigateBranchMutation.isPending ? (
+                            <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          ) : (
+                            <Brain className="h-3 w-3 mr-1 text-cyan-400" />
+                          )}
+                          + Depth Branch
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-8 text-xs"
+                          title="Use your AI key to generate bridge lessons connecting this course to an adjacent field"
+                          disabled={navigateBranchMutation.isPending}
+                          onClick={() => navigateBranchMutation.mutate({ direction: "breadth" })}
+                          data-testid="button-course-navigate-breadth"
+                        >
+                          <Compass className="h-3 w-3 mr-1 text-amber-400" />
+                          ↔ Breadth Bridge
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -3114,7 +3321,19 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
               {outlineViewMode === "linear" ? (
                 /* Mode 2: Generalized Sequential Linear Course Spine (Intro Course -> Sequentially Advanced) */
                 <div className="space-y-6" data-testid="linear-course-spine">
-                  {availableDifficulties.map((diff, stageIdx) => {
+                  {(() => {
+                    const visibleDifficulties =
+                      paceMode === "fast_track" && !showFastTrackExtras && availableDifficulties.length > 2
+                        ? availableDifficulties.slice(0, 2)
+                        : availableDifficulties;
+                    const hiddenCount =
+                      paceMode === "fast_track" && !showFastTrackExtras && availableDifficulties.length > 2
+                        ? orderedLinearUnits.filter((u) => !visibleDifficulties.includes(u.difficulty as any)).length
+                        : 0;
+
+                    return (
+                      <>
+                  {visibleDifficulties.map((diff, stageIdx) => {
                     const stageUnits = orderedLinearUnits.filter((u) => u.difficulty === diff);
                     if (stageUnits.length === 0) return null;
                     const progress = getProgressForDifficulty(diff);
@@ -3280,6 +3499,38 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                       </div>
                     );
                   })}
+                  {hiddenCount > 0 && (
+                    <div className="rounded-lg border border-dashed border-cyan-500/40 bg-cyan-500/5 p-3.5 flex flex-wrap items-center justify-between gap-2">
+                      <span className="text-xs text-muted-foreground">
+                        <strong>Fast-Track Mode:</strong> {hiddenCount} optional Advanced / Frontier lesson{hiddenCount === 1 ? "" : "s"} hidden to keep your core path focused.
+                      </span>
+                      <div className="flex items-center gap-2">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 text-xs"
+                          onClick={() => setShowFastTrackExtras(true)}
+                          data-testid="button-show-fast-track-extras"
+                        >
+                          Show All {orderedLinearUnits.length} Lessons
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setPaceMode("balanced");
+                            saveTopicPrefs({ paceMode: "balanced" });
+                          }}
+                        >
+                          Switch to Balanced
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                      </>
+                    );
+                  })()}
                 </div>
               ) : (
               <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">

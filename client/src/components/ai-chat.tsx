@@ -426,6 +426,33 @@ export function AiChat({
         </div>
       </header>
 
+      {/* Active Teaching Method Explainer Strip */}
+      <div className="px-4 py-2 border-b border-border/70 bg-muted/30 text-[11px] text-muted-foreground flex flex-wrap items-center justify-between gap-2">
+        <span>
+          {socraticMode ? (
+            <>
+              <strong className="text-foreground">Socratic Method:</strong> Instead of lecturing, the AI asks guided questions so you derive the insight yourself.
+            </>
+          ) : feynmanMode ? (
+            <>
+              <strong className="text-foreground">Feynman Technique:</strong> You teach the concept in plain words; the AI plays a curious beginner who exposes jargon &amp; gaps.
+            </>
+          ) : (
+            <>
+              <strong className="text-foreground">Direct Q&amp;A:</strong> Ask questions, clarify equations, or request analogies. Toggle Socratic or Feynman above anytime.
+            </>
+          )}
+        </span>
+        <button
+          type="button"
+          onClick={() => setShowProviderSetup(true)}
+          className="text-[10px] text-primary hover:underline shrink-0"
+          data-testid="button-chat-ai-setup-info"
+        >
+          AI Key / Free Setup?
+        </button>
+      </div>
+
       {/* Provider Setup Overlay */}
       {showProviderSetup && (
         <div className="absolute inset-0 bg-background/95 z-10 flex flex-col items-center justify-center p-6 text-center">
@@ -445,22 +472,22 @@ export function AiChat({
             <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
               <Zap className="h-5 w-5 text-amber-500 shrink-0" />
               <div className="text-left">
-                <p className="font-medium text-sm">Gemini / OpenRouter / xAI</p>
-                <p className="text-xs text-muted-foreground">Bring your own API key (pay-as-you-go or free tier)</p>
+                <p className="font-medium text-sm">Your Existing Subscription (OAuth)</p>
+                <p className="text-xs text-muted-foreground">ChatGPT Plus/Pro, SuperGrok, Nous Portal, or 1-click OpenRouter</p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
               <Zap className="h-5 w-5 text-blue-500 shrink-0" />
               <div className="text-left">
-                <p className="font-medium text-sm">Hugging Face</p>
-                <p className="text-xs text-muted-foreground">Free inference tier available</p>
+                <p className="font-medium text-sm">Free API Key (No Credit Card)</p>
+                <p className="text-xs text-muted-foreground">Google AI Studio (Gemini free tier) or Hugging Face</p>
               </div>
             </div>
             <div className="flex items-center gap-3 p-2.5 rounded-lg border bg-card">
               <Server className="h-5 w-5 text-green-500 shrink-0" />
               <div className="text-left">
-                <p className="font-medium text-sm">Ollama / LM Studio</p>
-                <p className="text-xs text-muted-foreground">Run locally on your machine for free</p>
+                <p className="font-medium text-sm">Local AI (Ollama / LM Studio)</p>
+                <p className="text-xs text-muted-foreground">Run privately on your own computer for $0</p>
               </div>
             </div>
           </div>
@@ -476,7 +503,7 @@ export function AiChat({
             <Button
               onClick={() => {
                 onClose();
-                setLocation(authRequired ? "/login" : "/settings");
+                setLocation(authRequired ? "/signin" : "/settings");
               }}
               data-testid="button-go-to-settings"
             >

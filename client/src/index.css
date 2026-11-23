@@ -303,3 +303,24 @@
   outline: 2px solid hsl(var(--ring));
   outline-offset: 2px;
 }
+
+/* KaTeX math typography polish */
+.synapse-math-block .katex-display {
+  margin: 0.25rem 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25rem 0;
+}
+.synapse-math-block .katex {
+  font-size: 1.12em;
+}
+.synapse-math-inline .katex {
+  font-size: 1.04em;
+}
+
+/* Mermaid diagram legibility */
+.mermaid-container svg {
+  max-width: none !important;
+  height: auto;
+  min-width: 520px;
+}

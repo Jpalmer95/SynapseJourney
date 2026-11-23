@@ -114,6 +114,8 @@ export function PrerequisiteDiagnostic({
     });
     if (level === "need_primer" || level === "rusty") {
       setExpandedPrimers((prev) => ({ ...prev, [step]: true }));
+    } else if (level === "solid") {
+      setExpandedPrimers((prev) => ({ ...prev, [step]: false }));
     }
   };
 
@@ -194,8 +196,36 @@ export function PrerequisiteDiagnostic({
               </Badge>
             </CardTitle>
             <p className="text-xs text-muted-foreground">
-              Advanced topics build on years of undergraduate and graduate foundations. Diagnose your current exposure below to get a tailored reading order and inline bridge primers before starting Lesson 1.
+              Advanced topics build on undergraduate and graduate foundations. Click <strong>Need Primer</strong> or <strong>Rusty</strong> on any step to auto-open its inline Bridge Primer below, or mark <strong>Solid</strong> to collapse it and update your recommended starting depth.
             </p>
+            {ratedCount > 0 && (
+              <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px]" data-testid="prereq-live-summary">
+                <Badge variant="secondary" className="text-[10px]">
+                  {ratedCount}/{steps.length} rated
+                </Badge>
+                {solidCount > 0 && (
+                  <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                    ✓ {solidCount} Solid
+                  </span>
+                )}
+                {rustyCount > 0 && (
+                  <span className="text-cyan-600 dark:text-cyan-400 font-medium">
+                    • {rustyCount} Rusty (primers opened)
+                  </span>
+                )}
+                {needPrimerCount > 0 && (
+                  <span className="text-amber-600 dark:text-amber-400 font-medium">
+                    • {needPrimerCount} Need Primer (primers opened)
+                  </span>
+                )}
+                <span className="text-muted-foreground">
+                  → Recommended Depth:{" "}
+                  <strong className="text-foreground">
+                    {needPrimerCount > 0 ? "Survey" : rustyCount > 0 ? "Standard" : "Deep"}
+                  </strong>
+                </span>
+              </div>
+            )}
           </div>
           <Button
             variant="ghost"
@@ -221,7 +251,16 @@ export function PrerequisiteDiagnostic({
               return (
                 <div
                   key={step.step}
-                  className="rounded-lg border border-border/80 bg-background/85 p-3.5 sm:p-4 space-y-3"
+                  className={cn(
+                    "rounded-lg border bg-background/85 p-3.5 sm:p-4 space-y-3 transition-colors",
+                    currentRating === "need_primer"
+                      ? "border-amber-500/50 bg-amber-500/5"
+                      : currentRating === "rusty"
+                      ? "border-cyan-500/50 bg-cyan-500/5"
+                      : currentRating === "solid"
+                      ? "border-emerald-500/40 bg-emerald-500/5"
+                      : "border-border/80",
+                  )}
                   data-testid={`prereq-step-${step.step}`}
                 >
                   <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3">
@@ -234,6 +273,21 @@ export function PrerequisiteDiagnostic({
                         <Badge variant="outline" className={cn("text-[10px]", levelMeta.color)}>
                           {levelMeta.label}
                         </Badge>
+                        {currentRating === "solid" && (
+                          <Badge variant="outline" className="text-[10px] border-emerald-500/40 text-emerald-500 bg-emerald-500/10">
+                            ✓ Ready — Primer optional
+                          </Badge>
+                        )}
+                        {currentRating === "rusty" && (
+                          <Badge variant="outline" className="text-[10px] border-cyan-500/40 text-cyan-500 bg-cyan-500/10">
+                            Refresher expanded below
+                          </Badge>
+                        )}
+                        {currentRating === "need_primer" && (
+                          <Badge variant="outline" className="text-[10px] border-amber-500/40 text-amber-500 bg-amber-500/10">
+                            Bridge primer expanded below
+                          </Badge>
+                        )}
                       </div>
                       <p className="text-xs text-muted-foreground">{step.whyNeeded}</p>
                     </div>
@@ -394,38 +448,34 @@ export function PrerequisiteDiagnostic({
                   : "You have strong prerequisite preparation. Dive straight into Stage 1 in Deep Mode for full mathematical derivations and frontier literature."}
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {needPrimerCount > 0 && depthMode !== "survey" && (
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => onSelectDepthMode("survey")}
-                  className="text-xs h-8"
-                  data-testid="button-prereq-switch-survey"
-                >
-                  Switch to Survey (Intuition First)
-                </Button>
-              )}
-              {needPrimerCount === 0 && rustyCount > 0 && depthMode !== "standard" && (
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => onSelectDepthMode("standard")}
-                  className="text-xs h-8"
-                >
-                  Switch to Standard Mode
-                </Button>
-              )}
-              {ratedCount > 0 && needPrimerCount === 0 && rustyCount === 0 && depthMode !== "deep" && (
-                <Button
-                  size="sm"
-                  variant="default"
-                  onClick={() => onSelectDepthMode("deep")}
-                  className="text-xs h-8"
-                >
-                  Switch to Deep Mode
-                </Button>
-              )}
+            <div className="flex flex-col sm:items-end gap-2 shrink-0">
+              <div className="flex items-center gap-1.5 text-[11px]">
+                <span className="text-muted-foreground">Active Depth:</span>
+                <Badge className="text-[10px] capitalize">
+                  {depthMode === "speed_run" ? "Speed" : depthMode}
+                </Badge>
+              </div>
+              <div className="flex flex-wrap items-center gap-1">
+                {(
+                  [
+                    { id: "survey", label: "Survey" },
+                    { id: "standard", label: "Standard" },
+                    { id: "deep", label: "Deep" },
+                    { id: "speed_run", label: "Speed" },
+                  ] as const
+                ).map((mode) => (
+                  <Button
+                    key={mode.id}
+                    size="sm"
+                    variant={depthMode === mode.id ? "default" : "outline"}
+                    onClick={() => onSelectDepthMode(mode.id)}
+                    className="text-[11px] h-7 px-2.5"
+                    data-testid={`button-prereq-depth-${mode.id}`}
+                  >
+                    {mode.label}
+                  </Button>
+                ))}
+              </div>
             </div>
           </div>
         </CardContent>
