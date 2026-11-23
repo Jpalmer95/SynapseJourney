@@ -83,6 +83,7 @@ import { registerMcpRoutes } from "./routes/mcp";
 import { registerWellKnownRoutes } from "./routes/wellknown";
 import { registerAdminContentRoutes } from "./routes/admin-content";
 import { registerOAuthRoutes } from "./routes/oauth";
+import { registerCreditsRoutes } from "./routes/credits";
 import { sanitizeOAuthSubscriptionsMap } from "./oauth-subscriptions";
 
 export async function registerRoutes(
@@ -104,6 +105,7 @@ export async function registerRoutes(
   registerWellKnownRoutes(app);
   registerAdminContentRoutes(app);
   registerOAuthRoutes(app);
+  registerCreditsRoutes(app);
 
   // Learning Roadmap
   app.get("/api/roadmap/:topicId", isAuthenticated, async (req: any, res: Response) => {

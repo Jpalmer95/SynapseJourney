@@ -26,6 +26,16 @@ export interface ChatOptions {
   temperature?: number;
   maxTokens?: number;
   responseFormat?: "text" | "json";
+  /** Optional task mode for Prepaid Credits OpenRouter routing */
+  creditMode?:
+    | "technical_course"
+    | "general_course"
+    | "tutor_direct"
+    | "tutor_socratic"
+    | "tutor_feynman"
+    | "code_translate"
+    | "quiz_distill";
+  creditDescription?: string;
 }
 
 export interface ProviderConfig {
@@ -39,6 +49,7 @@ export interface ProviderConfig {
     | "gemini"
     | "xai"
     | "anthropic"
+    | "synapse_credits"
     | OAuthSubscriptionProviderId;
   userId?: string;
   huggingFaceToken?: string;
@@ -1229,33 +1240,56 @@ export async function generateByokOrPool(
   messages: { role: string; content: string }[],
   config: ProviderConfig,
   options?: ChatOptions
-): Promise<{ content: string; source: "byok" | "pool"; provider: string }> {
+): Promise<{ content: string; source: "byok" | "pool" | "credits"; provider: string; modelUsed?: string }> {
+  const preferCredits = config.provider === "synapse_credits";
   const byokCheck = validateByokCredentials(config);
-  if (!byokCheck.valid) {
-    throw new Error(
-      "BYOC_REQUIRED: Connect a subscription (xAI Grok, Nous Portal, OpenAI ChatGPT, MiniMax) or add an AI key in Settings, " +
-        "or use Hermes Agent to author the course and upload it via a personal access token. " +
-        "Platform free compute is disabled."
-    );
+
+  // Priority 1: Learner's own BYOC key / BYOS OAuth subscription ($0 platform cost)
+  if (!preferCredits && byokCheck.valid) {
+    const provider = getByokProvider(config);
+    if (provider) {
+      try {
+        const content = await provider.chat(messages, options);
+        return {
+          content,
+          source: "byok",
+          provider: provider.name,
+          modelUsed: options?.model || config.preferredModel || undefined,
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw new Error(
+          `Your BYOC provider (${provider.name}) failed: ${msg}. ` +
+            `Fix the subscription/key/model in Settings, or author the course in Hermes and upload it.`
+        );
+      }
+    }
   }
 
-  const provider = getByokProvider(config);
-  if (!provider) {
-    throw new Error(
-      "BYOC_REQUIRED: No usable provider client for your configured credentials. Check Settings → AI Provider."
-    );
+  // Priority 2 (Optional): Learner's Prepaid Credits Wallet via OpenRouter Mode-Router
+  if (config.userId) {
+    const { hasUsableCreditBalance, executeCreditBackedChat } = await import("./credits-router");
+    if (await hasUsableCreditBalance(config.userId)) {
+      const res = await executeCreditBackedChat({
+        userId: config.userId,
+        mode: options?.creditMode || "technical_course",
+        messages,
+        options,
+        description: options?.creditDescription || "Course generation",
+      });
+      return {
+        content: res.content,
+        source: "credits",
+        provider: "synapse_credits",
+        modelUsed: res.modelUsed,
+      };
+    }
   }
 
-  try {
-    const content = await provider.chat(messages, options);
-    return { content, source: "byok", provider: provider.name };
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    throw new Error(
-      `Your BYOC provider (${provider.name}) failed: ${msg}. ` +
-        `Fix the subscription/key/model in Settings, or author the course in Hermes and upload it.`
-    );
-  }
+  throw new Error(
+    "BYOC_REQUIRED: Connect a subscription (xAI Grok, Nous Portal, OpenAI ChatGPT, MiniMax) or add an AI key in Settings, " +
+      "top up optional Prepaid Credits, or use Hermes Agent to author the course and upload it via a personal access token."
+  );
 }
 
 /**

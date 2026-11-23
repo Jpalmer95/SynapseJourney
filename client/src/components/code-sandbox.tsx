@@ -1,6 +1,9 @@
-import React, { useState, useMemo, useRef } from "react";
-import { Sandpack } from "@codesandbox/sandpack-react";
+import React, { useState, useMemo, useRef, lazy, Suspense } from "react";
 import { useTheme } from "next-themes";
+
+const LazySandpack = lazy(() =>
+  import("@codesandbox/sandpack-react").then((m) => ({ default: m.Sandpack })),
+);
 import {
   Play,
   Copy,
@@ -405,18 +408,27 @@ export function CodeSandbox({ code, title }: CodeSandboxProps) {
           </button>
         </div>
         <div className="overflow-hidden rounded-md border border-border">
-          <Sandpack
-            template={template}
-            theme={theme === "light" ? "light" : "dark"}
-            files={{ [activeFile]: code }}
-            options={{
-              showNavigator: false,
-              showTabs: true,
-              editorHeight: 380,
-              showLineNumbers: true,
-              wrapContent: true,
-            }}
-          />
+          <Suspense
+            fallback={
+              <div className="p-6 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading interactive web sandbox…
+              </div>
+            }
+          >
+            <LazySandpack
+              template={template}
+              theme={theme === "light" ? "light" : "dark"}
+              files={{ [activeFile]: code }}
+              options={{
+                showNavigator: false,
+                showTabs: true,
+                editorHeight: 380,
+                showLineNumbers: true,
+                wrapContent: true,
+              }}
+            />
+          </Suspense>
         </div>
       </div>
     );

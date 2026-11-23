@@ -14,6 +14,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Slider } from "@/components/ui/slider";
 import { AppLayout } from "@/components/app-layout";
 import { PasskeySettings } from "@/components/passkey-settings";
+import { CreditsWalletCard } from "@/components/credits-wallet-card";
 import { queryClient, apiRequest } from "@/lib/queryClient";
 import { useState, useEffect, useRef } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -1596,6 +1597,16 @@ export default function SettingsPage() {
                 )}
               </CardContent>
             </Card>
+          </motion.div>
+
+          {/* Optional Prepaid Credits Wallet (Zero-Setup Alternative to BYOC/BYOS) */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.14 }}
+            className="mb-6"
+          >
+            <CreditsWalletCard />
           </motion.div>
 
           {/* AI Provider Section */}

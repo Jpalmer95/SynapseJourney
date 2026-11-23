@@ -13,6 +13,11 @@ import {
   validateByokCredentials,
   type ProviderConfig
 } from "../ai-providers";
+import {
+  PrepaidCreditsProvider,
+  hasUsableCreditBalance,
+  type CreditInferenceMode,
+} from "../credits-router";
 import { SYLLABI_MAP } from "../syllabi";
 import { SEED_LESSON_CONTENT } from "../seed-lesson-content";
 import { archetypeSectionBlock, type CourseArchetype } from "@shared/course-archetypes";
@@ -61,19 +66,35 @@ app.post("/api/ai/chat", isAuthenticated, async (req: any, res: Response) => {
 
     const { message, topicId, history, socraticMode, feynmanMode, feynmanGraded, synthesisQuest } = validationResult.data;
 
-    // Get user's preferred AI provider (including BYOK keys for xAI, Gemini, Anthropic, LM Studio, custom OpenAI)
+    // Get user's preferred AI provider (including BYOK keys, BYOS OAuth subscriptions, or optional Prepaid Credits)
     const userProfile = await storage.getUserProfile(userId);
     const providerConfig: ProviderConfig = providerConfigFromProfile(userProfile);
 
-    // Validate user has configured their own chat provider credentials
+    const preferCredits = providerConfig.provider === "synapse_credits";
     const credentialCheck = validateUserChatCredentials(providerConfig);
-    if (!credentialCheck.valid) {
-      return res.status(402).json({ 
-        error: "CHAT_PROVIDER_REQUIRED",
-        message: "AI chat requires you to set up your own AI provider. Please configure your credentials in Settings.",
-        missingCredential: credentialCheck.missingCredential,
-        provider: credentialCheck.provider,
-      });
+    const tutorCreditMode: CreditInferenceMode = socraticMode
+      ? "tutor_socratic"
+      : feynmanMode
+      ? "tutor_feynman"
+      : "tutor_direct";
+
+    let useCreditsProvider: PrepaidCreditsProvider | null = null;
+    if (preferCredits || !credentialCheck.valid) {
+      if (await hasUsableCreditBalance(userId)) {
+        useCreditsProvider = new PrepaidCreditsProvider(
+          userId,
+          tutorCreditMode,
+          socraticMode ? "Socratic AI Tutor" : feynmanMode ? "Feynman AI Tutor" : "Direct AI Tutor",
+        );
+      } else if (!credentialCheck.valid) {
+        return res.status(402).json({
+          error: "CHAT_PROVIDER_REQUIRED",
+          message:
+            "AI chat uses either your own free/BYOC AI provider in Settings or optional Prepaid Credits.",
+          missingCredential: credentialCheck.missingCredential,
+          provider: credentialCheck.provider,
+        });
+      }
     }
 
     // Get topic context + prior/scattered knowledge ledger if provided
@@ -150,23 +171,33 @@ ${topicContext}`;
     ];
 
     try {
-      // Get user's chat provider (requires their own credentials)
-      // This check should never trigger since we validate above, but keeping as safety net
-      const provider = getUserChatProvider(providerConfig);
+      // Priority 1: User's own BYOC/BYOS provider; Priority 2: Optional Prepaid Credits
+      const provider = useCreditsProvider || getUserChatProvider(providerConfig);
       if (!provider) {
-        res.write(`data: ${JSON.stringify({ error: "CHAT_PROVIDER_REQUIRED", message: "AI chat requires you to set up your own AI provider." })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: "CHAT_PROVIDER_REQUIRED", message: "AI chat requires your own AI provider or optional Prepaid Credits." })}\n\n`);
         res.end();
         return;
       }
       const response = await provider.chat(
         messages.map(m => ({ role: m.role, content: m.content })),
-        { maxTokens: 1024 }
+        { maxTokens: 1200 }
       );
       
       // Send the full response at once (streaming not supported by Gemini AI Integrations)
       res.write(`data: ${JSON.stringify({ content: response })}\n\n`);
-
-      res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      if (useCreditsProvider) {
+        res.write(
+          `data: ${JSON.stringify({
+            done: true,
+            creditMeta: {
+              modelUsed: useCreditsProvider.lastModelUsed,
+              chargedMicros: useCreditsProvider.lastChargedMicros,
+            },
+          })}\n\n`,
+        );
+      } else {
+        res.write(`data: ${JSON.stringify({ done: true })}\n\n`);
+      }
       res.end();
     } catch (aiError) {
       console.error("AI chat error:", aiError);
@@ -202,18 +233,27 @@ app.post("/api/ai/translate-code", isAuthenticated, async (req: any, res: Respon
     const userProfile = await storage.getUserProfile(userId);
     const providerConfig: ProviderConfig = providerConfigFromProfile(userProfile);
     const credentialCheck = validateUserChatCredentials(providerConfig);
-    if (!credentialCheck.valid) {
-      return res.status(402).json({
-        error: "CHAT_PROVIDER_REQUIRED",
-        message: "AI code translation uses your own connected AI provider. Configure one in Settings.",
-      });
-    }
 
-    const provider = getUserChatProvider(providerConfig);
+    let provider =
+      providerConfig.provider === "synapse_credits" ? null : getUserChatProvider(providerConfig);
+    if (!provider) {
+      if (await hasUsableCreditBalance(userId)) {
+        provider = new PrepaidCreditsProvider(
+          userId,
+          "code_translate",
+          `Translate ${parsed.data.sourceLanguage} to ${parsed.data.targetLanguage}`,
+        );
+      } else if (!credentialCheck.valid) {
+        return res.status(402).json({
+          error: "CHAT_PROVIDER_REQUIRED",
+          message: "AI code translation uses your own connected AI provider or optional Prepaid Credits in Settings.",
+        });
+      }
+    }
     if (!provider) {
       return res.status(402).json({
         error: "CHAT_PROVIDER_REQUIRED",
-        message: "AI code translation uses your own connected AI provider. Configure one in Settings.",
+        message: "AI code translation uses your own connected AI provider or optional Prepaid Credits in Settings.",
       });
     }
 

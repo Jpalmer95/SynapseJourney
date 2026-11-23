@@ -48,6 +48,9 @@ import {
   Target,
   Volume2,
   HelpCircle,
+  Download,
+  Clock,
+  ShieldCheck,
 } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -80,6 +83,8 @@ import { AgentPlaybookView } from "@/components/agent-playbook";
 import { FirstPrinciplesSandbox } from "@/components/first-principles-sandbox";
 import { PrerequisiteDiagnostic, type PrerequisiteStep } from "@/components/prerequisite-diagnostic";
 import { FeynmanBlankSheet } from "@/components/feynman-blank-sheet";
+import { SocraticSelfStudy } from "@/components/socratic-self-study";
+import { buildCourseWordMonographHtml, triggerWordDownload } from "@/lib/word-export";
 import type { Topic, Category, LessonContent, NextGenContent } from "@shared/schema";
 
 interface LessonUnit {
@@ -238,6 +243,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
   });
   const [showSteeringGuide, setShowSteeringGuide] = useState(false);
   const [showFastTrackExtras, setShowFastTrackExtras] = useState(false);
+  const [exportingCourseDoc, setExportingCourseDoc] = useState(false);
   const [interestFocusInput, setInterestFocusInput] = useState<string>("");
   const [outlineViewMode, setOutlineViewMode] = useState<"linear" | "tabs">("linear");
   const [resumeApplied, setResumeApplied] = useState(false);
@@ -550,6 +556,53 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
       setPosterLoading(false);
     }
   };
+
+  const handleExportWholeCourseWord = async () => {
+    setExportingCourseDoc(true);
+    try {
+      const res = await fetch(`/api/learn/topics/${topic.id}/export`, { credentials: "include" });
+      if (!res.ok) throw new Error("Could not fetch course units for export.");
+      const data = await res.json();
+      const htmlDoc = buildCourseWordMonographHtml({
+        topicTitle: data.topic?.title || topic.title,
+        topicDescription: data.topic?.description || topic.description,
+        generatedByModel: data.topic?.generatedByModel || (topic as any).generatedByModel,
+        updatedAt:
+          data.topic?.contentUpdatedAt ||
+          data.topic?.lastAuditedAt ||
+          data.topic?.createdAt ||
+          (topic as any).contentUpdatedAt ||
+          (topic as any).createdAt,
+        recommendedOER: data.coursePlan?.recommendedOER || coursePlan?.planJson?.recommendedOER,
+        units: data.units || [],
+      });
+      const safeName = topic.title.replace(/[^a-zA-Z0-9-_]+/g, "-").slice(0, 60);
+      triggerWordDownload(`${safeName}-Complete-Course.doc`, htmlDoc);
+      toast({
+        title: "Course monograph downloaded (.doc)",
+        description: `Compiled ${(data.units || []).length} lessons with MathML equations, OER references, and your saved Feynman notes.`,
+      });
+    } catch (err: any) {
+      toast({
+        title: "Export failed",
+        description: err?.message || "Could not build Word monograph.",
+        variant: "destructive",
+      });
+    } finally {
+      setExportingCourseDoc(false);
+    }
+  };
+
+  const handleExplainEquation = useCallback(
+    (latex: string) => {
+      const unitCtx = selectedUnit ? ` in "${selectedUnit.title}"` : "";
+      setChatInitialDraft(
+        `Please unpack each symbol, its physical units/meaning, and the core intuition behind this equation${unitCtx}:\n\n$$${latex}$$`,
+      );
+      setShowChat(true);
+    },
+    [selectedUnit],
+  );
 
   // Active goal for this topic
   const { data: topicGoalData } = useQuery<{ goal: any | null }>({
@@ -2050,6 +2103,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         <LessonMarkdown
                           text={lessonContent.concept}
                           className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                          onExplainEquation={handleExplainEquation}
                         />
                       </CardContent>
                     </Card>
@@ -2144,6 +2198,7 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                         <LessonMarkdown
                           text={lessonContent.example.content}
                           className="space-y-3 text-muted-foreground break-words [overflow-wrap:anywhere] [word-break:break-word]"
+                          onExplainEquation={handleExplainEquation}
                         />
                         {lessonContent.example.code && (
                           <div className="mt-4 w-full min-w-0">
@@ -2170,6 +2225,20 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                 )}
                   </>
                 )}
+
+                {/* Free Offline Socratic Self-Study Prompts (auto-opens in Socratic tutor mode, no AI key needed) */}
+                <SocraticSelfStudy
+                  unitId={selectedUnit.id}
+                  unitTitle={selectedUnit.title}
+                  lessonContent={lessonContent}
+                  defaultOpen={tutorMode === "socratic"}
+                  onContinueWithAiSocratic={(prompt) => {
+                    setTutorMode("socratic");
+                    saveTopicPrefs({ tutorMode: "socratic" });
+                    setChatInitialDraft(prompt);
+                    setShowChat(true);
+                  }}
+                />
 
                 {/* Feynman Blank Sheet & Study Notebook (works offline + exports Word/Markdown + connects to Feynman AI) */}
                 <FeynmanBlankSheet
@@ -2862,17 +2931,77 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
             className="mb-8"
           >
             <div className="flex flex-wrap items-start justify-between gap-4 mb-4">
-              <div className="flex-1 min-w-0">
-                <h2 className="text-3xl md:text-4xl font-bold mb-3">{topic.title}</h2>
+              <div className="flex-1 min-w-0 space-y-2">
+                <h2 className="text-3xl md:text-4xl font-bold">{topic.title}</h2>
                 <p className="text-lg text-muted-foreground">{topic.description}</p>
+                {/* Academic Provenance & Freshness Colophon */}
+                <div className="flex flex-wrap items-center gap-2 pt-1 text-[11px] text-muted-foreground" data-testid="strip-course-provenance">
+                  {(() => {
+                    const tAny = topic as any;
+                    const updatedRaw = tAny.contentUpdatedAt || tAny.lastAuditedAt || tAny.createdAt;
+                    const updatedLabel = updatedRaw
+                      ? new Date(updatedRaw).toLocaleDateString(undefined, { month: "short", year: "numeric" })
+                      : null;
+                    const qScore = typeof tAny.qualityScore === "number" ? tAny.qualityScore : null;
+                    const modelTag = tAny.generatedByModel || null;
+                    const volatility = tAny.volatility || "evolving";
+                    return (
+                      <>
+                        {updatedLabel && (
+                          <Badge variant="outline" className="text-[10px] font-normal gap-1">
+                            <Clock className="h-3 w-3 text-primary" />
+                            Updated {updatedLabel}
+                          </Badge>
+                        )}
+                        {qScore != null && qScore >= 80 && (
+                          <Badge variant="outline" className="text-[10px] font-normal gap-1 border-emerald-500/40 text-emerald-600 dark:text-emerald-400">
+                            <ShieldCheck className="h-3 w-3" />
+                            Quality {qScore}/100
+                          </Badge>
+                        )}
+                        {modelTag && (
+                          <Badge variant="outline" className="text-[10px] font-normal font-mono">
+                            Model: {modelTag}
+                          </Badge>
+                        )}
+                        <Badge variant="secondary" className="text-[10px] font-normal capitalize">
+                          {volatility === "evergreen"
+                            ? "Evergreen Foundations"
+                            : volatility === "frontier"
+                            ? "Fast-Moving Frontier"
+                            : "Evolving Field"}
+                        </Badge>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
-              <TTSButton
-                text={`${topic.title}. ${topic.description || ""}. ${orderedLinearUnits.length > 0 ? `Course curriculum (${orderedLinearUnits.length} lessons): ` + orderedLinearUnits.map(u => `Lesson ${u.globalStep}: ${u.title}`).join(". ") : ""}`}
-                showLabel
-                variant="outline"
-                size="sm"
-                className="shrink-0 mt-1"
-              />
+              <div className="flex flex-wrap items-center gap-2 shrink-0 mt-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={exportingCourseDoc}
+                  onClick={handleExportWholeCourseWord}
+                  className="gap-1.5 text-xs"
+                  title="Download the entire course (all lessons, MathML equations, OER citations & your saved Feynman notes) as one Microsoft Word .doc monograph"
+                  data-testid="button-export-course-word"
+                >
+                  {exportingCourseDoc ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Download className="h-3.5 w-3.5 text-blue-500" />
+                  )}
+                  <span>{exportingCourseDoc ? "Building .doc…" : "Export Course (.doc)"}</span>
+                </Button>
+                <TTSButton
+                  text={`${topic.title}. ${topic.description || ""}. ${orderedLinearUnits.length > 0 ? `Course curriculum (${orderedLinearUnits.length} lessons): ` + orderedLinearUnits.map(u => `Lesson ${u.globalStep}: ${u.title}`).join(". ") : ""}`}
+                  showLabel
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                />
+              </div>
             </div>
 
             {/* Donate / support builder — optional, not gated compute */}
@@ -3412,6 +3541,14 @@ export function RabbitHole({ topic, category, onBack, resumeUnitId }: RabbitHole
                                             {tierName}
                                           </Badge>
                                         )}
+                                        <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                                          <Clock className="h-2.5 w-2.5" />
+                                          {unit.difficulty === "nextgen"
+                                            ? "~8 min"
+                                            : unit.difficulty === "advanced"
+                                            ? "~7 min"
+                                            : "~5 min"}
+                                        </span>
                                         {isRecommendedNext && !isCompleted && (
                                           <Badge className="bg-primary/20 text-primary border-primary/30 text-[10px]">
                                             Next Up

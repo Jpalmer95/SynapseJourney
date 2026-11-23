@@ -490,6 +490,13 @@ export function AiChat({
                 <p className="text-xs text-muted-foreground">Run privately on your own computer for $0</p>
               </div>
             </div>
+            <div className="flex items-center gap-3 p-2.5 rounded-lg border border-emerald-500/40 bg-emerald-500/5">
+              <Sparkles className="h-5 w-5 text-emerald-500 shrink-0" />
+              <div className="text-left">
+                <p className="font-medium text-sm">Optional Prepaid Credits (Zero Setup)</p>
+                <p className="text-xs text-muted-foreground">Non-expiring $5+ credit packs in Settings — no API keys or subscription</p>
+              </div>
+            </div>
           </div>
 
           <div className="flex gap-2">

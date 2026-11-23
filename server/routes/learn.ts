@@ -7,10 +7,18 @@ import { z } from "zod";
 import { scoreCourse, blockingIssues, normalizeTitle, findDuplicateTitle } from "../content-quality";
 import { isAdminEmail } from "../auth/localAuth";
 import { storage } from "../storage";
-import { isAuthenticated } from "../replit_integrations/auth";
+import { isAuthenticated, optionalAuth } from "../replit_integrations/auth";
 import { generateLessonOutline } from "./ai";
 import { providerConfigFromProfile, validateByokCredentials } from "../ai-providers";
 import { indexTopicToFlywheel, indexUnitToFlywheel } from "../embeddings";
+import { hasUsableCreditBalance } from "../credits-router";
+import { db } from "../db";
+import { sql } from "drizzle-orm";
+import {
+  CURRENT_GENERATOR_VERSION,
+  inferDomainVolatility,
+  computeNextRefreshDue,
+} from "@shared/provenance";
 
 const depthModes = ["survey", "standard", "deep", "speed_run", "goal"] as const;
 const tutorModes = ["direct", "socratic", "feynman"] as const;
@@ -189,6 +197,58 @@ export function registerLearnRoutes(app: Express) {
     }
   });
 
+  // ── Whole-Course Export Payload (for 1-click Word Monograph .doc download) ─
+  app.get("/api/learn/topics/:topicId/export", optionalAuth, async (req: any, res: Response) => {
+    try {
+      const topicId = parseInt(req.params.topicId, 10);
+      if (Number.isNaN(topicId) || topicId <= 0) {
+        return res.status(400).json({ error: "Invalid topicId" });
+      }
+      const topic = await storage.getTopicById(topicId);
+      if (!topic) return res.status(404).json({ error: "Topic not found" });
+
+      const userId: string | undefined = req.user?.claims?.sub;
+      const isAdmin = isAdminEmail(req.user?.claims?.email);
+      if (!topic.published && !isAdmin && topic.ownerUserId !== userId) {
+        return res.status(403).json({ error: "Course is private" });
+      }
+
+      const [units, coursePlan] = await Promise.all([
+        storage.getLessonUnits(topicId),
+        storage.getLatestCoursePlan(topicId).catch(() => undefined),
+      ]);
+
+      const diffOrder: Record<string, number> = {
+        beginner: 0,
+        intermediate: 1,
+        advanced: 2,
+        nextgen: 3,
+      };
+      const sortedUnits = [...units].sort((a, b) => {
+        const da = diffOrder[a.difficulty] ?? 9;
+        const dbDiff = diffOrder[b.difficulty] ?? 9;
+        if (da !== dbDiff) return da - dbDiff;
+        return a.unitIndex - b.unitIndex;
+      });
+
+      res.json({
+        topic,
+        coursePlan: coursePlan?.planJson || null,
+        units: sortedUnits.map((u) => ({
+          id: u.id,
+          title: u.title,
+          difficulty: u.difficulty,
+          unitIndex: u.unitIndex,
+          outline: u.outline,
+          contentJson: u.contentJson,
+        })),
+      });
+    } catch (error) {
+      console.error("Error exporting course:", error);
+      res.status(500).json({ error: "Failed to export course" });
+    }
+  });
+
   // ── Timeline ──────────────────────────────────────────────────────────────
   app.get("/api/learn/timeline", isAuthenticated, async (req: any, res: Response) => {
     try {
@@ -238,11 +298,12 @@ export function registerLearnRoutes(app: Express) {
 
       // Fail BEFORE writing anything: a 402 after createTopic used to leave an orphan topic
       // in the shared catalog (visible to every user) with zero units.
-      if (!validateByokCredentials(userConfig).valid) {
+      const hasCredits = await hasUsableCreditBalance(userId);
+      if (!validateByokCredentials(userConfig).valid && !hasCredits) {
         return res.status(402).json({
           error: "BYOC_REQUIRED",
           message:
-            "Platform free AI is disabled. Add API keys in Settings, or author this goal with Hermes Agent and upload via Personal Access Token (Settings → Hermes token + skill synapse-journey).",
+            "Platform free AI is disabled. Add API keys or connect a subscription in Settings, top up optional Prepaid Credits, or author this goal with Hermes Agent via Personal Access Token.",
         });
       }
 
@@ -740,6 +801,7 @@ export function registerLearnRoutes(app: Express) {
         })).min(1).max(80),
         createGoal: z.boolean().optional().default(true),
         source: z.string().max(64).optional(), // e.g. "hermes"
+        modelUsed: z.string().max(120).optional(), // e.g. "google/gemini-4-neon"
       });
 
       const parsed = schema.safeParse(req.body);
@@ -859,9 +921,33 @@ export function registerLearnRoutes(app: Express) {
           await storage.updateLessonContent(created.id, u.contentJson);
           indexUnitToFlywheel(storage, created.id, topic.id, u.contentJson, userId).catch(() => {});
         }
+        if (body.modelUsed || body.source) {
+          await db.execute(sql`
+            UPDATE lesson_units
+            SET generated_by_model = COALESCE(${body.modelUsed || null}, generated_by_model),
+                generated_by_provider = COALESCE(${body.source || "hermes_mcp"}, generated_by_provider),
+                generator_version = ${CURRENT_GENERATOR_VERSION}
+            WHERE id = ${created.id}
+          `).catch(() => {});
+        }
         createdUnits.push(created);
         existingTitles.add(key);
       }
+
+      // Stamp topic provenance & freshness cadence for periodic recursive upkeep
+      const nowDate = new Date();
+      const volatility = inferDomainVolatility(topic.title, topic.description);
+      const nextDue = computeNextRefreshDue(nowDate, volatility);
+      await db.execute(sql`
+        UPDATE topics
+        SET generated_by_model = COALESCE(${body.modelUsed || null}, generated_by_model),
+            generated_by_provider = COALESCE(${body.source || "hermes_mcp"}, generated_by_provider),
+            generator_version = ${CURRENT_GENERATOR_VERSION},
+            content_updated_at = ${nowDate},
+            volatility = ${volatility},
+            next_refresh_due_at = ${nextDue}
+        WHERE id = ${topic.id}
+      `).catch(() => {});
 
       if (body.plan) {
         await storage.saveCoursePlan({

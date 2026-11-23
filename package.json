@@ -15,6 +15,7 @@
     "check:quality": "tsx scripts/quality-selftest.ts",
     "check:ledger": "tsx scripts/ledger-selftest.ts",
     "check:oauth": "tsx scripts/oauth-selftest.ts",
+    "check:credits": "tsx scripts/credits-selftest.ts",
     "ensure:plans": "tsx scripts/ensure-plans.ts"
   },
   "dependencies": {

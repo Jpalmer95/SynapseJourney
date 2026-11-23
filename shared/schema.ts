@@ -1,5 +1,5 @@
 import { sql, relations } from "drizzle-orm";
-import { pgTable, text, varchar, serial, integer, timestamp, boolean, jsonb, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, serial, integer, bigint, timestamp, boolean, jsonb, uniqueIndex, doublePrecision } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
@@ -35,6 +35,15 @@ export const topics = pgTable("topics", {
   kind: text("kind").default("core").notNull(),
   normalizedTitle: text("normalized_title"),
   ownerUserId: varchar("owner_user_id"),
+  // Provenance & freshness metadata (migration 0018)
+  generatedByModel: text("generated_by_model"),
+  generatedByProvider: text("generated_by_provider"),
+  generatorVersion: text("generator_version"),
+  contentUpdatedAt: timestamp("content_updated_at"),
+  volatility: text("volatility").default("evolving").notNull(), // evergreen | evolving | frontier
+  nextRefreshDueAt: timestamp("next_refresh_due_at"),
+  linksCheckedAt: timestamp("links_checked_at"),
+  brokenLinkCount: integer("broken_link_count").default(0).notNull(),
 });
 
 // Knowledge Cards (content pieces)
@@ -120,6 +129,9 @@ export const lessonUnits = pgTable("lesson_units", {
   embedding: vector("embedding", { dimensions: 768 }),
   lastVerifiedAt: timestamp("last_verified_at"), // freshness tracking
   generatedAt: timestamp("generated_at").default(sql`CURRENT_TIMESTAMP`),
+  generatedByModel: text("generated_by_model"),
+  generatedByProvider: text("generated_by_provider"),
+  generatorVersion: text("generator_version"),
 });
 
 // Lesson Progress (user completion tracking per unit)
@@ -792,6 +804,37 @@ export const userPortfolioArtifacts = pgTable("user_portfolio_artifacts", {
   summary: text("summary").notNull(),
   artifactUrl: text("artifact_url"),
   metricsJson: jsonb("metrics_json"),
+  createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Prepaid Credit Balances (zero-loss micro-dollar wallet; 1_000_000 micros = $1.00 USD)
+export const userCreditBalances = pgTable("user_credit_balances", {
+  userId: varchar("user_id").primaryKey(),
+  balanceMicros: bigint("balance_micros", { mode: "number" }).default(0).notNull(),
+  reservedMicros: bigint("reserved_micros", { mode: "number" }).default(0).notNull(),
+  lifetimePurchasedMicros: bigint("lifetime_purchased_micros", { mode: "number" }).default(0).notNull(),
+  lifetimeSpentMicros: bigint("lifetime_spent_micros", { mode: "number" }).default(0).notNull(),
+  creditTierPreference: text("credit_tier_preference").default("balanced").notNull(),
+  updatedAt: timestamp("updated_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
+});
+
+// Immutable Credit Transaction Ledger
+export const creditTransactions = pgTable("credit_transactions", {
+  id: serial("id").primaryKey(),
+  userId: varchar("user_id").notNull(),
+  kind: text("kind").notNull(), // purchase | usage | refund | admin_grant
+  amountMicros: bigint("amount_micros", { mode: "number" }).notNull(),
+  balanceAfterMicros: bigint("balance_after_micros", { mode: "number" }).notNull(),
+  mode: text("mode"),
+  modelUsed: text("model_used"),
+  promptTokens: integer("prompt_tokens"),
+  completionTokens: integer("completion_tokens"),
+  rawCostMicros: bigint("raw_cost_micros", { mode: "number" }),
+  markupMultiplier: doublePrecision("markup_multiplier"),
+  stripeEventId: text("stripe_event_id").unique(),
+  stripeSessionId: text("stripe_session_id").unique(),
+  description: text("description"),
+  metadata: jsonb("metadata"),
   createdAt: timestamp("created_at").default(sql`CURRENT_TIMESTAMP`).notNull(),
 });
 

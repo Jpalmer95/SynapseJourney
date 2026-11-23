@@ -1,6 +1,6 @@
 import { Fragment, useState, type ReactNode } from "react";
 import katex from "katex";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, Sparkles } from "lucide-react";
 
 /**
  * Rich markdown + KaTeX math renderer for generated lesson prose, takeaways,
@@ -70,7 +70,13 @@ function InlineMath({ value }: { value: string }) {
   );
 }
 
-function MathBlock({ value }: { value: string }) {
+function MathBlock({
+  value,
+  onExplainEquation,
+}: {
+  value: string;
+  onExplainEquation?: (latex: string) => void;
+}) {
   const [copied, setCopied] = useState(false);
   const cleaned = value.trim();
   const html = renderKatexHtml(cleaned, true);
@@ -90,24 +96,37 @@ function MathBlock({ value }: { value: string }) {
       className="group relative my-3 rounded-lg border border-border/70 bg-muted/40 px-4 py-3 text-foreground"
       aria-label="Mathematical expression"
     >
-      <button
-        type="button"
-        onClick={handleCopy}
-        title="Copy LaTeX source"
-        className="absolute right-2 top-2 inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/80 px-1.5 py-0.5 text-[10px] text-muted-foreground opacity-0 transition-opacity hover:text-foreground group-hover:opacity-100 focus:opacity-100"
-      >
-        {copied ? (
-          <>
-            <Check className="h-3 w-3 text-emerald-500" />
-            <span>Copied</span>
-          </>
-        ) : (
-          <>
-            <Copy className="h-3 w-3" />
-            <span>LaTeX</span>
-          </>
+      <div className="absolute right-2 top-2 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+        {onExplainEquation && (
+          <button
+            type="button"
+            onClick={() => onExplainEquation(cleaned)}
+            title="Ask the AI Tutor to unpack every symbol and physical meaning of this equation"
+            className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-background/90 px-1.5 py-0.5 text-[10px] text-primary hover:bg-primary/10"
+          >
+            <Sparkles className="h-3 w-3" />
+            <span>Explain</span>
+          </button>
         )}
-      </button>
+        <button
+          type="button"
+          onClick={handleCopy}
+          title="Copy LaTeX source"
+          className="inline-flex items-center gap-1 rounded-md border border-border/60 bg-background/90 px-1.5 py-0.5 text-[10px] text-muted-foreground hover:text-foreground"
+        >
+          {copied ? (
+            <>
+              <Check className="h-3 w-3 text-emerald-500" />
+              <span>Copied</span>
+            </>
+          ) : (
+            <>
+              <Copy className="h-3 w-3" />
+              <span>LaTeX</span>
+            </>
+          )}
+        </button>
+      </div>
       {html ? (
         <div
           className="synapse-math-block overflow-x-auto py-1 text-center"
@@ -208,10 +227,12 @@ export function LessonMarkdown({
   text,
   className,
   inline = false,
+  onExplainEquation,
 }: {
   text?: string | null;
   className?: string;
   inline?: boolean;
+  onExplainEquation?: (latex: string) => void;
 }) {
   if (!text || !text.trim()) return null;
   // Short strings (quiz prompts, answer options, labels) keep single-line flow.
@@ -236,7 +257,7 @@ export function LessonMarkdown({
     const key = `p-${blocks.length}`;
     const joined = paragraph.join(" ");
     if (isBareLatexLine(joined)) {
-      blocks.push(<MathBlock key={`m-${blocks.length}`} value={joined} />);
+      blocks.push(<MathBlock key={`m-${blocks.length}`} value={joined} onExplainEquation={onExplainEquation} />);
     } else {
       blocks.push(
         <p key={key} className="leading-relaxed">
@@ -323,7 +344,7 @@ export function LessonMarkdown({
       } else {
         math = math.replace(/\$\$.*$/, "");
       }
-      blocks.push(<MathBlock key={`m-${blocks.length}`} value={math} />);
+      blocks.push(<MathBlock key={`m-${blocks.length}`} value={math} onExplainEquation={onExplainEquation} />);
       continue;
     }
 
@@ -345,14 +366,14 @@ export function LessonMarkdown({
       } else {
         math = math.replace(/\\\].*$/, "");
       }
-      blocks.push(<MathBlock key={`m-${blocks.length}`} value={math} />);
+      blocks.push(<MathBlock key={`m-${blocks.length}`} value={math} onExplainEquation={onExplainEquation} />);
       continue;
     }
 
     // Bare standalone LaTeX equation line (e.g. `\nabla^2 \mathbf{E} + ... = 0`)
     if (isBareLatexLine(line)) {
       flushAll();
-      blocks.push(<MathBlock key={`m-${blocks.length}`} value={line} />);
+      blocks.push(<MathBlock key={`m-${blocks.length}`} value={line} onExplainEquation={onExplainEquation} />);
       continue;
     }
 
