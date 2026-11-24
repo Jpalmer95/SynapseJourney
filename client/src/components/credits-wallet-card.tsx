@@ -39,6 +39,7 @@ interface CreditStatusResponse {
     fallbackModel: string;
     maxTokensCap: number;
     description: string;
+    unitLabel?: string;
     estTypicalCallUsd: number;
   }[];
   balance: {
@@ -282,8 +283,8 @@ export function CreditsWalletCard() {
                 <div key={m.mode} className="rounded-md border border-border/60 bg-muted/20 p-2.5 text-xs space-y-1">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-medium text-foreground">{m.label}</span>
-                    <Badge variant="secondary" className="text-[10px] font-mono">
-                      ~${m.estTypicalCallUsd.toFixed(4)}/call
+                    <Badge variant="secondary" className="text-[10px] font-mono shrink-0">
+                      ~${m.estTypicalCallUsd >= 0.01 ? m.estTypicalCallUsd.toFixed(3) : m.estTypicalCallUsd.toFixed(4)}/{m.unitLabel || "call"}
                     </Badge>
                   </div>
                   <div className="font-mono text-[11px] text-primary flex items-center gap-1">

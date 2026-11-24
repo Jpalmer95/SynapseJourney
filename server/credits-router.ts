@@ -54,9 +54,9 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
     creditMicros: 5 * MICROS_PER_USD,
     tagline: "Zero-setup prepaid credits · Never expires",
     estimates: [
-      "~20–60 full custom STEM courses",
-      "~800–2,500 Socratic / Feynman tutor turns",
-      "~500+ MATLAB / Mathematica translations",
+      "~2–4 full Frontier STEM courses (Gemini 4 Neon) or ~15–25 General courses",
+      "~600–1,000 Balanced Socratic / Feynman tutor turns",
+      "~400+ MATLAB / Mathematica code translations",
     ],
   },
   {
@@ -67,9 +67,9 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
     badge: "Most Popular",
     tagline: "Built for deep multi-course study & research · Never expires",
     estimates: [
-      "~60–180 full custom STEM courses",
-      "~2,500–7,500 Socratic / Feynman tutor turns",
-      "~1,500+ MATLAB / Mathematica translations",
+      "~7–12 full Frontier STEM courses (Gemini 4 Neon) or ~50–75 General courses",
+      "~1,800–3,000 Balanced Socratic / Feynman tutor turns",
+      "~1,200+ MATLAB / Mathematica code translations",
     ],
   },
   {
@@ -79,9 +79,9 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
     creditMicros: 40 * MICROS_PER_USD,
     tagline: "Heavy frontier curriculum & Frontier-tier tutoring · Never expires",
     estimates: [
-      "~160–500 full custom courses",
-      "~6,500+ Frontier-tier tutor turns",
-      "Ideal for faculty, labs & power learners",
+      "~20–35 full Frontier STEM courses (Gemini 4 Neon)",
+      "~800–1,200 Frontier tutor turns (or ~5,000+ Balanced turns)",
+      "Ideal for faculty, labs & deep multi-topic research",
     ],
   },
 ] as const;
@@ -209,9 +209,26 @@ export function getPublicModeRoutingTable(tier: CreditTierPreference = "balanced
     "code_translate",
     "quiz_distill",
   ];
+  const typicalBudgets: Record<
+    CreditInferenceMode,
+    { inTok: number; outTok: number; unitLabel: string }
+  > = {
+    technical_course: { inTok: 1800, outTok: 3500, unitLabel: "lesson" },
+    general_course: { inTok: 1500, outTok: 2800, unitLabel: "lesson" },
+    tutor_direct: { inTok: 3000, outTok: 650, unitLabel: "turn" },
+    tutor_socratic: { inTok: 3000, outTok: 650, unitLabel: "turn" },
+    tutor_feynman: { inTok: 3000, outTok: 650, unitLabel: "turn" },
+    code_translate: { inTok: 1200, outTok: 1200, unitLabel: "script" },
+    quiz_distill: { inTok: 2000, outTok: 700, unitLabel: "quiz" },
+  };
   const markup = getCreditsMarkupMultiplier();
   return modes.map((m) => {
     const spec = resolveModeModelSpec(m, tier);
+    const budget = typicalBudgets[m];
+    const estUsd =
+      ((budget.inTok / 1_000_000) * spec.estInputUsdPer1M +
+        (budget.outTok / 1_000_000) * spec.estOutputUsdPer1M) *
+      markup;
     return {
       mode: spec.mode,
       label: spec.label,
@@ -219,13 +236,8 @@ export function getPublicModeRoutingTable(tier: CreditTierPreference = "balanced
       fallbackModel: spec.fallbackModel,
       maxTokensCap: spec.maxTokensCap,
       description: spec.description,
-      estTypicalCallUsd: Number(
-        (
-          ((1200 / 1_000_000) * spec.estInputUsdPer1M +
-            (Math.min(1000, spec.maxTokensCap * 0.4) / 1_000_000) * spec.estOutputUsdPer1M) *
-          markup
-        ).toFixed(4),
-      ),
+      unitLabel: budget.unitLabel,
+      estTypicalCallUsd: Number(estUsd.toFixed(4)),
     };
   });
 }
