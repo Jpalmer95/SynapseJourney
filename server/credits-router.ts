@@ -120,12 +120,12 @@ export function resolveModeModelSpec(
   const techPrimary = process.env.OPENROUTER_MODEL_TECHNICAL_COURSE || "google/gemini-4-neon";
   const techFallback = process.env.OPENROUTER_MODEL_TECHNICAL_FALLBACK || "google/gemini-2.5-pro";
   const generalPrimary = process.env.OPENROUTER_MODEL_GENERAL_COURSE || "google/gemini-2.5-flash";
-  const generalFallback = process.env.OPENROUTER_MODEL_GENERAL_FALLBACK || "deepseek/deepseek-chat-v3-0324";
+  const generalFallback = process.env.OPENROUTER_MODEL_GENERAL_FALLBACK || "google/gemini-3.8-flash";
   const tutorEconomy = process.env.OPENROUTER_MODEL_TUTOR_ECONOMY || "google/gemini-2.5-flash-lite";
   const tutorBalanced = process.env.OPENROUTER_MODEL_TUTOR || "google/gemini-2.5-flash";
-  const tutorFrontier = process.env.OPENROUTER_MODEL_TUTOR_FRONTIER || "anthropic/claude-sonnet-5.5";
+  const tutorFrontier = process.env.OPENROUTER_MODEL_TUTOR_FRONTIER || "google/gemini-4-neon";
   const codePrimary = process.env.OPENROUTER_MODEL_CODE_TRANSLATE || "google/gemini-2.5-flash";
-  const codeFallback = process.env.OPENROUTER_MODEL_CODE_FALLBACK || "anthropic/claude-sonnet-5.5";
+  const codeFallback = process.env.OPENROUTER_MODEL_CODE_FALLBACK || "google/gemini-4-neon";
   const quizPrimary = process.env.OPENROUTER_MODEL_QUIZ_DISTILL || "google/gemini-2.5-flash-lite";
 
   switch (mode) {
@@ -138,7 +138,7 @@ export function resolveModeModelSpec(
         maxTokensCap: 8192,
         estInputUsdPer1M: 3.25,
         estOutputUsdPer1M: 16.0,
-        description: "Frontier math, physics, LaTeX derivations, and scientific code accuracy (Gemini 4 Neon default).",
+        description: "Frontier math, physics, LaTeX derivations, and scientific code accuracy (Gemini 4 Neon).",
       };
     case "general_course":
       return {
@@ -158,8 +158,8 @@ export function resolveModeModelSpec(
         primaryModel: tier === "frontier" ? tutorFrontier : codePrimary,
         fallbackModel: codeFallback,
         maxTokensCap: 3200,
-        estInputUsdPer1M: tier === "frontier" ? 2.25 : 0.4,
-        estOutputUsdPer1M: tier === "frontier" ? 11.0 : 2.75,
+        estInputUsdPer1M: tier === "frontier" ? 3.25 : 0.4,
+        estOutputUsdPer1M: tier === "frontier" ? 16.0 : 2.75,
         description: "Idiomatic scientific code conversion preserving units, boundary conditions, and plotting.",
       };
     case "quiz_distill":
@@ -179,8 +179,8 @@ export function resolveModeModelSpec(
     default: {
       const model =
         tier === "economy" ? tutorEconomy : tier === "frontier" ? tutorFrontier : tutorBalanced;
-      const inRate = tier === "economy" ? 0.15 : tier === "frontier" ? 2.25 : 0.4;
-      const outRate = tier === "economy" ? 0.5 : tier === "frontier" ? 11.0 : 2.75;
+      const inRate = tier === "economy" ? 0.15 : tier === "frontier" ? 3.25 : 0.4;
+      const outRate = tier === "economy" ? 0.5 : tier === "frontier" ? 16.0 : 2.75;
       return {
         mode,
         label:
